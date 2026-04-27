@@ -188,8 +188,12 @@ function isInteractionLocked() {
 
 function refreshInteractiveControls() {
   updatePlayerBoxes();
-  if (gameOver && !awaitingShowdown) {
+  if (awaitingShowdown) {
+    renderShowdownPanel();
+  } else if (gameOver) {
     renderNextHandButton();
+  } else {
+    clearHandActions();
   }
 }
 
@@ -1145,6 +1149,8 @@ function renderShowdownPanel() {
 }
 
 function toggleWinner(potIndex, playerId) {
+  if (isInteractionLocked() || handStatus !== "showdown") return;
+
   const selected = selectedWinnersByPot[potIndex] || new Set();
   if (selected.has(playerId)) {
     selected.delete(playerId);
@@ -1177,7 +1183,7 @@ function distributePot(sidePot, winnerIds) {
 async function confirmShowdown() {
   const expectedHandId = handId;
   const expectedStateVersion = stateVersion;
-  if (mutationInProgress || handStatus !== "showdown") {
+  if (isInteractionLocked() || handStatus !== "showdown") {
     alert("当前手牌已不在摊牌结算阶段");
     return;
   }
