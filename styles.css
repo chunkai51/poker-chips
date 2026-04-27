@@ -141,15 +141,14 @@ h3 {
 }
 
 .brand-mark {
-  display: grid;
+  display: block;
   width: 34px;
   height: 34px;
-  place-items: center;
   border: 1px solid rgba(216, 180, 95, 0.5);
   border-radius: 50%;
-  background: linear-gradient(180deg, rgba(216, 180, 95, 0.18), rgba(216, 180, 95, 0.04));
-  color: var(--gold-300);
-  font-size: 1.05rem;
+  background: rgba(216, 180, 95, 0.08);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+  object-fit: cover;
 }
 
 .brand-name {
