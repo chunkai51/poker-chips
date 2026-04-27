@@ -8,7 +8,8 @@ import {
   getDatabase,
   ref,
   update,
-  onValue
+  onValue,
+  get
 } from "https://www.gstatic.com/firebasejs/9.13.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -60,6 +61,9 @@ let selectedWinnersByPot = {};
 let unsubscribeRoom = null;
 let listenedRoomId = "";
 let stateVersion = 0;
+let handId = 0;
+let handStatus = "setup";
+let mutationInProgress = false;
 
 const CLIENT_ID_KEY = "pokerChipsClientId";
 const clientId = getClientId();
@@ -81,6 +85,8 @@ let room = {
     gameOver: false,
     awaitingShowdown: false,
     pendingPots: [],
+    handId: 0,
+    handStatus: "setup",
     stateVersion: 0,
     updatedBy: clientId
   }
@@ -172,6 +178,37 @@ function setSyncStatus(message, status = "") {
   if (status) syncStatusEl.classList.add(status);
 }
 
+function getRoomRef() {
+  return room.roomId ? ref(db, "rooms/" + room.roomId) : null;
+}
+
+async function getRemoteGameState() {
+  const roomRef = getRoomRef();
+  if (!roomRef) return null;
+
+  try {
+    const snapshot = await get(roomRef);
+    const data = snapshot.val();
+    return data?.gameState || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function isRemoteHandStill(expectedHandId, allowedStatuses) {
+  const remoteGameState = await getRemoteGameState();
+  if (!remoteGameState) return true;
+
+  const remoteHandId = toNonNegativeNumber(remoteGameState.handId, 0);
+  const remoteStatus = String(remoteGameState.handStatus || inferHandStatus(remoteGameState));
+  return remoteHandId === expectedHandId && allowedStatuses.includes(remoteStatus);
+}
+
+function setMutationInProgress(inProgress) {
+  mutationInProgress = inProgress;
+  updatePlayerBoxes();
+}
+
 // ----------------------
 // Firebase 同步
 // ----------------------
@@ -189,6 +226,8 @@ function updateFirebaseState() {
     gameOver,
     awaitingShowdown,
     pendingPots,
+    handId,
+    handStatus,
     stateVersion,
     updatedBy: clientId
   };
@@ -278,6 +317,8 @@ function listenFirebaseUpdates() {
     gameOver = Boolean(gameState.gameOver);
     awaitingShowdown = Boolean(gameState.awaitingShowdown);
     pendingPots = normalizeIncomingPots(gameState.pendingPots);
+    handId = toNonNegativeNumber(gameState.handId, handId);
+    handStatus = String(gameState.handStatus || inferHandStatus(gameState));
     stateVersion = toNonNegativeNumber(gameState.stateVersion, stateVersion);
     room.operator = String(data.operator || room.operator || clientId);
     room.gameState.logs = Array.isArray(gameState.logs) ? gameState.logs.map(String) : [];
@@ -297,6 +338,8 @@ function listenFirebaseUpdates() {
 
     if (gameOver && !awaitingShowdown) {
       renderNextHandButton();
+    } else {
+      clearHandActions();
     }
 
     if (gameState.inProgress === true) {
@@ -314,9 +357,14 @@ function listenFirebaseUpdates() {
 
 function createRoom() {
   if (!room.roomId) {
-    room.roomId = "room_" + Math.floor(Math.random() * 10000);
+    const randomId = crypto.randomUUID
+      ? crypto.randomUUID().slice(0, 8)
+      : String(Date.now()).slice(-8);
+    room.roomId = "room_" + randomId;
   }
   room.operator = clientId;
+  handId = 0;
+  handStatus = "setup";
   updateFirebaseState();
   listenFirebaseUpdates();
 }
@@ -400,10 +448,20 @@ addPlayerBtn.addEventListener("click", () => {
 // ----------------------
 // 开始游戏逻辑
 // ----------------------
-startGameBtn.addEventListener("click", () => {
+startGameBtn.addEventListener("click", async () => {
+  if (mutationInProgress) return;
+
   const roomId = normalizeRoomId(roomIdInput.value);
   if (roomId) {
     joinRoom(roomId);
+    const remoteGameState = await getRemoteGameState();
+    const remoteStatus = remoteGameState
+      ? String(remoteGameState.handStatus || inferHandStatus(remoteGameState))
+      : "setup";
+    if (remoteGameState && remoteStatus !== "setup") {
+      alert("该房间已有牌局状态，请等待同步完成，不要从本地设置页重新开始");
+      return;
+    }
   } else {
     createRoom();
     roomIdInput.value = room.roomId;
@@ -434,6 +492,8 @@ startGameBtn.addEventListener("click", () => {
   selectedWinnersByPot = {};
   pendingPots = [];
   awaitingShowdown = false;
+  handId += 1;
+  handStatus = "playing";
   gameStarted = true;
   gameOver = false;
   currentRound = 0;
@@ -569,8 +629,11 @@ function startRound() {
 // ----------------------
 // playerAction：处理各操作（check/call/raise/fold）
 // ----------------------
-function playerAction(action, index, amount = 0) {
-  if (gameOver || awaitingShowdown) {
+async function playerAction(action, index, amount = 0) {
+  const expectedHandId = handId;
+  const expectedStateVersion = stateVersion;
+
+  if (mutationInProgress || gameOver || awaitingShowdown || handStatus !== "playing") {
     alert("当前手牌已结束或正在等待结算");
     return;
   }
@@ -585,12 +648,35 @@ function playerAction(action, index, amount = 0) {
     return;
   }
 
+  setMutationInProgress(true);
+  const remoteGameState = await getRemoteGameState();
+  if (remoteGameState) {
+    const remoteHandId = toNonNegativeNumber(remoteGameState.handId, 0);
+    const remoteStatus = String(remoteGameState.handStatus || inferHandStatus(remoteGameState));
+    const remoteStateVersion = toNonNegativeNumber(remoteGameState.stateVersion, 0);
+    const remoteCurrentPlayerIndex = Number.isInteger(remoteGameState.currentPlayerIndex)
+      ? remoteGameState.currentPlayerIndex
+      : -1;
+
+    if (
+      remoteHandId !== expectedHandId ||
+      remoteStatus !== "playing" ||
+      remoteStateVersion !== expectedStateVersion ||
+      remoteCurrentPlayerIndex !== index
+    ) {
+      setMutationInProgress(false);
+      alert("牌局状态已在其他设备更新，请等待同步后再操作");
+      return;
+    }
+  }
+
   let logAction = action;
 
   switch (action) {
     case "check":
       if (player.bet < currentBet) {
         alert("已有下注，不能选择 Check！");
+        setMutationInProgress(false);
         return;
       }
       player.acted = true;
@@ -601,6 +687,7 @@ function playerAction(action, index, amount = 0) {
       const callAmount = Math.max(0, currentBet - player.bet);
       if (callAmount === 0) {
         alert("当前无需跟注，可以选择 Check");
+        setMutationInProgress(false);
         return;
       }
       const committed = commitChips(player, callAmount);
@@ -613,6 +700,7 @@ function playerAction(action, index, amount = 0) {
       const requested = toPositiveInteger(amount, 0);
       if (requested <= 0) {
         alert("请输入有效的加注金额！");
+        setMutationInProgress(false);
         return;
       }
 
@@ -623,10 +711,12 @@ function playerAction(action, index, amount = 0) {
 
       if (targetBet <= currentBet && !isAllInCommit) {
         alert(`加注后的本轮总下注必须超过 ${currentBet}，否则请使用 Call`);
+        setMutationInProgress(false);
         return;
       }
       if (committed <= callNeeded && !isAllInCommit) {
         alert(`本次投入必须大于跟注额 ${callNeeded}，否则请使用 Call`);
+        setMutationInProgress(false);
         return;
       }
 
@@ -655,6 +745,7 @@ function playerAction(action, index, amount = 0) {
 
     default:
       alert("无效操作！");
+      setMutationInProgress(false);
       return;
   }
 
@@ -663,6 +754,7 @@ function playerAction(action, index, amount = 0) {
   updateGameInfo();
   updatePlayerBoxes();
   updateFirebaseState();
+  setMutationInProgress(false);
 }
 
 // ----------------------
@@ -744,6 +836,7 @@ function awardRemainingPot(winner) {
   pendingPots = [];
   selectedWinnersByPot = {};
   gameOver = true;
+  handStatus = "settled";
 
   updateGameInfo();
   updatePlayerBoxes();
@@ -832,6 +925,7 @@ function beginShowdown() {
 
   awaitingShowdown = true;
   gameOver = true;
+  handStatus = "showdown";
   currentPlayerIndex = -1;
   pendingPots = buildSidePots();
   selectedWinnersByPot = {};
@@ -944,7 +1038,13 @@ function distributePot(sidePot, winnerIds) {
   return lines;
 }
 
-function confirmShowdown() {
+async function confirmShowdown() {
+  const expectedHandId = handId;
+  if (mutationInProgress || handStatus !== "showdown") {
+    alert("当前手牌已不在摊牌结算阶段");
+    return;
+  }
+
   const settlementPlan = [];
 
   for (let index = 0; index < pendingPots.length; index += 1) {
@@ -965,6 +1065,14 @@ function confirmShowdown() {
     settlementPlan.push({ sidePot, winnerIds });
   }
 
+  setMutationInProgress(true);
+  const canSettle = await isRemoteHandStill(expectedHandId, ["showdown"]);
+  if (!canSettle) {
+    setMutationInProgress(false);
+    alert("其他设备已经完成结算，请等待同步最新状态");
+    return;
+  }
+
   const reportLines = [];
   settlementPlan.forEach(({ sidePot, winnerIds }, index) => {
     reportLines.push(`奖池 ${index + 1}（${sidePot.amount}）:`);
@@ -978,12 +1086,14 @@ function confirmShowdown() {
   pendingPots = [];
   selectedWinnersByPot = {};
   gameOver = true;
+  handStatus = "settled";
 
   hideShowdownPanel();
   updateGameInfo();
   updatePlayerBoxes();
   updateGameLog(`游戏结束，筹码分配：\n${reportLines.join("\n")}`);
   alert(`结算完成！\n${reportLines.join("\n")}`);
+  setMutationInProgress(false);
   showNextHandButton();
   updateFirebaseState();
 }
@@ -991,7 +1101,22 @@ function confirmShowdown() {
 // ----------------------
 // 下一局
 // ----------------------
-function resetHand() {
+async function resetHand(expectedHandId = handId) {
+  if (mutationInProgress) return;
+  if (!gameOver || handStatus !== "settled") {
+    alert("当前手牌还没有完成结算，不能开始下一局");
+    return;
+  }
+
+  setMutationInProgress(true);
+  const canReset = await isRemoteHandStill(expectedHandId, ["settled"]);
+  if (!canReset) {
+    setMutationInProgress(false);
+    clearHandActions();
+    alert("其他设备已经开始了下一局，请等待同步最新状态");
+    return;
+  }
+
   currentRound = 0;
   currentBet = 0;
   pot = 0;
@@ -1000,6 +1125,8 @@ function resetHand() {
   selectedWinnersByPot = {};
   awaitingShowdown = false;
   gameOver = false;
+  handId = expectedHandId + 1;
+  handStatus = "playing";
 
   players.forEach(player => {
     player.bet = 0;
@@ -1016,6 +1143,7 @@ function resetHand() {
   room.gameState.inProgress = true;
   updateFirebaseState();
   startRound();
+  setMutationInProgress(false);
 }
 
 function rotateDealer() {
@@ -1032,9 +1160,10 @@ function rotateDealer() {
 function renderNextHandButton() {
   if (!handActions || document.getElementById("next-hand-button")) return;
 
+  const buttonHandId = handId;
   const button = createButton("开始下一局", () => {
-    resetHand();
-  }, false, "next-hand-button");
+    resetHand(buttonHandId);
+  }, mutationInProgress || handStatus !== "settled", "next-hand-button");
   button.id = "next-hand-button";
   handActions.hidden = false;
   handActions.appendChild(button);
@@ -1049,6 +1178,13 @@ function clearHandActions() {
 function showNextHandButton() {
   renderNextHandButton();
   updateFirebaseState();
+}
+
+function inferHandStatus(gameState) {
+  if (gameState.awaitingShowdown) return "showdown";
+  if (gameState.gameOver) return "settled";
+  if (gameState.inProgress) return "playing";
+  return "setup";
 }
 
 // ----------------------
