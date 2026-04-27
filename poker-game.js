@@ -44,6 +44,8 @@ const bigBlindInput = document.getElementById("big-blind");
 const roomIdInput = document.getElementById("room-id");
 const manualSyncBtn = document.getElementById("manual-sync");
 const gameLog = document.getElementById("game-log");
+const handActions = document.getElementById("hand-actions");
+const logSummary = document.getElementById("log-summary");
 const showdownPanel = document.getElementById("showdown-panel");
 const syncStatusEl = document.getElementById("sync-status");
 
@@ -154,6 +156,13 @@ function createButton(label, onClick, disabled = false, className = "") {
 function clearGameLog() {
   gameLog.replaceChildren();
   room.gameState.logs = [];
+  updateLogSummary();
+}
+
+function updateLogSummary() {
+  if (!logSummary) return;
+  const count = room.gameState.logs.length;
+  logSummary.textContent = count > 0 ? `操作日志（${count}）` : "操作日志";
 }
 
 function setSyncStatus(message, status = "") {
@@ -198,17 +207,20 @@ function updateFirebaseState() {
 
 function appendLogMessage(message) {
   gameLog.appendChild(createParagraph(String(message)));
+  gameLog.scrollTop = gameLog.scrollHeight;
 }
 
 function renderGameLog(logs) {
   gameLog.replaceChildren();
   logs.forEach(appendLogMessage);
+  updateLogSummary();
 }
 
 function updateGameLog(message) {
   const safeMessage = String(message);
   room.gameState.logs.push(safeMessage);
   appendLogMessage(safeMessage);
+  updateLogSummary();
   updateFirebaseState();
 }
 
@@ -433,6 +445,7 @@ startGameBtn.addEventListener("click", () => {
 
   setupContainer.style.display = "none";
   gameContainer.style.display = "block";
+  clearHandActions();
   hideShowdownPanel();
   startRound();
 });
@@ -743,19 +756,21 @@ function awardRemainingPot(winner) {
 // 摊牌与边池结算
 // ----------------------
 function buildSidePots() {
-  const committedPlayers = players
+  const activeCommittedPlayers = getActivePlayers()
     .filter(player => player.totalBet > 0)
     .sort((a, b) => a.totalBet - b.totalBet);
 
-  const levels = [...new Set(committedPlayers.map(player => player.totalBet))];
+  const levels = [...new Set(activeCommittedPlayers.map(player => player.totalBet))];
   const sidePots = [];
   let previousLevel = 0;
 
   levels.forEach(level => {
-    const participants = players.filter(player => player.totalBet >= level);
-    const amount = (level - previousLevel) * participants.length;
-    const contenders = participants
-      .filter(player => !player.folded)
+    const participants = players.filter(player => player.totalBet > previousLevel);
+    const amount = participants.reduce((sum, player) => {
+      return sum + Math.max(0, Math.min(player.totalBet, level) - previousLevel);
+    }, 0);
+    const contenders = activeCommittedPlayers
+      .filter(player => player.totalBet >= level)
       .map(player => player.id);
 
     if (amount > 0 && contenders.length > 0) {
@@ -782,7 +797,34 @@ function buildSidePots() {
     sidePots[sidePots.length - 1].amount += pot - calculatedTotal;
   }
 
-  return sidePots;
+  return mergeEquivalentSidePots(sidePots);
+}
+
+function mergeEquivalentSidePots(sidePots) {
+  return sidePots.reduce((mergedPots, sidePot) => {
+    const previousPot = mergedPots[mergedPots.length - 1];
+    if (previousPot && haveSameContenders(previousPot, sidePot)) {
+      previousPot.amount += sidePot.amount;
+      previousPot.participants = [...new Set([
+        ...previousPot.participants,
+        ...sidePot.participants
+      ])];
+    } else {
+      mergedPots.push({
+        amount: sidePot.amount,
+        participants: [...sidePot.participants],
+        contenders: [...sidePot.contenders]
+      });
+    }
+    return mergedPots;
+  }, []);
+}
+
+function haveSameContenders(leftPot, rightPot) {
+  if (leftPot.contenders.length !== rightPot.contenders.length) return false;
+
+  const rightIds = new Set(rightPot.contenders);
+  return leftPot.contenders.every(id => rightIds.has(id));
 }
 
 function beginShowdown() {
@@ -969,6 +1011,7 @@ function resetHand() {
 
   rotateDealer();
   clearGameLog();
+  clearHandActions();
   hideShowdownPanel();
   room.gameState.inProgress = true;
   updateFirebaseState();
@@ -987,13 +1030,20 @@ function rotateDealer() {
 }
 
 function renderNextHandButton() {
-  if (document.getElementById("next-hand-button")) return;
+  if (!handActions || document.getElementById("next-hand-button")) return;
 
   const button = createButton("开始下一局", () => {
     resetHand();
-  });
+  }, false, "next-hand-button");
   button.id = "next-hand-button";
-  gameLog.appendChild(button);
+  handActions.hidden = false;
+  handActions.appendChild(button);
+}
+
+function clearHandActions() {
+  if (!handActions) return;
+  handActions.replaceChildren();
+  handActions.hidden = true;
 }
 
 function showNextHandButton() {
