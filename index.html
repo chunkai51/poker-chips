@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,30 +8,42 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <header>
-    <label for="room-id">房间ID:</label>
-    <input type="text" id="room-id" placeholder="请输入房间号" />
-    <button id="manual-sync">手动同步</button>
-    <span id="sync-status" class="sync-status">本地模式</span>
+  <header class="top-bar" aria-label="房间同步">
+    <div class="brand-lockup">
+      <span class="brand-mark" aria-hidden="true">♠</span>
+      <span class="brand-name">Poker Chips</span>
+    </div>
+    <div class="room-controls">
+      <label for="room-id">房间ID</label>
+      <input type="text" id="room-id" placeholder="请输入房间号" />
+      <button id="manual-sync" class="button button-ghost">手动同步</button>
+      <span id="sync-status" class="sync-status">本地模式</span>
+    </div>
   </header>
 
   <div class="main-content">
-    <div id="setup">
-      <h1>德州扑克筹码管理工具</h1>
+    <section id="setup" class="setup-panel" aria-labelledby="setup-title">
+      <p class="eyebrow">Texas Hold'em Table</p>
+      <h1 id="setup-title">德州扑克筹码管理工具</h1>
       <div id="player-names" class="player-inputs">
-        <label for="initial-chips">初始筹码:</label>
+        <label for="initial-chips">初始筹码</label>
         <input type="number" inputmode="numeric" pattern="[0-9]*" id="initial-chips" min="100" value="1000" />
-        <label for="big-blind">大盲注:</label>
+        <label for="big-blind">大盲注</label>
         <input type="number" inputmode="numeric" pattern="[0-9]*" id="big-blind" min="10" value="20" />
       </div>
-      <button id="add-player">添加玩家</button>
-      <button id="start-game" disabled>开始游戏</button>
-    </div>
-    <div id="game" style="display: none;">
-      <h2>游戏中</h2>
-      <div id="game-info">
-        <p id="current-round">当前轮次: 翻牌前</p>
-        <p id="pot-amount">奖池: 0</p>
+      <div class="setup-actions">
+        <button id="add-player" class="button button-secondary">添加玩家</button>
+        <button id="start-game" class="button button-primary" disabled>开始游戏</button>
+      </div>
+    </section>
+    <section id="game" class="game-table" style="display: none;" aria-labelledby="game-title">
+      <div class="game-heading">
+        <p class="eyebrow">Live Hand</p>
+        <h2 id="game-title">游戏中</h2>
+      </div>
+      <div id="game-info" class="game-info" aria-live="polite">
+        <p id="current-round" class="round-pill">当前轮次: 翻牌前</p>
+        <p id="pot-amount" class="pot-display">奖池: 0</p>
       </div>
       <div id="hand-actions" class="hand-actions" hidden></div>
       <div id="player-boxes" class="player-boxes"></div>
@@ -40,7 +52,7 @@
         <summary id="log-summary">操作日志</summary>
         <div id="game-log" class="log-entries"></div>
       </details>
-    </div>
+    </section>
   </div>
 
   <script type="module" src="./src/main.js"></script>

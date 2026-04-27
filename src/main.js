@@ -138,6 +138,30 @@ function createButton(label, onClick, disabled = false, className = "") {
   return button;
 }
 
+function createBadge(text, className = "") {
+  const badge = document.createElement("span");
+  badge.className = className ? `status-badge ${className}` : "status-badge";
+  badge.textContent = text;
+  return badge;
+}
+
+function createPlayerMetric(label, value) {
+  const row = document.createElement("p");
+  row.className = "player-meta";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "meta-label";
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement("strong");
+  valueEl.className = "meta-value";
+  valueEl.textContent = String(value);
+
+  row.appendChild(labelEl);
+  row.appendChild(valueEl);
+  return row;
+}
+
 function clearGameLog() {
   gameLog.replaceChildren();
   room.gameState.logs = [];
@@ -394,7 +418,7 @@ function applyRoomData(data) {
 
   if (gameState.inProgress === true) {
     setupContainer.style.display = "none";
-    gameContainer.style.display = "block";
+    gameContainer.style.display = "grid";
     gameStarted = true;
   } else if (!gameStarted) {
     setupContainer.style.display = "block";
@@ -524,7 +548,7 @@ addPlayerBtn.addEventListener("click", () => {
     playerDiv.remove();
     players = players.filter(item => item !== player);
     startGameBtn.disabled = players.length < 2;
-  });
+  }, false, "delete-player-button danger");
 
   playerDiv.appendChild(nameInput);
   playerDiv.appendChild(chipsInput);
@@ -596,7 +620,7 @@ startGameBtn.addEventListener("click", async () => {
     clearGameLog();
 
     setupContainer.style.display = "none";
-    gameContainer.style.display = "block";
+    gameContainer.style.display = "grid";
     clearHandActions();
     hideShowdownPanel();
     startRound();
@@ -1345,19 +1369,47 @@ function updatePlayerBoxes() {
     if (player.folded) box.classList.add("folded");
     if (index === currentPlayerIndex) box.classList.add("active");
 
-    const name = document.createElement("p");
-    const strong = document.createElement("strong");
-    strong.textContent = getPlayerName(player);
-    name.appendChild(strong);
-    if (player.allIn) {
-      name.appendChild(document.createTextNode(" (All In)"));
-    }
-    box.appendChild(name);
+    const header = document.createElement("div");
+    header.className = "player-card-header";
 
-    box.appendChild(createParagraph(`位置: ${player.position || "-"}`));
-    box.appendChild(createParagraph(`状态: ${getPlayerStatus(player)}`));
-    box.appendChild(createParagraph(`剩余筹码: ${player.chips}`));
-    box.appendChild(createParagraph(`本轮下注: ${player.bet} / 本手投入: ${player.totalBet}`));
+    const name = document.createElement("h3");
+    name.className = "player-name";
+    name.textContent = getPlayerName(player);
+    header.appendChild(name);
+
+    const badges = document.createElement("div");
+    badges.className = "player-badges";
+    const positionBadge = document.createElement("span");
+    positionBadge.className = "position-badge";
+    positionBadge.textContent = player.position || "-";
+    badges.appendChild(positionBadge);
+
+    const statusClass = player.folded
+      ? "is-folded"
+      : player.allIn
+        ? "is-all-in"
+        : index === currentPlayerIndex
+          ? "is-active"
+          : "";
+    badges.appendChild(createBadge(getPlayerStatus(player), statusClass));
+    header.appendChild(badges);
+    box.appendChild(header);
+
+    const chipStack = document.createElement("div");
+    chipStack.className = "chip-stack";
+    const chipLabel = document.createElement("span");
+    chipLabel.textContent = "剩余筹码";
+    const chipValue = document.createElement("strong");
+    chipValue.textContent = String(player.chips);
+    chipStack.appendChild(chipLabel);
+    chipStack.appendChild(chipValue);
+    box.appendChild(chipStack);
+
+    const metrics = document.createElement("div");
+    metrics.className = "player-metrics";
+    metrics.appendChild(createPlayerMetric("本轮下注", player.bet));
+    metrics.appendChild(createPlayerMetric("本手投入", player.totalBet));
+    box.appendChild(metrics);
 
     const actions = document.createElement("div");
     actions.classList.add("actions");
@@ -1368,8 +1420,8 @@ function updatePlayerBoxes() {
       handStatus !== "playing" ||
       index !== currentPlayerIndex ||
       !canAct(player);
-    actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet));
-    actions.appendChild(createButton("Call", () => playerAction("call", index), actionDisabled || player.bet >= currentBet));
+    actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet, "action-btn action-check"));
+    actions.appendChild(createButton("Call", () => playerAction("call", index), actionDisabled || player.bet >= currentBet, "action-btn action-call"));
 
     const raiseArea = document.createElement("div");
     raiseArea.classList.add("raise-input");
@@ -1384,13 +1436,13 @@ function updatePlayerBoxes() {
     raiseArea.appendChild(createButton("确认", () => {
       playerAction("raise", index, raiseInput.value);
       raiseArea.style.display = "none";
-    }, actionDisabled));
+    }, actionDisabled, "action-btn action-confirm"));
 
     actions.appendChild(createButton("Raise", () => {
-      raiseArea.style.display = raiseArea.style.display === "none" ? "block" : "none";
+      raiseArea.style.display = raiseArea.style.display === "none" ? "grid" : "none";
       raiseInput.focus();
-    }, actionDisabled));
-    actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled));
+    }, actionDisabled, "action-btn action-raise"));
+    actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled, "action-btn action-fold danger"));
     actions.appendChild(raiseArea);
     box.appendChild(actions);
 
