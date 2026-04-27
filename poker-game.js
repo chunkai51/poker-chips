@@ -9,7 +9,8 @@ import {
   ref,
   update,
   onValue,
-  get
+  get,
+  runTransaction
 } from "https://www.gstatic.com/firebasejs/9.13.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -64,6 +65,9 @@ let stateVersion = 0;
 let handId = 0;
 let handStatus = "setup";
 let mutationInProgress = false;
+let syncReady = false;
+let syncWriteInProgress = false;
+let batchingStateUpdate = false;
 
 const CLIENT_ID_KEY = "pokerChipsClientId";
 const clientId = getClientId();
@@ -178,6 +182,17 @@ function setSyncStatus(message, status = "") {
   if (status) syncStatusEl.classList.add(status);
 }
 
+function isInteractionLocked() {
+  return mutationInProgress || syncWriteInProgress || !syncReady;
+}
+
+function refreshInteractiveControls() {
+  updatePlayerBoxes();
+  if (gameOver && !awaitingShowdown) {
+    renderNextHandButton();
+  }
+}
+
 function getRoomRef() {
   return room.roomId ? ref(db, "rooms/" + room.roomId) : null;
 }
@@ -195,9 +210,26 @@ async function getRemoteGameState() {
   }
 }
 
+async function refreshFromRemote() {
+  const roomRef = getRoomRef();
+  if (!roomRef) return false;
+
+  try {
+    const snapshot = await get(roomRef);
+    const data = snapshot.val();
+    if (!data || !data.gameState) return false;
+    syncReady = true;
+    applyRoomData(data);
+    return true;
+  } catch (_) {
+    syncReady = false;
+    return false;
+  }
+}
+
 async function isRemoteHandStill(expectedHandId, allowedStatuses) {
   const remoteGameState = await getRemoteGameState();
-  if (!remoteGameState) return true;
+  if (!remoteGameState) return !room.roomId;
 
   const remoteHandId = toNonNegativeNumber(remoteGameState.handId, 0);
   const remoteStatus = String(remoteGameState.handStatus || inferHandStatus(remoteGameState));
@@ -206,17 +238,26 @@ async function isRemoteHandStill(expectedHandId, allowedStatuses) {
 
 function setMutationInProgress(inProgress) {
   mutationInProgress = inProgress;
-  updatePlayerBoxes();
+  refreshInteractiveControls();
 }
 
 // ----------------------
 // Firebase 同步
 // ----------------------
-function updateFirebaseState() {
-  if (!room.roomId) return;
+async function updateFirebaseState(options = {}) {
+  if (!room.roomId) return true;
+  if (batchingStateUpdate) return true;
 
-  stateVersion += 1;
-  room.gameState = {
+  const {
+    expectedHandId = null,
+    allowedStatuses = null,
+    expectedStateVersion = null
+  } = options;
+  const guardedWrite = expectedHandId !== null ||
+    expectedStateVersion !== null ||
+    Array.isArray(allowedStatuses);
+  const nextStateVersion = stateVersion + 1;
+  const nextGameState = {
     currentRound,
     pot,
     currentBet,
@@ -228,20 +269,64 @@ function updateFirebaseState() {
     pendingPots,
     handId,
     handStatus,
-    stateVersion,
+    stateVersion: nextStateVersion,
     updatedBy: clientId
   };
-
-  update(ref(db, "rooms/" + room.roomId), {
+  const nextRoomData = {
     operator: room.operator,
-    gameState: room.gameState,
+    gameState: nextGameState,
     players
-  }).then(() => {
+  };
+
+  syncWriteInProgress = true;
+  setSyncStatus("同步中...");
+  refreshInteractiveControls();
+
+  try {
+    if (guardedWrite) {
+      const result = await runTransaction(getRoomRef(), (currentRoom) => {
+        if (!currentRoom || !currentRoom.gameState) return undefined;
+
+        const currentGameState = currentRoom.gameState;
+        const currentHandId = toNonNegativeNumber(currentGameState.handId, 0);
+        const currentStatus = String(currentGameState.handStatus || inferHandStatus(currentGameState));
+        const currentStateVersion = toNonNegativeNumber(currentGameState.stateVersion, 0);
+        if (expectedHandId !== null && currentHandId !== expectedHandId) return undefined;
+        if (expectedStateVersion !== null && currentStateVersion !== expectedStateVersion) return undefined;
+        if (Array.isArray(allowedStatuses) && !allowedStatuses.includes(currentStatus)) return undefined;
+
+        return {
+          ...currentRoom,
+          ...nextRoomData,
+          operator: currentRoom.operator || nextRoomData.operator
+        };
+      }, { applyLocally: false });
+
+      if (!result.committed) {
+        const refreshed = await refreshFromRemote();
+        if (!refreshed) syncReady = false;
+        setSyncStatus("同步被其他设备抢先更新", "error");
+        return false;
+      }
+    } else {
+      await update(ref(db, "rooms/" + room.roomId), nextRoomData);
+    }
+
+    stateVersion = nextStateVersion;
+    room.gameState = nextGameState;
+    syncReady = true;
     setSyncStatus("已同步", "ok");
-  }).catch((error) => {
+    return true;
+  } catch (error) {
     const permissionDenied = String(error?.message || error).includes("permission");
     setSyncStatus(permissionDenied ? "同步失败：权限不足" : "同步失败", "error");
-  });
+    const refreshed = await refreshFromRemote();
+    if (!refreshed) syncReady = false;
+    return false;
+  } finally {
+    syncWriteInProgress = false;
+    refreshInteractiveControls();
+  }
 }
 
 function appendLogMessage(message) {
@@ -260,7 +345,6 @@ function updateGameLog(message) {
   room.gameState.logs.push(safeMessage);
   appendLogMessage(safeMessage);
   updateLogSummary();
-  updateFirebaseState();
 }
 
 function normalizeIncomingPlayer(player, index) {
@@ -292,6 +376,53 @@ function normalizeIncomingPots(pots) {
   })).filter(sidePot => sidePot.amount > 0 && sidePot.contenders.length > 0);
 }
 
+function applyRoomData(data) {
+  const gameState = data.gameState;
+  currentRound = toNonNegativeNumber(gameState.currentRound, 0);
+  pot = toNonNegativeNumber(gameState.pot, 0);
+  currentBet = toNonNegativeNumber(gameState.currentBet, 0);
+  currentPlayerIndex = Number.isInteger(gameState.currentPlayerIndex)
+    ? gameState.currentPlayerIndex
+    : -1;
+  gameOver = Boolean(gameState.gameOver);
+  awaitingShowdown = Boolean(gameState.awaitingShowdown);
+  pendingPots = normalizeIncomingPots(gameState.pendingPots);
+  handId = toNonNegativeNumber(gameState.handId, handId);
+  handStatus = String(gameState.handStatus || inferHandStatus(gameState));
+  stateVersion = toNonNegativeNumber(gameState.stateVersion, stateVersion);
+  room.operator = String(data.operator || room.operator || clientId);
+  room.gameState.logs = Array.isArray(gameState.logs) ? gameState.logs.map(String) : [];
+  room.gameState.inProgress = Boolean(gameState.inProgress);
+  players = Array.isArray(data.players)
+    ? data.players.map(normalizeIncomingPlayer)
+    : players;
+
+  renderGameLog(room.gameState.logs);
+  updateGameInfo();
+  updatePlayerBoxes();
+
+  if (awaitingShowdown) {
+    renderShowdownPanel();
+  } else {
+    hideShowdownPanel();
+  }
+
+  if (gameOver && !awaitingShowdown) {
+    renderNextHandButton();
+  } else {
+    clearHandActions();
+  }
+
+  if (gameState.inProgress === true) {
+    setupContainer.style.display = "none";
+    gameContainer.style.display = "block";
+    gameStarted = true;
+  } else if (!gameStarted) {
+    setupContainer.style.display = "block";
+    gameContainer.style.display = "none";
+  }
+}
+
 function listenFirebaseUpdates() {
   if (!room.roomId || listenedRoomId === room.roomId) return;
 
@@ -302,71 +433,52 @@ function listenFirebaseUpdates() {
 
   const roomRef = ref(db, "rooms/" + room.roomId);
   listenedRoomId = room.roomId;
+  syncReady = false;
   setSyncStatus("同步中...");
   unsubscribeRoom = onValue(roomRef, (snapshot) => {
     const data = snapshot.val();
-    if (!data || !data.gameState) return;
-
-    const gameState = data.gameState;
-    currentRound = toNonNegativeNumber(gameState.currentRound, 0);
-    pot = toNonNegativeNumber(gameState.pot, 0);
-    currentBet = toNonNegativeNumber(gameState.currentBet, 0);
-    currentPlayerIndex = Number.isInteger(gameState.currentPlayerIndex)
-      ? gameState.currentPlayerIndex
-      : -1;
-    gameOver = Boolean(gameState.gameOver);
-    awaitingShowdown = Boolean(gameState.awaitingShowdown);
-    pendingPots = normalizeIncomingPots(gameState.pendingPots);
-    handId = toNonNegativeNumber(gameState.handId, handId);
-    handStatus = String(gameState.handStatus || inferHandStatus(gameState));
-    stateVersion = toNonNegativeNumber(gameState.stateVersion, stateVersion);
-    room.operator = String(data.operator || room.operator || clientId);
-    room.gameState.logs = Array.isArray(gameState.logs) ? gameState.logs.map(String) : [];
-    players = Array.isArray(data.players)
-      ? data.players.map(normalizeIncomingPlayer)
-      : players;
-
-    renderGameLog(room.gameState.logs);
-    updateGameInfo();
-    updatePlayerBoxes();
-
-    if (awaitingShowdown) {
-      renderShowdownPanel();
-    } else {
-      hideShowdownPanel();
+    if (!data || !data.gameState) {
+      syncReady = false;
+      refreshInteractiveControls();
+      return;
     }
-
-    if (gameOver && !awaitingShowdown) {
-      renderNextHandButton();
-    } else {
-      clearHandActions();
-    }
-
-    if (gameState.inProgress === true) {
-      setupContainer.style.display = "none";
-      gameContainer.style.display = "block";
-      gameStarted = true;
-      room.gameState.inProgress = true;
-    } else if (!gameStarted) {
-      setupContainer.style.display = "block";
-      gameContainer.style.display = "none";
-      room.gameState.inProgress = false;
-    }
+    syncReady = true;
+    applyRoomData(data);
+    setSyncStatus("已同步", "ok");
+  }, (error) => {
+    syncReady = false;
+    const permissionDenied = String(error?.message || error).includes("permission");
+    setSyncStatus(permissionDenied ? "同步失败：权限不足" : "同步失败", "error");
+    refreshInteractiveControls();
   });
 }
 
 function createRoom() {
   if (!room.roomId) {
-    const randomId = crypto.randomUUID
-      ? crypto.randomUUID().slice(0, 8)
-      : String(Date.now()).slice(-8);
-    room.roomId = "room_" + randomId;
+    room.roomId = generateRoomId();
   }
   room.operator = clientId;
   handId = 0;
   handStatus = "setup";
-  updateFirebaseState();
   listenFirebaseUpdates();
+}
+
+function generateRoomId() {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let id = "";
+  const bytes = new Uint8Array(4);
+  if (crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+    bytes.forEach(byte => {
+      id += alphabet[byte % alphabet.length];
+    });
+    return id;
+  }
+
+  for (let index = 0; index < 4; index += 1) {
+    id += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return id;
 }
 
 function joinRoom(roomId) {
@@ -394,7 +506,6 @@ if (manualSyncBtn) {
       return;
     }
     joinRoom(id);
-    alert("已同步最新数据");
   });
 }
 
@@ -450,64 +561,69 @@ addPlayerBtn.addEventListener("click", () => {
 // ----------------------
 startGameBtn.addEventListener("click", async () => {
   if (mutationInProgress) return;
+  setMutationInProgress(true);
 
-  const roomId = normalizeRoomId(roomIdInput.value);
-  if (roomId) {
-    joinRoom(roomId);
-    const remoteGameState = await getRemoteGameState();
-    const remoteStatus = remoteGameState
-      ? String(remoteGameState.handStatus || inferHandStatus(remoteGameState))
-      : "setup";
-    if (remoteGameState && remoteStatus !== "setup") {
-      alert("该房间已有牌局状态，请等待同步完成，不要从本地设置页重新开始");
+  try {
+    const roomId = normalizeRoomId(roomIdInput.value);
+    if (roomId) {
+      joinRoom(roomId);
+      const remoteGameState = await getRemoteGameState();
+      const remoteStatus = remoteGameState
+        ? String(remoteGameState.handStatus || inferHandStatus(remoteGameState))
+        : "setup";
+      if (remoteGameState && remoteStatus !== "setup") {
+        alert("该房间已有牌局状态，请等待同步完成，不要从本地设置页重新开始");
+        return;
+      }
+    } else {
+      createRoom();
+      roomIdInput.value = room.roomId;
+    }
+
+    const nameInputs = document.querySelectorAll(".player-name-input");
+    const chipsInputs = document.querySelectorAll(".player-chips-input");
+    if (nameInputs.length < 2) {
+      alert("至少需要两个玩家开始游戏");
       return;
     }
-  } else {
-    createRoom();
-    roomIdInput.value = room.roomId;
+
+    bigBlind = toPositiveInteger(bigBlindInput.value, 20);
+    smallBlind = Math.floor(bigBlind / 2);
+    players = Array.from(nameInputs).map((input, index) => ({
+      id: "player" + index,
+      name: input.value.trim() || `玩家${index + 1}`,
+      chips: toPositiveInteger(chipsInputs[index].value, 1000),
+      folded: false,
+      dealer: index === 0,
+      bet: 0,
+      totalBet: 0,
+      allIn: false,
+      acted: false,
+      position: ""
+    }));
+
+    selectedWinnersByPot = {};
+    pendingPots = [];
+    awaitingShowdown = false;
+    handId += 1;
+    handStatus = "playing";
+    gameStarted = true;
+    gameOver = false;
+    currentRound = 0;
+    currentBet = 0;
+    pot = 0;
+    room.players = players;
+    room.gameState.inProgress = true;
+    clearGameLog();
+
+    setupContainer.style.display = "none";
+    gameContainer.style.display = "block";
+    clearHandActions();
+    hideShowdownPanel();
+    startRound();
+  } finally {
+    setMutationInProgress(false);
   }
-
-  const nameInputs = document.querySelectorAll(".player-name-input");
-  const chipsInputs = document.querySelectorAll(".player-chips-input");
-  if (nameInputs.length < 2) {
-    alert("至少需要两个玩家开始游戏");
-    return;
-  }
-
-  bigBlind = toPositiveInteger(bigBlindInput.value, 20);
-  smallBlind = Math.floor(bigBlind / 2);
-  players = Array.from(nameInputs).map((input, index) => ({
-    id: "player" + index,
-    name: input.value.trim() || `玩家${index + 1}`,
-    chips: toPositiveInteger(chipsInputs[index].value, 1000),
-    folded: false,
-    dealer: index === 0,
-    bet: 0,
-    totalBet: 0,
-    allIn: false,
-    acted: false,
-    position: ""
-  }));
-
-  selectedWinnersByPot = {};
-  pendingPots = [];
-  awaitingShowdown = false;
-  handId += 1;
-  handStatus = "playing";
-  gameStarted = true;
-  gameOver = false;
-  currentRound = 0;
-  currentBet = 0;
-  pot = 0;
-  room.players = players;
-  room.gameState.inProgress = true;
-  clearGameLog();
-
-  setupContainer.style.display = "none";
-  gameContainer.style.display = "block";
-  clearHandActions();
-  hideShowdownPanel();
-  startRound();
 });
 
 // ----------------------
@@ -650,6 +766,11 @@ async function playerAction(action, index, amount = 0) {
 
   setMutationInProgress(true);
   const remoteGameState = await getRemoteGameState();
+  if (!remoteGameState && room.roomId) {
+    setMutationInProgress(false);
+    alert("还没有完成同步，不能操作");
+    return;
+  }
   if (remoteGameState) {
     const remoteHandId = toNonNegativeNumber(remoteGameState.handId, 0);
     const remoteStatus = String(remoteGameState.handStatus || inferHandStatus(remoteGameState));
@@ -671,11 +792,13 @@ async function playerAction(action, index, amount = 0) {
   }
 
   let logAction = action;
+  batchingStateUpdate = true;
 
   switch (action) {
     case "check":
       if (player.bet < currentBet) {
         alert("已有下注，不能选择 Check！");
+        batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
       }
@@ -687,6 +810,7 @@ async function playerAction(action, index, amount = 0) {
       const callAmount = Math.max(0, currentBet - player.bet);
       if (callAmount === 0) {
         alert("当前无需跟注，可以选择 Check");
+        batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
       }
@@ -700,6 +824,7 @@ async function playerAction(action, index, amount = 0) {
       const requested = toPositiveInteger(amount, 0);
       if (requested <= 0) {
         alert("请输入有效的加注金额！");
+        batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
       }
@@ -711,11 +836,13 @@ async function playerAction(action, index, amount = 0) {
 
       if (targetBet <= currentBet && !isAllInCommit) {
         alert(`加注后的本轮总下注必须超过 ${currentBet}，否则请使用 Call`);
+        batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
       }
       if (committed <= callNeeded && !isAllInCommit) {
         alert(`本次投入必须大于跟注额 ${callNeeded}，否则请使用 Call`);
+        batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
       }
@@ -745,6 +872,7 @@ async function playerAction(action, index, amount = 0) {
 
     default:
       alert("无效操作！");
+      batchingStateUpdate = false;
       setMutationInProgress(false);
       return;
   }
@@ -753,8 +881,16 @@ async function playerAction(action, index, amount = 0) {
   nextPlayer();
   updateGameInfo();
   updatePlayerBoxes();
-  updateFirebaseState();
+  batchingStateUpdate = false;
+  const saved = await updateFirebaseState({
+    expectedHandId,
+    allowedStatuses: ["playing"],
+    expectedStateVersion
+  });
   setMutationInProgress(false);
+  if (!saved) {
+    alert("操作没有同步成功，已恢复到最新远端状态");
+  }
 }
 
 // ----------------------
@@ -993,7 +1129,7 @@ function renderShowdownPanel() {
       const selected = selectedWinnersByPot[potIndex].has(playerId);
       const option = createButton(getPlayerName(player), () => {
         toggleWinner(potIndex, playerId);
-      }, sidePot.contenders.length === 1, "winner-option");
+      }, isInteractionLocked() || sidePot.contenders.length === 1, "winner-option");
       if (selected) option.classList.add("selected");
       options.appendChild(option);
     });
@@ -1004,7 +1140,7 @@ function renderShowdownPanel() {
 
   const actions = document.createElement("div");
   actions.classList.add("showdown-actions");
-  actions.appendChild(createButton("确认结算", confirmShowdown));
+  actions.appendChild(createButton("确认结算", confirmShowdown, isInteractionLocked() || handStatus !== "showdown"));
   showdownPanel.appendChild(actions);
 }
 
@@ -1040,6 +1176,7 @@ function distributePot(sidePot, winnerIds) {
 
 async function confirmShowdown() {
   const expectedHandId = handId;
+  const expectedStateVersion = stateVersion;
   if (mutationInProgress || handStatus !== "showdown") {
     alert("当前手牌已不在摊牌结算阶段");
     return;
@@ -1073,6 +1210,7 @@ async function confirmShowdown() {
     return;
   }
 
+  batchingStateUpdate = true;
   const reportLines = [];
   settlementPlan.forEach(({ sidePot, winnerIds }, index) => {
     reportLines.push(`奖池 ${index + 1}（${sidePot.amount}）:`);
@@ -1092,16 +1230,26 @@ async function confirmShowdown() {
   updateGameInfo();
   updatePlayerBoxes();
   updateGameLog(`游戏结束，筹码分配：\n${reportLines.join("\n")}`);
-  alert(`结算完成！\n${reportLines.join("\n")}`);
+  batchingStateUpdate = false;
+  const saved = await updateFirebaseState({
+    expectedHandId,
+    allowedStatuses: ["showdown"],
+    expectedStateVersion
+  });
   setMutationInProgress(false);
-  showNextHandButton();
-  updateFirebaseState();
+  if (saved) {
+    showNextHandButton();
+    alert(`结算完成！\n${reportLines.join("\n")}`);
+  } else {
+    alert("结算没有同步成功，已恢复到最新远端状态");
+  }
 }
 
 // ----------------------
 // 下一局
 // ----------------------
 async function resetHand(expectedHandId = handId) {
+  const expectedStateVersion = stateVersion;
   if (mutationInProgress) return;
   if (!gameOver || handStatus !== "settled") {
     alert("当前手牌还没有完成结算，不能开始下一局");
@@ -1117,6 +1265,7 @@ async function resetHand(expectedHandId = handId) {
     return;
   }
 
+  batchingStateUpdate = true;
   currentRound = 0;
   currentBet = 0;
   pot = 0;
@@ -1141,9 +1290,17 @@ async function resetHand(expectedHandId = handId) {
   clearHandActions();
   hideShowdownPanel();
   room.gameState.inProgress = true;
-  updateFirebaseState();
   startRound();
+  batchingStateUpdate = false;
+  const saved = await updateFirebaseState({
+    expectedHandId,
+    allowedStatuses: ["settled"],
+    expectedStateVersion
+  });
   setMutationInProgress(false);
+  if (!saved) {
+    alert("下一局没有同步成功，已恢复到最新远端状态");
+  }
 }
 
 function rotateDealer() {
@@ -1158,13 +1315,14 @@ function rotateDealer() {
 }
 
 function renderNextHandButton() {
-  if (!handActions || document.getElementById("next-hand-button")) return;
+  if (!handActions) return;
 
   const buttonHandId = handId;
   const button = createButton("开始下一局", () => {
     resetHand(buttonHandId);
-  }, mutationInProgress || handStatus !== "settled", "next-hand-button");
+  }, isInteractionLocked() || handStatus !== "settled", "next-hand-button");
   button.id = "next-hand-button";
+  handActions.replaceChildren();
   handActions.hidden = false;
   handActions.appendChild(button);
 }
@@ -1177,7 +1335,6 @@ function clearHandActions() {
 
 function showNextHandButton() {
   renderNextHandButton();
-  updateFirebaseState();
 }
 
 function inferHandStatus(gameState) {
@@ -1224,7 +1381,12 @@ function updatePlayerBoxes() {
     const actions = document.createElement("div");
     actions.classList.add("actions");
 
-    const actionDisabled = gameOver || awaitingShowdown || index !== currentPlayerIndex || !canAct(player);
+    const actionDisabled = isInteractionLocked() ||
+      gameOver ||
+      awaitingShowdown ||
+      handStatus !== "playing" ||
+      index !== currentPlayerIndex ||
+      !canAct(player);
     actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet));
     actions.appendChild(createButton("Call", () => playerAction("call", index), actionDisabled || player.bet >= currentBet));
 
@@ -1241,7 +1403,7 @@ function updatePlayerBoxes() {
     raiseArea.appendChild(createButton("确认", () => {
       playerAction("raise", index, raiseInput.value);
       raiseArea.style.display = "none";
-    }));
+    }, actionDisabled));
 
     actions.appendChild(createButton("Raise", () => {
       raiseArea.style.display = raiseArea.style.display === "none" ? "block" : "none";
