@@ -638,21 +638,63 @@ h3 {
   }
 
   .top-bar {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px 10px;
+    padding: 10px 12px;
+  }
+
+  .brand-lockup {
+    min-width: 0;
+  }
+
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .brand-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .room-controls {
-    grid-template-columns: 1fr auto;
+    display: contents;
   }
 
   .room-controls label {
-    grid-column: 1 / -1;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  #room-id {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 38px;
+    min-width: 0;
+  }
+
+  #manual-sync {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 72px;
+    min-height: 38px;
+    padding-inline: 12px;
   }
 
   .sync-status {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
     justify-content: center;
+    min-height: 28px;
+    padding: 4px 9px;
   }
 
   .main-content {
