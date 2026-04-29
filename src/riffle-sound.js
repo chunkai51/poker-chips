@@ -2,10 +2,12 @@ const AudioContextConstructor = typeof window !== "undefined"
   ? window.AudioContext || window.webkitAudioContext
   : null;
 
-const MIN_GAIN = 0.0001;
-const ATTACK_SECONDS = 0.01;
+const ATTACK_SECONDS = 0.014;
+const INPUT_GAIN = 0.48;
+const OUTPUT_GAIN = 0.76;
+const MIN_TICK_INTERVAL = 0.034;
+const MAX_TICKS_PER_FRAME = 2;
 const TICK_POINTS = createTickPoints();
-const OUTPUT_GAIN = 0.9;
 
 export function createRiffleSound() {
   let context = null;
@@ -16,6 +18,7 @@ export function createRiffleSound() {
   let noiseBuffer = null;
   let lastProgress = null;
   let lastScrapeAt = 0;
+  let lastTickAt = 0;
   let isPrimed = false;
   let muted = false;
 
@@ -44,9 +47,7 @@ export function createRiffleSound() {
 
     const direction = nextProgress > previousProgress ? 1 : -1;
     const crossedTicks = getCrossedTicks(previousProgress, nextProgress, direction);
-    crossedTicks.forEach((tick, index) => {
-      playTick(direction, tick, index * 0.018);
-    });
+    playCrossedTicks(crossedTicks, direction);
 
     const speed = Math.abs(nextProgress - previousProgress);
     const now = audioContext.currentTime;
@@ -58,27 +59,28 @@ export function createRiffleSound() {
 
   function playSplit() {
     unlock();
-    playKnock({ delay: 0, volume: 0.036, duration: 0.06, frequency: 680 });
-    playKnock({ delay: 0.075, volume: 0.026, duration: 0.05, frequency: 920 });
+    playKnock({ delay: 0.006, volume: 0.028, duration: 0.07, frequency: 680, noiseQ: 5 });
+    playKnock({ delay: 0.086, volume: 0.02, duration: 0.06, frequency: 920, noiseQ: 5 });
   }
 
   function playSettle() {
     unlock();
     playKnock({
       delay: 0,
-      volume: 0.072,
-      duration: 0.06,
-      frequency: 1680,
-      noiseFrequency: 3200,
-      noiseQ: 5.5,
-      resonanceFrequency: 1460,
-      resonanceVolume: 0.018
+      volume: 0.058,
+      duration: 0.08,
+      frequency: 1560,
+      noiseFrequency: 2850,
+      noiseQ: 4.5,
+      resonanceFrequency: 1320,
+      resonanceVolume: 0.012
     });
   }
 
   function resetProgress() {
     lastProgress = null;
     lastScrapeAt = 0;
+    lastTickAt = 0;
   }
 
   function setMuted(nextMuted) {
@@ -87,7 +89,7 @@ export function createRiffleSound() {
 
     const now = context.currentTime;
     outputGain.gain.cancelScheduledValues(now);
-    outputGain.gain.setTargetAtTime(muted ? MIN_GAIN : OUTPUT_GAIN, now, 0.018);
+    outputGain.gain.setTargetAtTime(muted ? 0 : OUTPUT_GAIN, now, 0.018);
   }
 
   function ensureContext() {
@@ -97,21 +99,21 @@ export function createRiffleSound() {
     noiseBuffer = createNoiseBuffer(context);
 
     masterGain = context.createGain();
-    masterGain.gain.value = 0.7;
+    masterGain.gain.value = INPUT_GAIN;
 
     compressor = context.createDynamicsCompressor();
-    compressor.threshold.value = -20;
-    compressor.knee.value = 12;
-    compressor.ratio.value = 7;
-    compressor.attack.value = 0.006;
-    compressor.release.value = 0.14;
+    compressor.threshold.value = -22;
+    compressor.knee.value = 16;
+    compressor.ratio.value = 6;
+    compressor.attack.value = 0.012;
+    compressor.release.value = 0.18;
 
     limiter = context.createWaveShaper();
     limiter.curve = createSoftClipCurve();
     limiter.oversample = "2x";
 
     outputGain = context.createGain();
-    outputGain.gain.value = muted ? MIN_GAIN : OUTPUT_GAIN;
+    outputGain.gain.value = muted ? 0 : OUTPUT_GAIN;
 
     masterGain.connect(compressor).connect(limiter).connect(outputGain).connect(context.destination);
     return context;
@@ -126,28 +128,48 @@ export function createRiffleSound() {
     const gain = context.createGain();
     oscillator.type = "sine";
     oscillator.frequency.setValueAtTime(220, startTime);
-    gain.gain.setValueAtTime(MIN_GAIN, startTime);
-    gain.gain.exponentialRampToValueAtTime(MIN_GAIN, startTime + 0.024);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(0.00001, startTime + 0.006);
+    gain.gain.linearRampToValueAtTime(0, startTime + 0.024);
 
     oscillator.connect(gain).connect(masterGain);
     oscillator.start(startTime);
     oscillator.stop(startTime + 0.026);
   }
 
-  function playTick(direction, tickPoint, delay = 0) {
+  function playCrossedTicks(crossedTicks, direction) {
+    if (!crossedTicks.length || !context) return;
+
+    const now = context.currentTime;
+    if (now - lastTickAt < MIN_TICK_INTERVAL) return;
+
+    const tickCount = Math.min(crossedTicks.length, MAX_TICKS_PER_FRAME);
+    const step = Math.max(1, Math.floor(crossedTicks.length / tickCount));
+
+    for (let index = 0; index < tickCount; index += 1) {
+      const tick = crossedTicks[index * step];
+      if (typeof tick !== "number") continue;
+      playTick(direction, tick, index * MIN_TICK_INTERVAL, crossedTicks.length);
+    }
+
+    lastTickAt = now + (tickCount - 1) * MIN_TICK_INTERVAL;
+  }
+
+  function playTick(direction, tickPoint, delay = 0, burstSize = 1) {
     const baseFrequency = direction > 0
       ? 980 + tickPoint * 760
       : 1220 + tickPoint * 620;
-    const volume = direction > 0 ? 0.044 : 0.026;
-    const duration = direction > 0 ? 0.044 : 0.03;
+    const burstScale = burstSize > 1 ? 0.76 : 1;
+    const volume = (direction > 0 ? 0.03 : 0.018) * burstScale;
+    const duration = direction > 0 ? 0.06 : 0.048;
 
     playKnock({
       delay,
       volume,
       duration,
       frequency: baseFrequency * randomBetween(0.94, 1.07),
-      noiseFrequency: direction > 0 ? 2200 : 2800,
-      noiseQ: direction > 0 ? 7 : 9
+      noiseFrequency: direction > 0 ? 1900 : 2300,
+      noiseQ: direction > 0 ? 4.5 : 5.5
     });
   }
 
@@ -165,7 +187,7 @@ export function createRiffleSound() {
     if (!audioContext || muted || audioContext.state === "suspended") return;
 
     const startTime = audioContext.currentTime + delay;
-    const stopTime = startTime + duration + 0.02;
+    const stopTime = startTime + duration + 0.035;
 
     const noise = audioContext.createBufferSource();
     noise.buffer = noiseBuffer;
@@ -179,7 +201,7 @@ export function createRiffleSound() {
     shapePercussiveEnvelope(noiseGain.gain, startTime, duration, volume);
 
     const oscillator = audioContext.createOscillator();
-    oscillator.type = "triangle";
+    oscillator.type = "sine";
     oscillator.frequency.setValueAtTime(frequency, startTime);
     oscillator.frequency.exponentialRampToValueAtTime(Math.max(120, frequency * 0.58), startTime + duration);
 
@@ -215,20 +237,20 @@ export function createRiffleSound() {
 
     const startTime = audioContext.currentTime;
     const duration = 0.052;
-    const volume = (direction > 0 ? 0.012 : 0.008) * clamp(intensity, 0, 1);
+    const volume = (direction > 0 ? 0.008 : 0.005) * clamp(intensity, 0, 1);
 
     const noise = audioContext.createBufferSource();
     noise.buffer = noiseBuffer;
 
     const filter = audioContext.createBiquadFilter();
     filter.type = "highpass";
-    filter.frequency.setValueAtTime(direction > 0 ? 1800 : 2200, startTime);
+    filter.frequency.setValueAtTime(direction > 0 ? 1450 : 1700, startTime);
     filter.Q.setValueAtTime(0.8, startTime);
 
     const gain = audioContext.createGain();
-    gain.gain.setValueAtTime(MIN_GAIN, startTime);
-    gain.gain.exponentialRampToValueAtTime(Math.max(MIN_GAIN, volume), startTime + 0.012);
-    gain.gain.exponentialRampToValueAtTime(MIN_GAIN, startTime + duration);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(volume, startTime + 0.018);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
 
     noise.connect(filter).connect(gain).connect(masterGain);
     noise.start(startTime);
@@ -279,21 +301,25 @@ function createNoiseBuffer(audioContext) {
 }
 
 function shapePercussiveEnvelope(audioParam, startTime, duration, peak) {
+  const attackEnd = startTime + Math.min(ATTACK_SECONDS, duration * 0.45);
+  const bodyEnd = startTime + duration * 0.54;
+  const endTime = startTime + duration;
+
   audioParam.cancelScheduledValues(startTime);
-  audioParam.setValueAtTime(MIN_GAIN, startTime);
-  audioParam.exponentialRampToValueAtTime(Math.max(MIN_GAIN, peak), startTime + ATTACK_SECONDS);
-  audioParam.exponentialRampToValueAtTime(MIN_GAIN, startTime + duration);
+  audioParam.setValueAtTime(0, startTime);
+  audioParam.linearRampToValueAtTime(peak, attackEnd);
+  audioParam.linearRampToValueAtTime(peak * 0.34, bodyEnd);
+  audioParam.linearRampToValueAtTime(0, endTime);
 }
 
 function createSoftClipCurve() {
   const sampleCount = 65536;
   const curve = new Float32Array(sampleCount);
   const drive = 1.8;
-  const normalizer = Math.tanh(drive);
 
   for (let index = 0; index < sampleCount; index += 1) {
     const x = (index / (sampleCount - 1)) * 2 - 1;
-    curve[index] = Math.tanh(x * drive) / normalizer;
+    curve[index] = Math.tanh(x * drive) * 0.84;
   }
 
   return curve;
