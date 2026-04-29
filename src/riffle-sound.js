@@ -3,6 +3,7 @@ const AudioContextConstructor = typeof window !== "undefined"
   : null;
 
 const MIN_GAIN = 0.0001;
+const ATTACK_SECONDS = 0.01;
 const TICK_POINTS = createTickPoints();
 
 export function createRiffleSound() {
@@ -12,14 +13,20 @@ export function createRiffleSound() {
   let noiseBuffer = null;
   let lastProgress = null;
   let lastScrapeAt = 0;
+  let isPrimed = false;
   let muted = false;
 
   function unlock() {
     const audioContext = ensureContext();
     if (!audioContext) return;
     if (audioContext.state === "suspended") {
-      audioContext.resume().catch(() => {});
+      audioContext.resume()
+        .then(() => primeContext())
+        .catch(() => {});
+      return;
     }
+
+    primeContext();
   }
 
   function setProgress(progress) {
@@ -56,13 +63,13 @@ export function createRiffleSound() {
     unlock();
     playKnock({
       delay: 0,
-      volume: 0.092,
-      duration: 0.052,
-      frequency: 1740,
-      noiseFrequency: 3900,
-      noiseQ: 9,
-      resonanceFrequency: 1580,
-      resonanceVolume: 0.028
+      volume: 0.072,
+      duration: 0.06,
+      frequency: 1680,
+      noiseFrequency: 3200,
+      noiseQ: 5.5,
+      resonanceFrequency: 1460,
+      resonanceVolume: 0.018
     });
   }
 
@@ -82,17 +89,34 @@ export function createRiffleSound() {
     noiseBuffer = createNoiseBuffer(context);
 
     masterGain = context.createGain();
-    masterGain.gain.value = 2;
+    masterGain.gain.value = 0.68;
 
     compressor = context.createDynamicsCompressor();
     compressor.threshold.value = -24;
     compressor.knee.value = 18;
     compressor.ratio.value = 5;
-    compressor.attack.value = 0.004;
-    compressor.release.value = 0.12;
+    compressor.attack.value = 0.008;
+    compressor.release.value = 0.16;
 
     masterGain.connect(compressor).connect(context.destination);
     return context;
+  }
+
+  function primeContext() {
+    if (isPrimed || !context || !masterGain || context.state !== "running") return;
+    isPrimed = true;
+
+    const startTime = context.currentTime;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(220, startTime);
+    gain.gain.setValueAtTime(MIN_GAIN, startTime);
+    gain.gain.exponentialRampToValueAtTime(MIN_GAIN, startTime + 0.024);
+
+    oscillator.connect(gain).connect(masterGain);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + 0.026);
   }
 
   function playTick(direction, tickPoint, delay = 0) {
@@ -188,7 +212,7 @@ export function createRiffleSound() {
 
     const gain = audioContext.createGain();
     gain.gain.setValueAtTime(MIN_GAIN, startTime);
-    gain.gain.exponentialRampToValueAtTime(Math.max(MIN_GAIN, volume), startTime + 0.008);
+    gain.gain.exponentialRampToValueAtTime(Math.max(MIN_GAIN, volume), startTime + 0.012);
     gain.gain.exponentialRampToValueAtTime(MIN_GAIN, startTime + duration);
 
     noise.connect(filter).connect(gain).connect(masterGain);
@@ -242,7 +266,7 @@ function createNoiseBuffer(audioContext) {
 function shapePercussiveEnvelope(audioParam, startTime, duration, peak) {
   audioParam.cancelScheduledValues(startTime);
   audioParam.setValueAtTime(MIN_GAIN, startTime);
-  audioParam.exponentialRampToValueAtTime(Math.max(MIN_GAIN, peak), startTime + 0.004);
+  audioParam.exponentialRampToValueAtTime(Math.max(MIN_GAIN, peak), startTime + ATTACK_SECONDS);
   audioParam.exponentialRampToValueAtTime(MIN_GAIN, startTime + duration);
 }
 
