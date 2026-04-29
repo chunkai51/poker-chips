@@ -1,3 +1,5 @@
+import { createRiffleSound } from "./riffle-sound.js";
+
 const RISE_THRESHOLD = 240;
 const SPLIT_ANIMATION_MS = 760;
 const CHIP_HEIGHT = 20;
@@ -17,6 +19,7 @@ export function initChipRiffle({ trigger }) {
   const gestureValue = popover.querySelector("[data-riffle-gesture]");
   const hint = popover.querySelector(".riffle-hint");
   const chipModels = Array.from(popover.querySelectorAll(".riffle-chip")).map(createChipModel);
+  const sound = createRiffleSound();
 
   let state = "single";
   let isOpen = false;
@@ -40,6 +43,7 @@ export function initChipRiffle({ trigger }) {
 
   trigger.addEventListener("click", event => {
     event.stopPropagation();
+    sound.unlock();
     if (isOpen) {
       closePopover();
     } else {
@@ -69,6 +73,7 @@ export function initChipRiffle({ trigger }) {
   });
 
   stack.addEventListener("click", () => {
+    sound.unlock();
     if (transition !== "idle") return;
     if (performance.now() - lastPointerInteractionAt < 700) return;
     if (state === "single") {
@@ -77,6 +82,7 @@ export function initChipRiffle({ trigger }) {
   });
 
   stack.addEventListener("pointerdown", event => {
+    sound.unlock();
     if (transition !== "idle") {
       event.preventDefault();
       renderGesture("分堆动画进行中");
@@ -200,6 +206,7 @@ export function initChipRiffle({ trigger }) {
   function beginSplitAnimation(message) {
     clearSplitAnimation();
     clearRifflePose();
+    sound.playSplit();
     state = "split";
     transition = "splitting";
     renderState(message);
@@ -221,6 +228,7 @@ export function initChipRiffle({ trigger }) {
   function renderRiffleProgress(progress) {
     riffleProgress = clamp(progress, 0, 1);
     popover.dataset.riffle = "active";
+    sound.setProgress(riffleProgress);
 
     const approachProgress = smoothstep(0, 0.2, riffleProgress);
     const rifflePhase = clamp((riffleProgress - 0.16) / 0.72, 0, 1);
@@ -280,6 +288,9 @@ export function initChipRiffle({ trigger }) {
     const fromProgress = riffleProgress;
     animateRiffleProgress(fromProgress, shouldComplete ? 1 : 0, () => {
       state = shouldComplete ? "single" : "split";
+      if (shouldComplete) {
+        sound.playSettle();
+      }
       riffleProgress = 0;
       clearRifflePose();
       renderState(message);
@@ -315,6 +326,7 @@ export function initChipRiffle({ trigger }) {
 
   function clearRifflePose() {
     riffleProgress = 0;
+    sound.resetProgress();
     delete popover.dataset.riffle;
     chipModels.forEach(({ element }) => {
       element.style.removeProperty("bottom");
