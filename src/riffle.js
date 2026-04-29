@@ -1,4 +1,4 @@
-const RISE_THRESHOLD = 132;
+const RISE_THRESHOLD = 240;
 const SPLIT_ANIMATION_MS = 760;
 const CHIP_HEIGHT = 20;
 const STACK_BASE = 18;
