@@ -1,4 +1,5 @@
 const RISE_THRESHOLD = 42;
+const SPLIT_ANIMATION_MS = 760;
 
 export function initChipRiffle({ trigger }) {
   if (!trigger) return;
@@ -19,6 +20,8 @@ export function initChipRiffle({ trigger }) {
   let pointerMoved = false;
   let activePointerId = null;
   let lastPointerInteractionAt = -Infinity;
+  let transition = "idle";
+  let splitAnimationTimer = null;
 
   document.body.appendChild(dismissLayer);
   document.body.appendChild(popover);
@@ -58,14 +61,19 @@ export function initChipRiffle({ trigger }) {
   });
 
   stack.addEventListener("click", () => {
+    if (transition !== "idle") return;
     if (performance.now() - lastPointerInteractionAt < 700) return;
     if (state === "single") {
-      state = "split";
-      renderState("点击筹码：single -> split");
+      beginSplitAnimation("点击筹码：single -> split");
     }
   });
 
   stack.addEventListener("pointerdown", event => {
+    if (transition !== "idle") {
+      event.preventDefault();
+      renderGesture("分堆动画进行中");
+      return;
+    }
     lastPointerInteractionAt = performance.now();
     activePointerId = event.pointerId;
     pointerMoved = false;
@@ -109,8 +117,7 @@ export function initChipRiffle({ trigger }) {
         renderGesture("检测到移动，保持 single");
         return;
       }
-      state = "split";
-      renderState("点击筹码：single -> split");
+      beginSplitAnimation("点击筹码：single -> split");
       return;
     }
 
@@ -146,6 +153,7 @@ export function initChipRiffle({ trigger }) {
   function openPopover() {
     isOpen = true;
     state = "single";
+    clearSplitAnimation();
     isDragging = false;
     pointerMoved = false;
     activePointerId = null;
@@ -158,6 +166,7 @@ export function initChipRiffle({ trigger }) {
 
   function closePopover() {
     isOpen = false;
+    clearSplitAnimation();
     isDragging = false;
     pointerMoved = false;
     activePointerId = null;
@@ -171,12 +180,41 @@ export function initChipRiffle({ trigger }) {
     // Reserved for the later animated version if the popover needs to track an anchor.
   }
 
+  function beginSplitAnimation(message) {
+    clearSplitAnimation();
+    state = "split";
+    transition = "splitting";
+    renderState(message);
+    splitAnimationTimer = window.setTimeout(() => {
+      transition = "idle";
+      splitAnimationTimer = null;
+      renderState("分堆完成：split");
+    }, SPLIT_ANIMATION_MS);
+  }
+
+  function clearSplitAnimation() {
+    if (splitAnimationTimer) {
+      window.clearTimeout(splitAnimationTimer);
+      splitAnimationTimer = null;
+    }
+    transition = "idle";
+  }
+
   function renderState(message = "") {
     popover.dataset.state = state;
+    if (transition === "idle") {
+      delete popover.dataset.transition;
+    } else {
+      popover.dataset.transition = transition;
+    }
     stateValue.textContent = state;
-    hint.textContent = state === "single"
-      ? "点击筹码堆：single -> split"
-      : "在筹码堆上上滑：split -> single";
+    if (transition !== "idle") {
+      hint.textContent = "分堆动画进行中";
+    } else {
+      hint.textContent = state === "single"
+        ? "点击筹码堆：single -> split"
+        : "在筹码堆上上滑：split -> single";
+    }
     renderGesture(message || "等待操作");
   }
 
@@ -211,7 +249,8 @@ function createPopover() {
         ${Array.from({ length: 12 }, (_, index) => {
           const pileIndex = index % 6;
           const pileSide = index < 6 ? -1 : 1;
-          return `<span class="riffle-chip" style="--chip-index: ${index}; --pile-index: ${pileIndex}; --pile-side: ${pileSide};"></span>`;
+          const pileName = index < 6 ? "left" : "right";
+          return `<span class="riffle-chip" data-pile="${pileName}" style="--chip-index: ${index}; --pile-index: ${pileIndex}; --pile-side: ${pileSide};"></span>`;
         }).join("")}
       </span>
     </button>

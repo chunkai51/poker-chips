@@ -749,29 +749,121 @@ h3 {
 }
 
 .riffle-stack-view {
+  --chip-height: 20px;
+  --chip-width: 126px;
+  --split-offset: 74px;
+  --stack-base: 18px;
   position: relative;
   display: block;
-  width: min(292px, 100%);
-  height: 264px;
+  width: min(300px, 100%);
+  height: 286px;
+  filter: drop-shadow(0 18px 28px rgba(0, 0, 0, 0.34));
+}
+
+.riffle-stack-view::before {
+  position: absolute;
+  right: 8px;
+  bottom: calc(var(--stack-base) - 8px);
+  left: 8px;
+  height: 10px;
+  border-radius: 999px;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.38), rgba(0, 0, 0, 0));
+  content: "";
+  pointer-events: none;
 }
 
 .riffle-chip {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--chip-index) * 11px + 42px);
-  width: 126px;
-  height: 22px;
-  border: 1px solid rgba(242, 217, 141, 0.42);
-  border-radius: 999px;
+  bottom: calc(var(--stack-base) + var(--chip-index) * var(--chip-height));
+  width: var(--chip-width);
+  height: var(--chip-height);
+  overflow: hidden;
+  border: 1px solid rgba(242, 217, 141, 0.58);
+  border-radius: 5px;
   background:
-    linear-gradient(180deg, rgba(255, 248, 232, 0.78), rgba(216, 180, 95, 0.32) 42%, rgba(72, 26, 30, 0.38) 43%, rgba(10, 74, 56, 0.96) 48%, rgba(6, 44, 35, 0.96));
-  box-shadow: 0 4px 9px rgba(0, 0, 0, 0.34);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 248, 232, 0.12) 28%, rgba(77, 43, 38, 0.28) 52%, rgba(0, 0, 0, 0.18) 100%),
+    repeating-linear-gradient(90deg,
+      rgba(255, 250, 237, 0.98) 0 12px,
+      rgba(231, 193, 91, 0.96) 12px 23px,
+      rgba(122, 71, 45, 0.82) 23px 29px,
+      rgba(231, 193, 91, 0.96) 29px 40px,
+      rgba(255, 250, 237, 0.98) 40px 52px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.46),
+    inset 0 -1px 0 rgba(65, 31, 28, 0.46);
   transform: translateX(-50%);
+  transform-origin: center bottom;
+}
+
+.riffle-chip::before,
+.riffle-chip::after {
+  position: absolute;
+  right: 0;
+  left: 0;
+  content: "";
+  pointer-events: none;
+}
+
+.riffle-chip::before {
+  top: 0;
+  height: 5px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0));
+}
+
+.riffle-chip::after {
+  bottom: 0;
+  height: 5px;
+  background: linear-gradient(180deg, rgba(82, 45, 36, 0), rgba(82, 45, 36, 0.38));
 }
 
 .riffle-popover[data-state="split"] .riffle-chip {
-  bottom: calc(var(--pile-index) * 14px + 58px);
-  transform: translateX(calc(-50% + var(--pile-side) * 76px));
+  bottom: calc(var(--stack-base) + var(--pile-index) * var(--chip-height));
+  transform: translateX(calc(-50% + var(--pile-side) * var(--split-offset)));
+}
+
+.riffle-popover[data-transition="splitting"] .riffle-chip {
+  animation-duration: 760ms;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.2, 0.74, 0.18, 1);
+}
+
+.riffle-popover[data-transition="splitting"] .riffle-chip[data-pile="left"] {
+  animation-name: riffle-split-left;
+}
+
+.riffle-popover[data-transition="splitting"] .riffle-chip[data-pile="right"] {
+  animation-name: riffle-split-right;
+}
+
+@keyframes riffle-split-left {
+  0% {
+    bottom: calc(var(--stack-base) + var(--chip-index) * var(--chip-height));
+    transform: translateX(-50%);
+  }
+
+  44%,
+  100% {
+    bottom: calc(var(--stack-base) + var(--pile-index) * var(--chip-height));
+    transform: translateX(calc(-50% - var(--split-offset)));
+  }
+}
+
+@keyframes riffle-split-right {
+  0% {
+    bottom: calc(var(--stack-base) + var(--chip-index) * var(--chip-height));
+    transform: translateX(-50%);
+  }
+
+  44% {
+    bottom: calc(var(--stack-base) + var(--chip-index) * var(--chip-height));
+    transform: translateX(calc(-50% - var(--split-offset)));
+  }
+
+  100% {
+    bottom: calc(var(--stack-base) + var(--pile-index) * var(--chip-height));
+    transform: translateX(calc(-50% + var(--split-offset)));
+  }
 }
 
 .riffle-debug {
