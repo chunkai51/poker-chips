@@ -674,11 +674,14 @@ h3 {
 
 .riffle-popover {
   position: fixed;
+  display: flex;
+  flex-direction: column;
   top: 50%;
   left: 50%;
   z-index: 220;
-  width: min(430px, calc(100vw - 28px));
-  overflow: hidden;
+  width: min(376px, calc(100vw - 28px));
+  min-height: min(620px, calc(100vh - 28px));
+  overflow-y: auto;
   border: 1px solid rgba(242, 217, 141, 0.24);
   border-radius: var(--radius);
   background:
@@ -730,13 +733,14 @@ h3 {
 
 .riffle-stack {
   display: grid;
+  flex: 1 0 336px;
   width: 100%;
-  min-height: 188px;
+  min-height: 336px;
   place-items: center;
   margin-top: 16px;
   border-color: rgba(216, 180, 95, 0.22);
   background: rgba(1, 10, 8, 0.34);
-  padding: 18px;
+  padding: 22px 16px;
   touch-action: none;
 }
 
@@ -747,27 +751,27 @@ h3 {
 .riffle-stack-view {
   position: relative;
   display: block;
-  width: 270px;
-  height: 120px;
+  width: min(292px, 100%);
+  height: 264px;
 }
 
 .riffle-chip {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--chip-index) * 5px);
-  width: 112px;
-  height: 16px;
+  bottom: calc(var(--chip-index) * 11px + 42px);
+  width: 126px;
+  height: 22px;
   border: 1px solid rgba(242, 217, 141, 0.42);
   border-radius: 999px;
   background:
     linear-gradient(180deg, rgba(255, 248, 232, 0.78), rgba(216, 180, 95, 0.32) 42%, rgba(72, 26, 30, 0.38) 43%, rgba(10, 74, 56, 0.96) 48%, rgba(6, 44, 35, 0.96));
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 4px 9px rgba(0, 0, 0, 0.34);
   transform: translateX(-50%);
 }
 
 .riffle-popover[data-state="split"] .riffle-chip {
-  bottom: calc(var(--pile-index) * 8px + 14px);
-  transform: translateX(calc(-50% + var(--pile-side) * 58px));
+  bottom: calc(var(--pile-index) * 14px + 58px);
+  transform: translateX(calc(-50% + var(--pile-side) * 76px));
 }
 
 .riffle-debug {

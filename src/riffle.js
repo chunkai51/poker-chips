@@ -16,7 +16,9 @@ export function initChipRiffle({ trigger }) {
   let pointerStartY = 0;
   let pointerStartX = 0;
   let isDragging = false;
-  let hasMoved = false;
+  let pointerMoved = false;
+  let activePointerId = null;
+  let lastPointerInteractionAt = -Infinity;
 
   document.body.appendChild(dismissLayer);
   document.body.appendChild(popover);
@@ -56,10 +58,7 @@ export function initChipRiffle({ trigger }) {
   });
 
   stack.addEventListener("click", () => {
-    if (hasMoved) {
-      hasMoved = false;
-      return;
-    }
+    if (performance.now() - lastPointerInteractionAt < 700) return;
     if (state === "single") {
       state = "split";
       renderState("点击筹码：single -> split");
@@ -67,34 +66,52 @@ export function initChipRiffle({ trigger }) {
   });
 
   stack.addEventListener("pointerdown", event => {
-    if (state !== "split") return;
-    isDragging = true;
-    hasMoved = false;
+    lastPointerInteractionAt = performance.now();
+    activePointerId = event.pointerId;
+    pointerMoved = false;
     pointerStartY = event.clientY;
     pointerStartX = event.clientX;
     stack.setPointerCapture(event.pointerId);
-    renderGesture("开始上滑检测");
+    isDragging = state === "split";
+    renderGesture(state === "split" ? "开始上滑检测" : "按下筹码，松开进入 split");
   });
 
   stack.addEventListener("pointermove", event => {
-    if (!isDragging) return;
+    if (activePointerId !== event.pointerId) return;
     const deltaY = pointerStartY - event.clientY;
     const deltaX = event.clientX - pointerStartX;
     const progress = clamp(deltaY / RISE_THRESHOLD, 0, 1);
 
     if (Math.abs(deltaY) > 4 || Math.abs(deltaX) > 4) {
-      hasMoved = true;
+      pointerMoved = true;
     }
 
+    if (!isDragging) return;
     renderGesture(`上滑 ${Math.max(0, Math.round(deltaY))}px / ${RISE_THRESHOLD}px，progress ${progress.toFixed(2)}`);
   });
 
   stack.addEventListener("pointerup", event => {
-    if (!isDragging) return;
+    if (activePointerId !== event.pointerId) return;
+    lastPointerInteractionAt = performance.now();
     isDragging = false;
     const deltaY = pointerStartY - event.clientY;
-    if (Math.abs(deltaY) > 4) {
-      hasMoved = true;
+    activePointerId = null;
+    if (stack.hasPointerCapture(event.pointerId)) {
+      stack.releasePointerCapture(event.pointerId);
+    }
+
+    if (Math.abs(deltaY) > 4 || Math.abs(event.clientX - pointerStartX) > 4) {
+      pointerMoved = true;
+    }
+
+    if (state === "single") {
+      if (pointerMoved) {
+        renderGesture("检测到移动，保持 single");
+        return;
+      }
+      state = "split";
+      renderState("点击筹码：single -> split");
+      return;
     }
 
     if (deltaY >= RISE_THRESHOLD) {
@@ -106,8 +123,9 @@ export function initChipRiffle({ trigger }) {
   });
 
   stack.addEventListener("pointercancel", () => {
-    if (!isDragging) return;
     isDragging = false;
+    activePointerId = null;
+    pointerMoved = false;
     renderGesture("手势取消，保持当前状态");
   });
 
@@ -128,8 +146,10 @@ export function initChipRiffle({ trigger }) {
   function openPopover() {
     isOpen = true;
     state = "single";
-    hasMoved = false;
     isDragging = false;
+    pointerMoved = false;
+    activePointerId = null;
+    lastPointerInteractionAt = -Infinity;
     dismissLayer.hidden = false;
     popover.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
@@ -139,7 +159,8 @@ export function initChipRiffle({ trigger }) {
   function closePopover() {
     isOpen = false;
     isDragging = false;
-    hasMoved = false;
+    pointerMoved = false;
+    activePointerId = null;
     dismissLayer.hidden = true;
     popover.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
