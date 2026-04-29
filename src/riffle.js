@@ -469,7 +469,7 @@ function createPopover() {
     <div class="riffle-header">
       <div>
         <p class="riffle-eyebrow">Chip Riffle</p>
-        <h3>筹码小动作</h3>
+        <h3>筹码叠洗</h3>
       </div>
       <div class="riffle-actions">
         <button class="riffle-skin" type="button" aria-label="切换筹码配色" title="切换配色">
