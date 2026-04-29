@@ -226,8 +226,10 @@ export function initChipRiffle({ trigger }) {
     const rifflePhase = clamp((riffleProgress - 0.16) / 0.72, 0, 1);
     const settleProgress = smoothstep(0.86, 1, riffleProgress);
     const contactPoint = rifflePhase * PILE_SIZE;
+    const leftInsertProgress = Array(PILE_SIZE).fill(0);
+    const rightInsertProgress = Array(PILE_SIZE).fill(0);
 
-    chipModels.forEach(model => {
+    const frames = chipModels.map(model => {
       const side = model.side;
       const pairDelay = side > 0 ? 0.14 : 0;
       const insertStart = (model.pileIndex + pairDelay) / PILE_SIZE;
@@ -235,11 +237,26 @@ export function initChipRiffle({ trigger }) {
       const insertProgress = smoothstep(insertStart, insertEnd, rifflePhase);
       const aboveContact = clamp((model.pileIndex + 1 - contactPoint) / PILE_SIZE, 0, 1);
       const pressure = (1 - insertProgress) * smoothstep(0.02, 0.28, rifflePhase) * (0.3 + 0.7 * aboveContact);
+
+      if (side < 0) {
+        leftInsertProgress[model.pileIndex] = insertProgress;
+      } else {
+        rightInsertProgress[model.pileIndex] = insertProgress;
+      }
+
+      return { model, side, insertProgress, pressure, aboveContact };
+    });
+
+    frames.forEach(({ model, side, insertProgress, pressure, aboveContact }) => {
+      const supportLiftSlots = side < 0
+        ? sumFirst(rightInsertProgress, model.pileIndex)
+        : sumFirst(leftInsertProgress, model.pileIndex + 1);
       const approachX = lerp(side * SPLIT_OFFSET, side * APPROACH_OFFSET, approachProgress);
+      const supportedSlot = model.pileIndex + supportLiftSlots;
       const finalSlot = model.finalIndex;
 
       let x = lerp(approachX, 0, insertProgress);
-      let slot = lerp(model.pileIndex, finalSlot, insertProgress);
+      let slot = lerp(supportedSlot, finalSlot, insertProgress);
       let lift = -18 * pressure;
       let rotate = (side > 0 ? 1 : -1) * (5 + 13 * aboveContact) * pressure;
 
@@ -392,6 +409,14 @@ function lerp(start, end, progress) {
 function smoothstep(edge0, edge1, value) {
   const progress = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return progress * progress * (3 - 2 * progress);
+}
+
+function sumFirst(values, count) {
+  let total = 0;
+  for (let index = 0; index < count; index += 1) {
+    total += values[index] || 0;
+  }
+  return total;
 }
 
 function easeOutCubic(value) {
