@@ -794,6 +794,7 @@ h3 {
     inset 0 -1px 0 rgba(65, 31, 28, 0.46);
   transform: translateX(-50%);
   transform-origin: center bottom;
+  will-change: bottom, transform;
 }
 
 .riffle-chip::before,

@@ -1,5 +1,10 @@
-const RISE_THRESHOLD = 42;
+const RISE_THRESHOLD = 132;
 const SPLIT_ANIMATION_MS = 760;
+const CHIP_HEIGHT = 20;
+const STACK_BASE = 18;
+const SPLIT_OFFSET = 74;
+const APPROACH_OFFSET = 28;
+const PILE_SIZE = 6;
 
 export function initChipRiffle({ trigger }) {
   if (!trigger) return;
@@ -11,6 +16,7 @@ export function initChipRiffle({ trigger }) {
   const stateValue = popover.querySelector("[data-riffle-state]");
   const gestureValue = popover.querySelector("[data-riffle-gesture]");
   const hint = popover.querySelector(".riffle-hint");
+  const chipModels = Array.from(popover.querySelectorAll(".riffle-chip")).map(createChipModel);
 
   let state = "single";
   let isOpen = false;
@@ -22,6 +28,8 @@ export function initChipRiffle({ trigger }) {
   let lastPointerInteractionAt = -Infinity;
   let transition = "idle";
   let splitAnimationTimer = null;
+  let riffleAnimationFrame = null;
+  let riffleProgress = 0;
 
   document.body.appendChild(dismissLayer);
   document.body.appendChild(popover);
@@ -81,7 +89,11 @@ export function initChipRiffle({ trigger }) {
     pointerStartX = event.clientX;
     stack.setPointerCapture(event.pointerId);
     isDragging = state === "split";
-    renderGesture(state === "split" ? "开始上滑检测" : "按下筹码，松开进入 split");
+    if (isDragging) {
+      cancelRiffleAnimation();
+      renderRiffleProgress(0);
+    }
+    renderGesture(state === "split" ? "开始上滑，底部从左筹码开始穿插" : "按下筹码，松开进入 split");
   });
 
   stack.addEventListener("pointermove", event => {
@@ -95,6 +107,7 @@ export function initChipRiffle({ trigger }) {
     }
 
     if (!isDragging) return;
+    renderRiffleProgress(progress);
     renderGesture(`上滑 ${Math.max(0, Math.round(deltaY))}px / ${RISE_THRESHOLD}px，progress ${progress.toFixed(2)}`);
   });
 
@@ -122,18 +135,19 @@ export function initChipRiffle({ trigger }) {
     }
 
     if (deltaY >= RISE_THRESHOLD) {
-      state = "single";
-      renderState("上滑达标：split -> single");
+      finishRiffleGesture(true, "叠筹码完成：split -> single");
     } else {
-      renderGesture(`上滑不足，保持 split（${Math.max(0, Math.round(deltaY))}px）`);
+      finishRiffleGesture(false, `上滑不足，回到 split（${Math.max(0, Math.round(deltaY))}px）`);
     }
   });
 
   stack.addEventListener("pointercancel", () => {
+    if (isDragging) {
+      finishRiffleGesture(false, "手势取消，回到 split");
+    }
     isDragging = false;
     activePointerId = null;
     pointerMoved = false;
-    renderGesture("手势取消，保持当前状态");
   });
 
   document.addEventListener("keydown", event => {
@@ -154,6 +168,7 @@ export function initChipRiffle({ trigger }) {
     isOpen = true;
     state = "single";
     clearSplitAnimation();
+    clearRifflePose();
     isDragging = false;
     pointerMoved = false;
     activePointerId = null;
@@ -167,6 +182,8 @@ export function initChipRiffle({ trigger }) {
   function closePopover() {
     isOpen = false;
     clearSplitAnimation();
+    cancelRiffleAnimation();
+    clearRifflePose();
     isDragging = false;
     pointerMoved = false;
     activePointerId = null;
@@ -182,6 +199,7 @@ export function initChipRiffle({ trigger }) {
 
   function beginSplitAnimation(message) {
     clearSplitAnimation();
+    clearRifflePose();
     state = "split";
     transition = "splitting";
     renderState(message);
@@ -198,6 +216,95 @@ export function initChipRiffle({ trigger }) {
       splitAnimationTimer = null;
     }
     transition = "idle";
+  }
+
+  function renderRiffleProgress(progress) {
+    riffleProgress = clamp(progress, 0, 1);
+    popover.dataset.riffle = "active";
+
+    const approachProgress = smoothstep(0, 0.2, riffleProgress);
+    const rifflePhase = clamp((riffleProgress - 0.16) / 0.72, 0, 1);
+    const settleProgress = smoothstep(0.86, 1, riffleProgress);
+    const contactPoint = rifflePhase * PILE_SIZE;
+
+    chipModels.forEach(model => {
+      const side = model.side;
+      const pairDelay = side > 0 ? 0.14 : 0;
+      const insertStart = (model.pileIndex + pairDelay) / PILE_SIZE;
+      const insertEnd = (model.pileIndex + 0.84 + pairDelay) / PILE_SIZE;
+      const insertProgress = smoothstep(insertStart, insertEnd, rifflePhase);
+      const aboveContact = clamp((model.pileIndex + 1 - contactPoint) / PILE_SIZE, 0, 1);
+      const pressure = (1 - insertProgress) * smoothstep(0.02, 0.28, rifflePhase) * (0.3 + 0.7 * aboveContact);
+      const approachX = lerp(side * SPLIT_OFFSET, side * APPROACH_OFFSET, approachProgress);
+      const finalSlot = model.finalIndex;
+
+      let x = lerp(approachX, 0, insertProgress);
+      let slot = lerp(model.pileIndex, finalSlot, insertProgress);
+      let lift = -18 * pressure;
+      let rotate = (side > 0 ? 1 : -1) * (5 + 13 * aboveContact) * pressure;
+
+      x = lerp(x, 0, settleProgress);
+      slot = lerp(slot, finalSlot, settleProgress);
+      lift = lerp(lift, 0, settleProgress);
+      rotate = lerp(rotate, 0, settleProgress);
+
+      setChipPose(model, { x, slot, lift, rotate });
+    });
+  }
+
+  function setChipPose(model, pose) {
+    model.element.style.bottom = `${STACK_BASE + pose.slot * CHIP_HEIGHT}px`;
+    model.element.style.transform = `translateX(calc(-50% + ${pose.x.toFixed(2)}px)) translateY(${pose.lift.toFixed(2)}px) rotate(${pose.rotate.toFixed(2)}deg)`;
+    model.element.style.transformOrigin = model.side < 0 ? "0% 100%" : "100% 100%";
+    model.element.style.zIndex = String(100 + Math.round(pose.slot * 10));
+  }
+
+  function finishRiffleGesture(shouldComplete, message) {
+    const fromProgress = riffleProgress;
+    animateRiffleProgress(fromProgress, shouldComplete ? 1 : 0, () => {
+      state = shouldComplete ? "single" : "split";
+      riffleProgress = 0;
+      clearRifflePose();
+      renderState(message);
+    });
+  }
+
+  function animateRiffleProgress(fromProgress, toProgress, onComplete) {
+    cancelRiffleAnimation();
+    const startTime = performance.now();
+    const distance = Math.abs(toProgress - fromProgress);
+    const duration = Math.max(120, distance * 260);
+
+    function step(now) {
+      const progress = clamp((now - startTime) / duration, 0, 1);
+      renderRiffleProgress(lerp(fromProgress, toProgress, easeOutCubic(progress)));
+      if (progress < 1) {
+        riffleAnimationFrame = window.requestAnimationFrame(step);
+        return;
+      }
+
+      riffleAnimationFrame = null;
+      onComplete();
+    }
+
+    riffleAnimationFrame = window.requestAnimationFrame(step);
+  }
+
+  function cancelRiffleAnimation() {
+    if (!riffleAnimationFrame) return;
+    window.cancelAnimationFrame(riffleAnimationFrame);
+    riffleAnimationFrame = null;
+  }
+
+  function clearRifflePose() {
+    riffleProgress = 0;
+    delete popover.dataset.riffle;
+    chipModels.forEach(({ element }) => {
+      element.style.removeProperty("bottom");
+      element.style.removeProperty("transform");
+      element.style.removeProperty("transform-origin");
+      element.style.removeProperty("z-index");
+    });
   }
 
   function renderState(message = "") {
@@ -250,7 +357,8 @@ function createPopover() {
           const pileIndex = index % 6;
           const pileSide = index < 6 ? -1 : 1;
           const pileName = index < 6 ? "left" : "right";
-          return `<span class="riffle-chip" data-pile="${pileName}" style="--chip-index: ${index}; --pile-index: ${pileIndex}; --pile-side: ${pileSide};"></span>`;
+          const finalIndex = pileIndex * 2 + (pileName === "left" ? 0 : 1);
+          return `<span class="riffle-chip" data-pile="${pileName}" data-chip-index="${index}" data-pile-index="${pileIndex}" data-pile-side="${pileSide}" data-final-index="${finalIndex}" style="--chip-index: ${index}; --pile-index: ${pileIndex}; --pile-side: ${pileSide};"></span>`;
         }).join("")}
       </span>
     </button>
@@ -263,6 +371,29 @@ function createPopover() {
   return popover;
 }
 
+function createChipModel(element) {
+  return {
+    element,
+    chipIndex: Number(element.dataset.chipIndex),
+    pileIndex: Number(element.dataset.pileIndex),
+    side: Number(element.dataset.pileSide),
+    finalIndex: Number(element.dataset.finalIndex)
+  };
+}
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function lerp(start, end, progress) {
+  return start + (end - start) * progress;
+}
+
+function smoothstep(edge0, edge1, value) {
+  const progress = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return progress * progress * (3 - 2 * progress);
+}
+
+function easeOutCubic(value) {
+  return 1 - Math.pow(1 - value, 3);
 }
