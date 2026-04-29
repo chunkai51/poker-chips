@@ -141,15 +141,21 @@ h3 {
 }
 
 .brand-mark-button {
-  display: inline-grid;
-  width: 38px;
-  height: 38px;
+  appearance: none;
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  min-width: 0;
   min-height: 0;
-  place-items: center;
-  border: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0 !important;
   border-radius: 50%;
-  background: transparent;
-  padding: 2px;
+  background: transparent !important;
+  box-shadow: none !important;
+  line-height: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .brand-mark-button:hover:not(:disabled) {
@@ -655,20 +661,32 @@ h3 {
   margin-top: 8px;
 }
 
+.riffle-dismiss-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  background: transparent;
+}
+
+.riffle-dismiss-layer[hidden] {
+  display: none;
+}
+
 .riffle-popover {
   position: fixed;
-  top: var(--riffle-top, 64px);
-  left: var(--riffle-left, 16px);
+  top: 50%;
+  left: 50%;
   z-index: 220;
-  width: var(--riffle-width, 320px);
+  width: min(430px, calc(100vw - 28px));
   overflow: hidden;
   border: 1px solid rgba(242, 217, 141, 0.24);
   border-radius: var(--radius);
   background:
     linear-gradient(180deg, rgba(255, 248, 232, 0.06), rgba(255, 248, 232, 0.02)),
-    rgba(2, 14, 11, 0.88);
+    rgba(2, 14, 11, 0.93);
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.44);
-  padding: 14px;
+  padding: 18px;
+  transform: translate(-50%, -50%);
   backdrop-filter: blur(18px);
 }
 
@@ -692,7 +710,7 @@ h3 {
 
 .riffle-header h3 {
   margin-top: 2px;
-  font-size: 1.05rem;
+  font-size: 1.18rem;
 }
 
 .riffle-close {
@@ -713,12 +731,12 @@ h3 {
 .riffle-stack {
   display: grid;
   width: 100%;
-  min-height: 144px;
+  min-height: 188px;
   place-items: center;
-  margin-top: 12px;
+  margin-top: 16px;
   border-color: rgba(216, 180, 95, 0.22);
   background: rgba(1, 10, 8, 0.34);
-  padding: 14px;
+  padding: 18px;
   touch-action: none;
 }
 
@@ -729,16 +747,16 @@ h3 {
 .riffle-stack-view {
   position: relative;
   display: block;
-  width: 208px;
-  height: 96px;
+  width: 270px;
+  height: 120px;
 }
 
 .riffle-chip {
   position: absolute;
   left: 50%;
   bottom: calc(var(--chip-index) * 5px);
-  width: 84px;
-  height: 14px;
+  width: 112px;
+  height: 16px;
   border: 1px solid rgba(242, 217, 141, 0.42);
   border-radius: 999px;
   background:
@@ -748,8 +766,8 @@ h3 {
 }
 
 .riffle-popover[data-state="split"] .riffle-chip {
-  bottom: calc(var(--pile-index) * 7px + 10px);
-  transform: translateX(calc(-50% + var(--pile-side) * 42px));
+  bottom: calc(var(--pile-index) * 8px + 14px);
+  transform: translateX(calc(-50% + var(--pile-side) * 58px));
 }
 
 .riffle-debug {

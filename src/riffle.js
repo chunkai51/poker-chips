@@ -3,6 +3,7 @@ const RISE_THRESHOLD = 42;
 export function initChipRiffle({ trigger }) {
   if (!trigger) return;
 
+  const dismissLayer = createDismissLayer();
   const popover = createPopover();
   const stack = popover.querySelector(".riffle-stack");
   const closeButton = popover.querySelector(".riffle-close");
@@ -17,6 +18,7 @@ export function initChipRiffle({ trigger }) {
   let isDragging = false;
   let hasMoved = false;
 
+  document.body.appendChild(dismissLayer);
   document.body.appendChild(popover);
   renderState();
 
@@ -38,12 +40,26 @@ export function initChipRiffle({ trigger }) {
     trigger.focus();
   });
 
+  dismissLayer.addEventListener("pointerdown", event => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
+  dismissLayer.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    closePopover();
+  });
+
   popover.addEventListener("click", event => {
     event.stopPropagation();
   });
 
   stack.addEventListener("click", () => {
-    if (hasMoved) return;
+    if (hasMoved) {
+      hasMoved = false;
+      return;
+    }
     if (state === "single") {
       state = "split";
       renderState("点击筹码：single -> split");
@@ -95,12 +111,6 @@ export function initChipRiffle({ trigger }) {
     renderGesture("手势取消，保持当前状态");
   });
 
-  document.addEventListener("click", event => {
-    if (!isOpen) return;
-    if (popover.contains(event.target) || trigger.contains(event.target)) return;
-    closePopover();
-  });
-
   document.addEventListener("keydown", event => {
     if (!isOpen || event.key !== "Escape") return;
     closePopover();
@@ -118,31 +128,26 @@ export function initChipRiffle({ trigger }) {
   function openPopover() {
     isOpen = true;
     state = "single";
+    hasMoved = false;
+    isDragging = false;
+    dismissLayer.hidden = false;
     popover.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
-    positionPopover();
     renderState("打开浮窗：初始 single");
   }
 
   function closePopover() {
     isOpen = false;
+    isDragging = false;
+    hasMoved = false;
+    dismissLayer.hidden = true;
     popover.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
     renderGesture("浮窗已关闭");
   }
 
   function positionPopover() {
-    const rect = trigger.getBoundingClientRect();
-    const headerRect = trigger.closest(".top-bar")?.getBoundingClientRect();
-    const gap = 10;
-    const width = Math.min(320, window.innerWidth - 24);
-    const left = clamp(rect.left, 12, window.innerWidth - width - 12);
-    const anchorBottom = Math.max(rect.bottom, headerRect?.bottom || 0);
-    const top = Math.min(anchorBottom + gap, window.innerHeight - 220);
-
-    popover.style.setProperty("--riffle-left", `${left}px`);
-    popover.style.setProperty("--riffle-top", `${Math.max(12, top)}px`);
-    popover.style.setProperty("--riffle-width", `${width}px`);
+    // Reserved for the later animated version if the popover needs to track an anchor.
   }
 
   function renderState(message = "") {
@@ -157,6 +162,13 @@ export function initChipRiffle({ trigger }) {
   function renderGesture(message) {
     gestureValue.textContent = message;
   }
+}
+
+function createDismissLayer() {
+  const layer = document.createElement("div");
+  layer.className = "riffle-dismiss-layer";
+  layer.hidden = true;
+  return layer;
 }
 
 function createPopover() {
