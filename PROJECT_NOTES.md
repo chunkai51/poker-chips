@@ -21,6 +21,8 @@ index.html
   -> loads styles.css
   -> loads src/main.js as a module
        -> imports Firebase helpers from src/firebase.js
+       -> imports chip riffle popover behavior from src/riffle.js
+            -> imports sampled chip audio from src/riffle-sound.js
 
 poker-game.js
   -> compatibility entrypoint that imports src/main.js
@@ -109,10 +111,18 @@ Compatibility entrypoint only. It imports `./src/main.js`. Prefer changing `src/
 
 ### `assets/`
 
-Contains generated site icon assets:
+Contains generated site icon assets and sampled chip riffle audio:
 
 - `assets/poker-chip-icon.png`: 512x512 app/brand icon
 - `assets/favicon.png`: 64x64 favicon
+- `assets/audio/riffle/*.mp3`: CC0 poker-chip samples from Kenney Casino Audio and BigSoundBank
+- `assets/audio/riffle/LICENSES.md`: source and license notes for bundled audio
+
+### `src/riffle.js` and `src/riffle-sound.js`
+
+`src/riffle.js` owns the optional Chip Riffle popover opened from the header chip icon. It is intentionally isolated from the core game flow so the animation can run without blocking Firebase updates or normal hand actions.
+
+`src/riffle-sound.js` owns the Web Audio sampler. It preloads MP3 files from `assets/audio/riffle`, decodes them after the first user gesture, and triggers short samples for split, riffle progress, reverse movement, scrape, and settle sounds. Keep audio assets small and mobile-safe; MP3 is used here for better Safari/iOS compatibility than OGG.
 
 ## State Model
 
@@ -222,6 +232,7 @@ Implemented:
 - Static app shell
 - Responsive premium poker-themed UI
 - App icon and favicon
+- Chip Riffle popover with procedural chip animation and sampled chip sound effects
 - Player creation/removal before game start
 - Initial chips and blind configuration
 - Dealer, small blind, and big blind assignment

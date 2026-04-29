@@ -17,6 +17,7 @@
 - 支持结算后开始下一局并轮转 Dealer
 - 响应式界面，适配桌面和手机浏览器
 - 深绿牌桌主题和扑克筹码图标
+- 页眉筹码图标可打开 Chip Riffle 浮窗，并播放真实筹码采样音效
 
 ## Tech Stack
 
@@ -59,11 +60,14 @@ http://localhost:8000/
 ```text
 .
 ├── assets/
+│   ├── audio/
+│   │   └── riffle/
 │   ├── favicon.png
 │   └── poker-chip-icon.png
 ├── src/
 │   ├── firebase.js
-│   └── main.js
+│   ├── main.js
+│   └── riffle-sound.js
 ├── index.html
 ├── poker-game.js
 ├── PROJECT_NOTES.md
@@ -75,8 +79,9 @@ http://localhost:8000/
 - `styles.css`: 全站视觉主题、响应式布局和游戏控件样式。
 - `src/main.js`: 牌局状态、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
 - `src/firebase.js`: Firebase SDK 初始化与 Realtime Database API 导出。
+- `src/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
 - `poker-game.js`: 兼容入口，转发到 `src/main.js`。
-- `assets/`: favicon 和站点品牌图标。
+- `assets/`: favicon、站点品牌图标和 Chip Riffle 音频采样。音频授权见 `assets/audio/riffle/LICENSES.md`。
 - `PROJECT_NOTES.md`: 面向 coding agent 和维护者的架构、进度、风险说明。
 
 ## Development
