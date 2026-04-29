@@ -1,5 +1,6 @@
 import { createRiffleSound } from "./riffle-sound.js";
 
+const SOUND_MUTED_STORAGE_KEY = "pokerChipsRiffleMuted";
 const RISE_THRESHOLD = 240;
 const SPLIT_ANIMATION_MS = 760;
 const CHIP_HEIGHT = 20;
@@ -15,6 +16,7 @@ export function initChipRiffle({ trigger }) {
   const popover = createPopover();
   const stack = popover.querySelector(".riffle-stack");
   const closeButton = popover.querySelector(".riffle-close");
+  const muteButton = popover.querySelector(".riffle-mute");
   const stateValue = popover.querySelector("[data-riffle-state]");
   const gestureValue = popover.querySelector("[data-riffle-gesture]");
   const hint = popover.querySelector(".riffle-hint");
@@ -33,9 +35,12 @@ export function initChipRiffle({ trigger }) {
   let splitAnimationTimer = null;
   let riffleAnimationFrame = null;
   let riffleProgress = 0;
+  let soundMuted = getStoredSoundMuted();
 
   document.body.appendChild(dismissLayer);
   document.body.appendChild(popover);
+  sound.setMuted(soundMuted);
+  updateMuteButton();
   renderState();
 
   trigger.setAttribute("aria-haspopup", "dialog");
@@ -55,6 +60,18 @@ export function initChipRiffle({ trigger }) {
     event.stopPropagation();
     closePopover();
     trigger.focus();
+  });
+
+  muteButton.addEventListener("click", event => {
+    event.stopPropagation();
+    soundMuted = !soundMuted;
+    sound.setMuted(soundMuted);
+    storeSoundMuted(soundMuted);
+    updateMuteButton();
+    if (!soundMuted) {
+      sound.unlock();
+    }
+    renderGesture(soundMuted ? "音效已静音" : "音效已开启");
   });
 
   dismissLayer.addEventListener("pointerdown", event => {
@@ -357,6 +374,13 @@ export function initChipRiffle({ trigger }) {
   function renderGesture(message) {
     gestureValue.textContent = message;
   }
+
+  function updateMuteButton() {
+    muteButton.classList.toggle("is-muted", soundMuted);
+    muteButton.setAttribute("aria-pressed", String(soundMuted));
+    muteButton.setAttribute("aria-label", soundMuted ? "开启筹码音效" : "静音筹码音效");
+    muteButton.title = soundMuted ? "开启音效" : "静音音效";
+  }
 }
 
 function createDismissLayer() {
@@ -378,7 +402,12 @@ function createPopover() {
         <p class="riffle-eyebrow">Chip Riffle</p>
         <h3>筹码小动作</h3>
       </div>
-      <button class="riffle-close" type="button" aria-label="关闭筹码动画浮窗">×</button>
+      <div class="riffle-actions">
+        <button class="riffle-mute" type="button" aria-label="静音筹码音效" aria-pressed="false" title="静音音效">
+          <span class="riffle-mute-icon" aria-hidden="true"></span>
+        </button>
+        <button class="riffle-close" type="button" aria-label="关闭筹码动画浮窗">×</button>
+      </div>
     </div>
     <button class="riffle-stack" type="button" aria-label="筹码堆调试按钮">
       <span class="riffle-stack-view" aria-hidden="true">
@@ -398,6 +427,20 @@ function createPopover() {
     <p class="riffle-hint">点击筹码堆：single -> split</p>
   `;
   return popover;
+}
+
+function getStoredSoundMuted() {
+  try {
+    return localStorage.getItem(SOUND_MUTED_STORAGE_KEY) === "true";
+  } catch (_) {
+    return false;
+  }
+}
+
+function storeSoundMuted(isMuted) {
+  try {
+    localStorage.setItem(SOUND_MUTED_STORAGE_KEY, String(isMuted));
+  } catch (_) {}
 }
 
 function createChipModel(element) {

@@ -5,11 +5,14 @@ const AudioContextConstructor = typeof window !== "undefined"
 const MIN_GAIN = 0.0001;
 const ATTACK_SECONDS = 0.01;
 const TICK_POINTS = createTickPoints();
+const OUTPUT_GAIN = 0.9;
 
 export function createRiffleSound() {
   let context = null;
   let masterGain = null;
   let compressor = null;
+  let limiter = null;
+  let outputGain = null;
   let noiseBuffer = null;
   let lastProgress = null;
   let lastScrapeAt = 0;
@@ -80,6 +83,11 @@ export function createRiffleSound() {
 
   function setMuted(nextMuted) {
     muted = Boolean(nextMuted);
+    if (!context || !outputGain) return;
+
+    const now = context.currentTime;
+    outputGain.gain.cancelScheduledValues(now);
+    outputGain.gain.setTargetAtTime(muted ? MIN_GAIN : OUTPUT_GAIN, now, 0.018);
   }
 
   function ensureContext() {
@@ -89,16 +97,23 @@ export function createRiffleSound() {
     noiseBuffer = createNoiseBuffer(context);
 
     masterGain = context.createGain();
-    masterGain.gain.value = 0.68;
+    masterGain.gain.value = 0.7;
 
     compressor = context.createDynamicsCompressor();
-    compressor.threshold.value = -24;
-    compressor.knee.value = 18;
-    compressor.ratio.value = 5;
-    compressor.attack.value = 0.008;
-    compressor.release.value = 0.16;
+    compressor.threshold.value = -20;
+    compressor.knee.value = 12;
+    compressor.ratio.value = 7;
+    compressor.attack.value = 0.006;
+    compressor.release.value = 0.14;
 
-    masterGain.connect(compressor).connect(context.destination);
+    limiter = context.createWaveShaper();
+    limiter.curve = createSoftClipCurve();
+    limiter.oversample = "2x";
+
+    outputGain = context.createGain();
+    outputGain.gain.value = muted ? MIN_GAIN : OUTPUT_GAIN;
+
+    masterGain.connect(compressor).connect(limiter).connect(outputGain).connect(context.destination);
     return context;
   }
 
@@ -268,6 +283,20 @@ function shapePercussiveEnvelope(audioParam, startTime, duration, peak) {
   audioParam.setValueAtTime(MIN_GAIN, startTime);
   audioParam.exponentialRampToValueAtTime(Math.max(MIN_GAIN, peak), startTime + ATTACK_SECONDS);
   audioParam.exponentialRampToValueAtTime(MIN_GAIN, startTime + duration);
+}
+
+function createSoftClipCurve() {
+  const sampleCount = 65536;
+  const curve = new Float32Array(sampleCount);
+  const drive = 1.8;
+  const normalizer = Math.tanh(drive);
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const x = (index / (sampleCount - 1)) * 2 - 1;
+    curve[index] = Math.tanh(x * drive) / normalizer;
+  }
+
+  return curve;
 }
 
 function clamp(value, min, max) {

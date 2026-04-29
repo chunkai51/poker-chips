@@ -716,7 +716,14 @@ h3 {
   font-size: 1.18rem;
 }
 
-.riffle-close {
+.riffle-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.riffle-close,
+.riffle-mute {
   display: inline-grid;
   width: 32px;
   height: 32px;
@@ -729,6 +736,62 @@ h3 {
   font-size: 1.2rem;
   line-height: 1;
   padding: 0;
+}
+
+.riffle-close {
+  font-size: 1.2rem;
+}
+
+.riffle-mute {
+  color: var(--gold-300);
+}
+
+.riffle-mute[aria-pressed="true"] {
+  background: rgba(216, 180, 95, 0.16);
+  color: var(--ivory-100);
+}
+
+.riffle-mute-icon {
+  position: relative;
+  display: block;
+  width: 17px;
+  height: 14px;
+}
+
+.riffle-mute-icon::before,
+.riffle-mute-icon::after {
+  position: absolute;
+  content: "";
+}
+
+.riffle-mute-icon::before {
+  top: 3px;
+  left: 0;
+  width: 10px;
+  height: 8px;
+  background: currentColor;
+  clip-path: polygon(0 32%, 38% 32%, 100% 0, 100% 100%, 38% 68%, 0 68%);
+}
+
+.riffle-mute-icon::after {
+  top: 1px;
+  right: 0;
+  width: 6px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+}
+
+.riffle-mute.is-muted .riffle-mute-icon::after {
+  top: 6px;
+  right: -1px;
+  width: 14px;
+  height: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: currentColor;
+  transform: rotate(-45deg);
 }
 
 .riffle-stack {
