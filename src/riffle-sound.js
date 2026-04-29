@@ -2,9 +2,9 @@ const AudioContextConstructor = typeof window !== "undefined"
   ? window.AudioContext || window.webkitAudioContext
   : null;
 
-const ATTACK_SECONDS = 0.007;
-const INPUT_GAIN = 0.54;
-const OUTPUT_GAIN = 0.86;
+const ATTACK_SECONDS = 0.006;
+const INPUT_GAIN = 0.5;
+const OUTPUT_GAIN = 0.82;
 const MIN_TICK_INTERVAL = 0.034;
 const MAX_TICKS_PER_FRAME = 2;
 const TICK_POINTS = createTickPoints();
@@ -12,7 +12,6 @@ const TICK_POINTS = createTickPoints();
 export function createRiffleSound() {
   let context = null;
   let masterGain = null;
-  let compressor = null;
   let outputGain = null;
   let noiseBuffer = null;
   let lastProgress = null;
@@ -58,21 +57,22 @@ export function createRiffleSound() {
 
   function playSplit() {
     unlock();
-    playKnock({ delay: 0.006, volume: 0.028, duration: 0.074, frequency: 760, noiseFrequency: 2600, noiseQ: 4.8 });
-    playKnock({ delay: 0.086, volume: 0.022, duration: 0.062, frequency: 980, noiseFrequency: 3000, noiseQ: 5 });
+    playKnock({ delay: 0.006, volume: 0.032, duration: 0.07, frequency: 760, noiseFrequency: 2300, noiseQ: 1.6, bodyFrequency: 720 });
+    playKnock({ delay: 0.086, volume: 0.024, duration: 0.06, frequency: 920, noiseFrequency: 2550, noiseQ: 1.8, bodyFrequency: 840 });
   }
 
   function playSettle() {
     unlock();
     playKnock({
       delay: 0,
-      volume: 0.068,
-      duration: 0.086,
-      frequency: 1620,
-      noiseFrequency: 3350,
-      noiseQ: 5.2,
-      resonanceFrequency: 1320,
-      resonanceVolume: 0.012
+      volume: 0.072,
+      duration: 0.082,
+      frequency: 1180,
+      noiseFrequency: 2750,
+      noiseQ: 1.8,
+      bodyFrequency: 880,
+      resonanceFrequency: 1420,
+      resonanceVolume: 0.006
     });
   }
 
@@ -100,17 +100,10 @@ export function createRiffleSound() {
     masterGain = context.createGain();
     masterGain.gain.value = INPUT_GAIN;
 
-    compressor = context.createDynamicsCompressor();
-    compressor.threshold.value = -18;
-    compressor.knee.value = 18;
-    compressor.ratio.value = 3.5;
-    compressor.attack.value = 0.004;
-    compressor.release.value = 0.16;
-
     outputGain = context.createGain();
     outputGain.gain.value = muted ? 0 : OUTPUT_GAIN;
 
-    masterGain.connect(compressor).connect(outputGain).connect(context.destination);
+    masterGain.connect(outputGain).connect(context.destination);
     return context;
   }
 
@@ -162,9 +155,11 @@ export function createRiffleSound() {
       delay,
       volume,
       duration,
-      frequency: baseFrequency * randomBetween(0.94, 1.07),
-      noiseFrequency: direction > 0 ? 2850 : 3200,
-      noiseQ: direction > 0 ? 5.2 : 5.8
+      frequency: baseFrequency * randomBetween(0.78, 0.92),
+      noiseFrequency: direction > 0 ? 2400 : 2700,
+      noiseQ: direction > 0 ? 1.7 : 1.9,
+      bodyFrequency: direction > 0 ? 780 : 900,
+      toneAmount: direction > 0 ? 0.58 : 0.45
     });
   }
 
@@ -174,8 +169,10 @@ export function createRiffleSound() {
     duration = 0.05,
     frequency = 840,
     noiseFrequency = 2400,
-    noiseQ = 7,
-    noiseAmount = 0.72,
+    noiseQ = 1.8,
+    noiseAmount = 0.86,
+    bodyFrequency = 760,
+    toneAmount = 0.55,
     resonanceFrequency = null,
     resonanceVolume = 0
   } = {}) {
@@ -193,16 +190,25 @@ export function createRiffleSound() {
     noiseFilter.frequency.setValueAtTime(noiseFrequency * randomBetween(0.84, 1.18), startTime);
     noiseFilter.Q.setValueAtTime(noiseQ, startTime);
 
+    const bodyFilter = audioContext.createBiquadFilter();
+    bodyFilter.type = "bandpass";
+    bodyFilter.frequency.setValueAtTime(bodyFrequency * randomBetween(0.9, 1.12), startTime);
+    bodyFilter.Q.setValueAtTime(0.9, startTime);
+
     const noiseGain = audioContext.createGain();
-    shapePercussiveEnvelope(noiseGain.gain, startTime, duration * 0.62, volume * noiseAmount);
+    shapePercussiveEnvelope(noiseGain.gain, startTime, duration * 0.58, volume * noiseAmount);
+
+    const bodyGain = audioContext.createGain();
+    shapePercussiveEnvelope(bodyGain.gain, startTime, duration * 0.74, volume * 0.28);
 
     const partials = [
-      { frequency: frequency * 0.98, volume: volume * 0.44, duration: duration * 0.95 },
-      { frequency: frequency * 1.47, volume: volume * 0.24, duration: duration * 0.76 },
-      { frequency: frequency * 2.16, volume: volume * 0.12, duration: duration * 0.52 }
+      { frequency: frequency * randomBetween(0.82, 0.94), volume: volume * 0.16 * toneAmount, duration: duration * 0.62 },
+      { frequency: frequency * randomBetween(1.28, 1.46), volume: volume * 0.11 * toneAmount, duration: duration * 0.46 },
+      { frequency: frequency * randomBetween(1.9, 2.28), volume: volume * 0.055 * toneAmount, duration: duration * 0.32 }
     ];
 
     noise.connect(noiseFilter).connect(noiseGain).connect(masterGain);
+    noise.connect(bodyFilter).connect(bodyGain).connect(masterGain);
 
     noise.start(startTime);
     noise.stop(stopTime);
