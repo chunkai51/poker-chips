@@ -30,6 +30,5 @@ Files:
 Files:
 
 - `bigsoundbank-poker-chips-large-bet.mp3`
-- `bigsoundbank-poker-chips-play.mp3`
 - `bigsoundbank-poker-chips-medium-bet.mp3`
 - `bigsoundbank-poker-chips-small-bet.mp3`

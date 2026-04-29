@@ -10,35 +10,6 @@ const MAX_TICKS_PER_FRAME = 2;
 const SCHEDULE_AHEAD = 0.008;
 const TICK_POINTS = createTickPoints();
 
-const SAMPLE_DEFINITIONS = [
-  "bigsoundbank-poker-chips-large-bet",
-  "bigsoundbank-poker-chips-medium-bet",
-  "bigsoundbank-poker-chips-play",
-  "bigsoundbank-poker-chips-small-bet",
-  "kenney-chip-lay-1",
-  "kenney-chip-lay-2",
-  "kenney-chip-lay-3",
-  "kenney-chips-collide-1",
-  "kenney-chips-collide-2",
-  "kenney-chips-collide-3",
-  "kenney-chips-collide-4",
-  "kenney-chips-handle-1",
-  "kenney-chips-handle-2",
-  "kenney-chips-handle-3",
-  "kenney-chips-handle-4",
-  "kenney-chips-handle-5",
-  "kenney-chips-handle-6",
-  "kenney-chips-stack-1",
-  "kenney-chips-stack-2",
-  "kenney-chips-stack-3",
-  "kenney-chips-stack-4",
-  "kenney-chips-stack-5",
-  "kenney-chips-stack-6"
-].map(id => ({
-  id,
-  url: new URL(`../assets/audio/riffle/${id}.mp3`, import.meta.url).href
-}));
-
 const SAMPLE_GROUPS = {
   split: [
     { id: "kenney-chip-lay-1", gain: 0.72, maxDuration: 0.17 },
@@ -72,6 +43,13 @@ const SAMPLE_GROUPS = {
     { id: "kenney-chips-stack-6", gain: 0.54, maxDuration: 0.18 }
   ]
 };
+
+const SAMPLE_DEFINITIONS = [...new Set(
+  Object.values(SAMPLE_GROUPS).flat().map(sample => sample.id)
+)].map(id => ({
+  id,
+  url: new URL(`../assets/audio/riffle/${id}.mp3`, import.meta.url).href
+}));
 
 export function createRiffleSound() {
   let context = null;

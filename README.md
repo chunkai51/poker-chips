@@ -84,6 +84,15 @@ http://localhost:8000/
 - `assets/`: favicon、站点品牌图标和 Chip Riffle 音频采样。音频授权见 `assets/audio/riffle/LICENSES.md`。
 - `PROJECT_NOTES.md`: 面向 coding agent 和维护者的架构、进度、风险说明。
 
+## Audio Assets
+
+Chip Riffle 音效使用真实筹码采样，不再使用程序化合成作为主声音来源。
+
+- Kenney Casino Audio: CC0，原始 OGG 已转码为 MP3，以提高 iOS/Safari 兼容性。
+- BigSoundBank Poker Chips: CC0 / public-domain equivalent，用于分堆和落稳等更完整的筹码声。
+
+详细来源、作者和授权见 `assets/audio/riffle/LICENSES.md`。
+
 ## Development
 
 本项目没有构建流程。修改后直接刷新浏览器即可。

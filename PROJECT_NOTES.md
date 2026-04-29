@@ -122,7 +122,7 @@ Contains generated site icon assets and sampled chip riffle audio:
 
 `src/riffle.js` owns the optional Chip Riffle popover opened from the header chip icon. It is intentionally isolated from the core game flow so the animation can run without blocking Firebase updates or normal hand actions.
 
-`src/riffle-sound.js` owns the Web Audio sampler. It preloads MP3 files from `assets/audio/riffle`, decodes them after the first user gesture, and triggers short samples for split, riffle progress, reverse movement, scrape, and settle sounds. Keep audio assets small and mobile-safe; MP3 is used here for better Safari/iOS compatibility than OGG.
+`src/riffle-sound.js` owns the Web Audio sampler. It preloads only the MP3 files referenced by `SAMPLE_GROUPS`, decodes them after the first user gesture, and triggers short samples for split, riffle progress, reverse movement, scrape, and settle sounds. The current samples come from Kenney Casino Audio and BigSoundBank Poker Chips; source pages and licenses are documented in `assets/audio/riffle/LICENSES.md`. Keep audio assets small and mobile-safe; MP3 is used here for better Safari/iOS compatibility than OGG.
 
 ## State Model
 
