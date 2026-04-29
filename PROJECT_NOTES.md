@@ -72,6 +72,7 @@ Owns the full visual system:
 - Action buttons
 - Showdown and side-pot panels
 - Log panel
+- Chip Riffle glass popover, skin button, chip side patterns, and chip color themes
 - Mobile breakpoints at `760px` and `420px`
 
 The current UI theme uses deep emerald, antique gold, ivory, and chip red. Avoid replacing it with broad one-color gradients or generic dashboard styling unless the user explicitly asks for a redesign.
@@ -121,6 +122,18 @@ Contains generated site icon assets and sampled chip riffle audio:
 ### `src/riffle.js` and `src/riffle-sound.js`
 
 `src/riffle.js` owns the optional Chip Riffle popover opened from the header chip icon. It is intentionally isolated from the core game flow so the animation can run without blocking Firebase updates or normal hand actions.
+
+Riffle behavior is modeled as real chip identity plus current stack order:
+
+- `stackOrder` is the current single-stack order from bottom to top.
+- Each split takes the current lower half as the left pile and the current upper half as the right pile.
+- A successful riffle commits a deterministic interleave: `[left0, right0, left1, right1, ...]`.
+- Chip colors and symbols are tied to chip identity (`data-chip-set`), not to the current left/right pile. This is important for dual-color skins: repeated riffles should visibly mix the piles instead of sorting chips back by color.
+- The current 12-chip, 6/6 perfect riffle returns to the initial color grouping after 10 successful riffles.
+
+The popover has a skin switcher. Skin selection is saved in `localStorage` under `pokerChipsRiffleSkin`; stack position is reset whenever the popover opens. Keep the existing skin id `mint-white` for local-storage compatibility even though the visible label is now orange/green.
+
+Chip side decoration is CSS-only. The default/dual-color skins use repeated SVG crown marks; the orange/green skin uses a decorative letter `C`. These are embedded as CSS data URIs in `styles.css` so no extra assets or DOM nodes are required. Keep the crown/letter repeat aligned with the chip width: the 126px chip side currently uses two 63px pattern cells, yielding exactly two visible marks per chip.
 
 `src/riffle-sound.js` owns the Web Audio sampler. It preloads only the MP3 files referenced by `SAMPLE_GROUPS`, decodes them after the first user gesture, and triggers short samples for split, riffle progress, reverse movement, scrape, and settle sounds. The current samples come from Kenney Casino Audio and BigSoundBank Poker Chips; source pages and licenses are documented in `assets/audio/riffle/LICENSES.md`. Keep audio assets small and mobile-safe; MP3 is used here for better Safari/iOS compatibility than OGG.
 
@@ -232,7 +245,7 @@ Implemented:
 - Static app shell
 - Responsive premium poker-themed UI
 - App icon and favicon
-- Chip Riffle popover with procedural chip animation and sampled chip sound effects
+- Chip Riffle popover with real-order chip animation, single/dual-color skins, CSS chip symbols, and sampled chip sound effects
 - Player creation/removal before game start
 - Initial chips and blind configuration
 - Dealer, small blind, and big blind assignment

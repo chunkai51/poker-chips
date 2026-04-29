@@ -1,6 +1,7 @@
 import { createRiffleSound } from "./riffle-sound.js";
 
 const SOUND_MUTED_STORAGE_KEY = "pokerChipsRiffleMuted";
+const CHIP_SKIN_STORAGE_KEY = "pokerChipsRiffleSkin";
 const RISE_THRESHOLD = 240;
 const SPLIT_ANIMATION_MS = 760;
 const CHIP_HEIGHT = 20;
@@ -8,6 +9,12 @@ const STACK_BASE = 18;
 const SPLIT_OFFSET = 74;
 const APPROACH_OFFSET = 28;
 const PILE_SIZE = 6;
+const CHIP_SKINS = [
+  { id: "classic", label: "经典金色" },
+  { id: "obsidian", label: "黑金单色" },
+  { id: "red-blue", label: "红蓝双色" },
+  { id: "mint-white", label: "橙绿双色" }
+];
 
 export function initChipRiffle({ trigger }) {
   if (!trigger) return;
@@ -17,11 +24,11 @@ export function initChipRiffle({ trigger }) {
   const stack = popover.querySelector(".riffle-stack");
   const closeButton = popover.querySelector(".riffle-close");
   const muteButton = popover.querySelector(".riffle-mute");
-  const stateValue = popover.querySelector("[data-riffle-state]");
-  const gestureValue = popover.querySelector("[data-riffle-gesture]");
+  const skinButton = popover.querySelector(".riffle-skin");
   const hint = popover.querySelector(".riffle-hint");
   const chipModels = Array.from(popover.querySelectorAll(".riffle-chip")).map(createChipModel);
   const sound = createRiffleSound();
+  let stackOrder = chipModels.slice();
 
   let state = "single";
   let isOpen = false;
@@ -36,10 +43,12 @@ export function initChipRiffle({ trigger }) {
   let riffleAnimationFrame = null;
   let riffleProgress = 0;
   let soundMuted = getStoredSoundMuted();
+  let chipSkin = getStoredChipSkin();
 
   document.body.appendChild(dismissLayer);
   document.body.appendChild(popover);
   sound.setMuted(soundMuted);
+  applyChipSkin();
   updateMuteButton();
   renderState();
 
@@ -71,7 +80,15 @@ export function initChipRiffle({ trigger }) {
     if (!soundMuted) {
       sound.unlock();
     }
-    renderGesture(soundMuted ? "音效已静音" : "音效已开启");
+    renderState();
+  });
+
+  skinButton.addEventListener("click", event => {
+    event.stopPropagation();
+    chipSkin = getNextChipSkinId(chipSkin);
+    storeChipSkin(chipSkin);
+    applyChipSkin();
+    renderState();
   });
 
   dismissLayer.addEventListener("pointerdown", event => {
@@ -94,7 +111,7 @@ export function initChipRiffle({ trigger }) {
     if (transition !== "idle") return;
     if (performance.now() - lastPointerInteractionAt < 700) return;
     if (state === "single") {
-      beginSplitAnimation("点击筹码：single -> split");
+      beginSplitAnimation();
     }
   });
 
@@ -102,7 +119,7 @@ export function initChipRiffle({ trigger }) {
     sound.unlock();
     if (transition !== "idle") {
       event.preventDefault();
-      renderGesture("分堆动画进行中");
+      renderHint("正在分堆");
       return;
     }
     lastPointerInteractionAt = performance.now();
@@ -116,7 +133,7 @@ export function initChipRiffle({ trigger }) {
       cancelRiffleAnimation();
       renderRiffleProgress(0);
     }
-    renderGesture(state === "split" ? "开始上滑，底部从左筹码开始穿插" : "按下筹码，松开进入 split");
+    renderHint(state === "split" ? "上滑堆叠筹码" : "点击筹码分堆");
   });
 
   stack.addEventListener("pointermove", event => {
@@ -131,7 +148,7 @@ export function initChipRiffle({ trigger }) {
 
     if (!isDragging) return;
     renderRiffleProgress(progress);
-    renderGesture(`上滑 ${Math.max(0, Math.round(deltaY))}px / ${RISE_THRESHOLD}px，progress ${progress.toFixed(2)}`);
+    renderHint(progress >= 1 ? "松开堆叠筹码" : "上滑堆叠筹码");
   });
 
   stack.addEventListener("pointerup", event => {
@@ -150,23 +167,23 @@ export function initChipRiffle({ trigger }) {
 
     if (state === "single") {
       if (pointerMoved) {
-        renderGesture("检测到移动，保持 single");
+        renderHint("点击筹码分堆");
         return;
       }
-      beginSplitAnimation("点击筹码：single -> split");
+      beginSplitAnimation();
       return;
     }
 
     if (deltaY >= RISE_THRESHOLD) {
-      finishRiffleGesture(true, "叠筹码完成：split -> single");
+      finishRiffleGesture(true);
     } else {
-      finishRiffleGesture(false, `上滑不足，回到 split（${Math.max(0, Math.round(deltaY))}px）`);
+      finishRiffleGesture(false);
     }
   });
 
   stack.addEventListener("pointercancel", () => {
     if (isDragging) {
-      finishRiffleGesture(false, "手势取消，回到 split");
+      finishRiffleGesture(false);
     }
     isDragging = false;
     activePointerId = null;
@@ -192,6 +209,8 @@ export function initChipRiffle({ trigger }) {
     state = "single";
     clearSplitAnimation();
     clearRifflePose();
+    resetStackOrder();
+    applySingleLayout();
     isDragging = false;
     pointerMoved = false;
     activePointerId = null;
@@ -199,7 +218,7 @@ export function initChipRiffle({ trigger }) {
     dismissLayer.hidden = false;
     popover.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
-    renderState("打开浮窗：初始 single");
+    renderState();
   }
 
   function closePopover() {
@@ -213,24 +232,25 @@ export function initChipRiffle({ trigger }) {
     dismissLayer.hidden = true;
     popover.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
-    renderGesture("浮窗已关闭");
+    renderHint("点击筹码分堆");
   }
 
   function positionPopover() {
     // Reserved for the later animated version if the popover needs to track an anchor.
   }
 
-  function beginSplitAnimation(message) {
+  function beginSplitAnimation() {
     clearSplitAnimation();
     clearRifflePose();
+    applySplitLayout();
     sound.playSplit();
     state = "split";
     transition = "splitting";
-    renderState(message);
+    renderState();
     splitAnimationTimer = window.setTimeout(() => {
       transition = "idle";
       splitAnimationTimer = null;
-      renderState("分堆完成：split");
+      renderState();
     }, SPLIT_ANIMATION_MS);
   }
 
@@ -301,16 +321,18 @@ export function initChipRiffle({ trigger }) {
     model.element.style.zIndex = String(100 + Math.round(pose.slot * 10));
   }
 
-  function finishRiffleGesture(shouldComplete, message) {
+  function finishRiffleGesture(shouldComplete) {
     const fromProgress = riffleProgress;
     animateRiffleProgress(fromProgress, shouldComplete ? 1 : 0, () => {
       state = shouldComplete ? "single" : "split";
       if (shouldComplete) {
+        commitRiffleLayout();
+        applySingleLayout();
         sound.playSettle();
       }
       riffleProgress = 0;
       clearRifflePose();
-      renderState(message);
+      renderState();
     });
   }
 
@@ -353,26 +375,22 @@ export function initChipRiffle({ trigger }) {
     });
   }
 
-  function renderState(message = "") {
+  function renderState() {
     popover.dataset.state = state;
     if (transition === "idle") {
       delete popover.dataset.transition;
     } else {
       popover.dataset.transition = transition;
     }
-    stateValue.textContent = state;
     if (transition !== "idle") {
-      hint.textContent = "分堆动画进行中";
+      renderHint("正在分堆");
     } else {
-      hint.textContent = state === "single"
-        ? "点击筹码堆：single -> split"
-        : "在筹码堆上上滑：split -> single";
+      renderHint(state === "single" ? "点击筹码分堆" : "上滑堆叠筹码");
     }
-    renderGesture(message || "等待操作");
   }
 
-  function renderGesture(message) {
-    gestureValue.textContent = message;
+  function renderHint(message) {
+    hint.textContent = message;
   }
 
   function updateMuteButton() {
@@ -380,6 +398,57 @@ export function initChipRiffle({ trigger }) {
     muteButton.setAttribute("aria-pressed", String(soundMuted));
     muteButton.setAttribute("aria-label", soundMuted ? "开启筹码音效" : "静音筹码音效");
     muteButton.title = soundMuted ? "开启音效" : "静音音效";
+  }
+
+  function applyChipSkin() {
+    const skin = getChipSkin(chipSkin);
+    popover.dataset.skin = skin.id;
+    skinButton.setAttribute("aria-label", `切换筹码配色，当前：${skin.label}`);
+    skinButton.title = `当前配色：${skin.label}`;
+  }
+
+  function resetStackOrder() {
+    stackOrder = chipModels.slice().sort((a, b) => a.chipIndex - b.chipIndex);
+  }
+
+  function applySingleLayout() {
+    stackOrder.forEach((model, singleIndex) => {
+      model.singleIndex = singleIndex;
+      model.element.style.setProperty("--single-index", String(singleIndex));
+    });
+  }
+
+  function applySplitLayout() {
+    const leftPile = stackOrder.slice(0, PILE_SIZE);
+    const rightPile = stackOrder.slice(PILE_SIZE);
+
+    leftPile.forEach((model, pileIndex) => {
+      applyChipSplitPosition(model, { pileIndex, side: -1, finalIndex: pileIndex * 2, pileName: "left" });
+    });
+
+    rightPile.forEach((model, pileIndex) => {
+      applyChipSplitPosition(model, { pileIndex, side: 1, finalIndex: pileIndex * 2 + 1, pileName: "right" });
+    });
+  }
+
+  function applyChipSplitPosition(model, { pileIndex, side, finalIndex, pileName }) {
+    model.pileIndex = pileIndex;
+    model.side = side;
+    model.finalIndex = finalIndex;
+    model.element.dataset.pile = pileName;
+    model.element.dataset.pileIndex = String(pileIndex);
+    model.element.dataset.pileSide = String(side);
+    model.element.dataset.finalIndex = String(finalIndex);
+    model.element.style.setProperty("--pile-index", String(pileIndex));
+    model.element.style.setProperty("--pile-side", String(side));
+  }
+
+  function commitRiffleLayout() {
+    const nextStackOrder = [];
+    stackOrder.forEach(model => {
+      nextStackOrder[model.finalIndex] = model;
+    });
+    stackOrder = nextStackOrder;
   }
 }
 
@@ -403,10 +472,15 @@ function createPopover() {
         <h3>筹码小动作</h3>
       </div>
       <div class="riffle-actions">
+        <button class="riffle-skin" type="button" aria-label="切换筹码配色" title="切换配色">
+          <span class="riffle-skin-icon" aria-hidden="true"></span>
+        </button>
         <button class="riffle-mute" type="button" aria-label="静音筹码音效" aria-pressed="false" title="静音音效">
           <span class="riffle-mute-icon" aria-hidden="true"></span>
         </button>
-        <button class="riffle-close" type="button" aria-label="关闭筹码动画浮窗">×</button>
+        <button class="riffle-close" type="button" aria-label="关闭筹码动画浮窗">
+          <span class="riffle-close-icon" aria-hidden="true"></span>
+        </button>
       </div>
     </div>
     <button class="riffle-stack" type="button" aria-label="筹码堆调试按钮">
@@ -415,16 +489,13 @@ function createPopover() {
           const pileIndex = index % 6;
           const pileSide = index < 6 ? -1 : 1;
           const pileName = index < 6 ? "left" : "right";
+          const chipSet = index < 6 ? "a" : "b";
           const finalIndex = pileIndex * 2 + (pileName === "left" ? 0 : 1);
-          return `<span class="riffle-chip" data-pile="${pileName}" data-chip-index="${index}" data-pile-index="${pileIndex}" data-pile-side="${pileSide}" data-final-index="${finalIndex}" style="--chip-index: ${index}; --pile-index: ${pileIndex}; --pile-side: ${pileSide};"></span>`;
+          return `<span class="riffle-chip" data-chip-set="${chipSet}" data-pile="${pileName}" data-chip-index="${index}" data-pile-index="${pileIndex}" data-pile-side="${pileSide}" data-final-index="${finalIndex}" style="--chip-index: ${index}; --single-index: ${index}; --pile-index: ${pileIndex}; --pile-side: ${pileSide};"></span>`;
         }).join("")}
       </span>
     </button>
-    <div class="riffle-debug" aria-live="polite">
-      <p><span>state</span><strong data-riffle-state>single</strong></p>
-      <p><span>gesture</span><strong data-riffle-gesture>等待操作</strong></p>
-    </div>
-    <p class="riffle-hint">点击筹码堆：single -> split</p>
+    <p class="riffle-hint" aria-live="polite">点击筹码分堆</p>
   `;
   return popover;
 }
@@ -443,10 +514,34 @@ function storeSoundMuted(isMuted) {
   } catch (_) {}
 }
 
+function getStoredChipSkin() {
+  try {
+    return getChipSkin(localStorage.getItem(CHIP_SKIN_STORAGE_KEY)).id;
+  } catch (_) {
+    return CHIP_SKINS[0].id;
+  }
+}
+
+function storeChipSkin(skinId) {
+  try {
+    localStorage.setItem(CHIP_SKIN_STORAGE_KEY, skinId);
+  } catch (_) {}
+}
+
+function getChipSkin(skinId) {
+  return CHIP_SKINS.find(skin => skin.id === skinId) || CHIP_SKINS[0];
+}
+
+function getNextChipSkinId(skinId) {
+  const currentIndex = CHIP_SKINS.findIndex(skin => skin.id === skinId);
+  return CHIP_SKINS[(currentIndex + 1) % CHIP_SKINS.length].id;
+}
+
 function createChipModel(element) {
   return {
     element,
     chipIndex: Number(element.dataset.chipIndex),
+    singleIndex: Number(element.dataset.chipIndex),
     pileIndex: Number(element.dataset.pileIndex),
     side: Number(element.dataset.pileSide),
     finalIndex: Number(element.dataset.finalIndex)
