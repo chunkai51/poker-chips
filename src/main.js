@@ -1,5 +1,6 @@
 // src/main.js
 import { db, get, onValue, ref, runTransaction, update } from "./firebase.js";
+import { initChipRiffle } from "./riffle.js";
 
 // ----------------------
 // 全局变量及 DOM 获取
@@ -25,6 +26,9 @@ const handActions = document.getElementById("hand-actions");
 const logSummary = document.getElementById("log-summary");
 const showdownPanel = document.getElementById("showdown-panel");
 const syncStatusEl = document.getElementById("sync-status");
+const riffleTrigger = document.querySelector(".brand-mark-button");
+
+initChipRiffle({ trigger: riffleTrigger });
 
 let bigBlind = 20;
 let smallBlind = 10;

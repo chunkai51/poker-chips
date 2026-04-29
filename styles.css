@@ -140,6 +140,29 @@ h3 {
   font-weight: 800;
 }
 
+.brand-mark-button {
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  min-height: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  padding: 2px;
+}
+
+.brand-mark-button:hover:not(:disabled) {
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.brand-mark-button:focus-visible {
+  outline: 2px solid rgba(242, 217, 141, 0.8);
+  outline-offset: 3px;
+}
+
 .brand-mark {
   display: block;
   width: 34px;
@@ -632,6 +655,137 @@ h3 {
   margin-top: 8px;
 }
 
+.riffle-popover {
+  position: fixed;
+  top: var(--riffle-top, 64px);
+  left: var(--riffle-left, 16px);
+  z-index: 220;
+  width: var(--riffle-width, 320px);
+  overflow: hidden;
+  border: 1px solid rgba(242, 217, 141, 0.24);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 248, 232, 0.06), rgba(255, 248, 232, 0.02)),
+    rgba(2, 14, 11, 0.88);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.44);
+  padding: 14px;
+  backdrop-filter: blur(18px);
+}
+
+.riffle-popover[hidden] {
+  display: none;
+}
+
+.riffle-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.riffle-eyebrow {
+  color: var(--gold-300);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.riffle-header h3 {
+  margin-top: 2px;
+  font-size: 1.05rem;
+}
+
+.riffle-close {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  place-items: center;
+  border-color: rgba(244, 234, 210, 0.14);
+  border-radius: 50%;
+  background: rgba(255, 248, 232, 0.08);
+  color: var(--ivory-100);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.riffle-stack {
+  display: grid;
+  width: 100%;
+  min-height: 144px;
+  place-items: center;
+  margin-top: 12px;
+  border-color: rgba(216, 180, 95, 0.22);
+  background: rgba(1, 10, 8, 0.34);
+  padding: 14px;
+  touch-action: none;
+}
+
+.riffle-stack:hover:not(:disabled) {
+  transform: none;
+}
+
+.riffle-stack-view {
+  position: relative;
+  display: block;
+  width: 208px;
+  height: 96px;
+}
+
+.riffle-chip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--chip-index) * 5px);
+  width: 84px;
+  height: 14px;
+  border: 1px solid rgba(242, 217, 141, 0.42);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 248, 232, 0.78), rgba(216, 180, 95, 0.32) 42%, rgba(72, 26, 30, 0.38) 43%, rgba(10, 74, 56, 0.96) 48%, rgba(6, 44, 35, 0.96));
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.32);
+  transform: translateX(-50%);
+}
+
+.riffle-popover[data-state="split"] .riffle-chip {
+  bottom: calc(var(--pile-index) * 7px + 10px);
+  transform: translateX(calc(-50% + var(--pile-side) * 42px));
+}
+
+.riffle-debug {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.riffle-debug p {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(244, 234, 210, 0.09);
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding-bottom: 7px;
+}
+
+.riffle-debug p:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.riffle-debug strong {
+  color: var(--gold-300);
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.riffle-hint {
+  margin-top: 12px;
+  color: rgba(244, 234, 210, 0.72);
+  font-size: 0.84rem;
+}
+
 @media (max-width: 760px) {
   body {
     background-attachment: scroll;
@@ -652,6 +806,11 @@ h3 {
   .brand-mark {
     width: 30px;
     height: 30px;
+  }
+
+  .brand-mark-button {
+    width: 34px;
+    height: 34px;
   }
 
   .brand-name {
