@@ -709,36 +709,77 @@ h3 {
 }
 
 .guide-panel {
-  display: grid;
-  gap: 14px;
   overflow: hidden;
   border: 1px solid rgba(216, 180, 95, 0.24);
   border-radius: var(--radius);
   background:
     linear-gradient(180deg, rgba(255, 248, 232, 0.07), rgba(255, 248, 232, 0.018)),
     rgba(3, 16, 12, 0.68);
-  padding: clamp(14px, 3vw, 18px);
 }
 
-.guide-header {
+.setup-panel .guide-panel {
+  margin-top: 16px;
+}
+
+.guide-summary {
   display: flex;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
+  cursor: pointer;
+  list-style: none;
+  padding: 13px 15px;
 }
 
-.guide-header h3 {
+.guide-summary::-webkit-details-marker {
+  display: none;
+}
+
+.guide-summary > span {
+  display: grid;
+  gap: 2px;
+}
+
+.guide-summary strong {
   margin-top: 2px;
   color: var(--ivory-50);
-  font-size: 1.28rem;
+  font-size: 1.08rem;
   line-height: 1.1;
 }
 
-.guide-header > p {
-  max-width: 380px;
+.guide-summary em {
   color: rgba(244, 234, 210, 0.68);
-  font-size: 0.9rem;
+  font-size: 0.84rem;
+  font-style: normal;
   text-align: right;
+}
+
+.guide-summary::after {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  border: 1px solid rgba(242, 217, 141, 0.24);
+  border-radius: 999px;
+  color: rgba(242, 217, 141, 0.8);
+  content: "展开";
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.guide-panel[open] .guide-summary {
+  border-bottom: 1px solid rgba(244, 234, 210, 0.1);
+}
+
+.guide-panel[open] .guide-summary::after {
+  content: "收起";
+}
+
+.guide-body {
+  display: grid;
+  gap: 14px;
+  padding: clamp(14px, 3vw, 18px);
 }
 
 .guide-tab-radio {
@@ -780,17 +821,17 @@ h3 {
   color: var(--ivory-50);
 }
 
-#guide-tab-usage:checked ~ .guide-tab-controls label[for="guide-tab-usage"],
-#guide-tab-rules:checked ~ .guide-tab-controls label[for="guide-tab-rules"],
-#guide-tab-hands:checked ~ .guide-tab-controls label[for="guide-tab-hands"] {
+.guide-tab-radio[value="usage"]:checked ~ .guide-tab-controls [data-guide-tab="usage"],
+.guide-tab-radio[value="rules"]:checked ~ .guide-tab-controls [data-guide-tab="rules"],
+.guide-tab-radio[value="hands"]:checked ~ .guide-tab-controls [data-guide-tab="hands"] {
   border-color: rgba(242, 217, 141, 0.34);
   background: rgba(216, 180, 95, 0.15);
   color: var(--gold-300);
 }
 
-.guide-tab-radio:focus-visible + .guide-tab-radio + .guide-tab-radio + .guide-tab-controls label[for="guide-tab-usage"],
-#guide-tab-rules:focus-visible ~ .guide-tab-controls label[for="guide-tab-rules"],
-#guide-tab-hands:focus-visible ~ .guide-tab-controls label[for="guide-tab-hands"] {
+.guide-tab-radio[value="usage"]:focus-visible ~ .guide-tab-controls [data-guide-tab="usage"],
+.guide-tab-radio[value="rules"]:focus-visible ~ .guide-tab-controls [data-guide-tab="rules"],
+.guide-tab-radio[value="hands"]:focus-visible ~ .guide-tab-controls [data-guide-tab="hands"] {
   outline: 2px solid rgba(242, 217, 141, 0.72);
   outline-offset: 2px;
 }
@@ -799,9 +840,9 @@ h3 {
   display: none;
 }
 
-#guide-tab-usage:checked ~ .guide-tab-panels [data-guide-panel="usage"],
-#guide-tab-rules:checked ~ .guide-tab-panels [data-guide-panel="rules"],
-#guide-tab-hands:checked ~ .guide-tab-panels [data-guide-panel="hands"] {
+.guide-tab-radio[value="usage"]:checked ~ .guide-tab-panels [data-guide-panel="usage"],
+.guide-tab-radio[value="rules"]:checked ~ .guide-tab-panels [data-guide-panel="rules"],
+.guide-tab-radio[value="hands"]:checked ~ .guide-tab-panels [data-guide-panel="hands"] {
   display: block;
 }
 
@@ -813,6 +854,15 @@ h3 {
 
 .guide-card-grid-steps {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.setup-panel .guide-card-grid-steps,
+.setup-panel .guide-rule-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.setup-panel .hand-rank-list {
+  grid-template-columns: 1fr;
 }
 
 .guide-card {
@@ -952,6 +1002,22 @@ h3 {
   font-size: 0.72rem;
   line-height: 1;
   padding: 0 4px;
+}
+
+.card-sample .suit-spade {
+  color: #1e1911;
+}
+
+.card-sample .suit-heart {
+  color: #b8333a;
+}
+
+.card-sample .suit-club {
+  color: #1b7f55;
+}
+
+.card-sample .suit-diamond {
+  color: #2563a8;
 }
 
 .riffle-dismiss-layer {
@@ -1552,14 +1618,13 @@ h3 {
     justify-content: flex-start;
   }
 
-  .guide-header {
+  .guide-summary {
     align-items: start;
     flex-direction: column;
     gap: 6px;
   }
 
-  .guide-header > p {
-    max-width: none;
+  .guide-summary em {
     text-align: left;
   }
 
@@ -1609,6 +1674,10 @@ h3 {
 
 @media (max-height: 520px) and (orientation: landscape) {
   .guide-panel {
+    margin-top: 0;
+  }
+
+  .guide-body {
     gap: 10px;
     padding: 12px;
   }

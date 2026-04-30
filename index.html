@@ -38,6 +38,7 @@
         <button id="add-player" class="button button-secondary">添加玩家</button>
         <button id="start-game" class="button button-primary" disabled>开始游戏</button>
       </div>
+      <div data-guide-mount="setup"></div>
     </section>
     <section id="game" class="game-table" style="display: none;" aria-labelledby="game-title">
       <div class="game-heading">
@@ -55,105 +56,7 @@
         <summary id="log-summary">操作日志</summary>
         <div id="game-log" class="log-entries"></div>
       </details>
-      <section class="guide-panel" aria-labelledby="guide-title">
-        <div class="guide-header">
-          <div>
-            <p class="eyebrow">Player Manual</p>
-            <h3 id="guide-title">玩家手册</h3>
-          </div>
-          <p>快速查阅操作流程、德扑规则和牌型大小。</p>
-        </div>
-
-        <input class="guide-tab-radio" type="radio" name="guide-tab" id="guide-tab-usage" checked />
-        <input class="guide-tab-radio" type="radio" name="guide-tab" id="guide-tab-rules" />
-        <input class="guide-tab-radio" type="radio" name="guide-tab" id="guide-tab-hands" />
-        <div class="guide-tab-controls" aria-label="玩家手册分类">
-          <label for="guide-tab-usage">使用指南</label>
-          <label for="guide-tab-rules">德扑规则</label>
-          <label for="guide-tab-hands">牌型大小</label>
-        </div>
-
-        <div class="guide-tab-panels">
-          <article class="guide-tab-panel" data-guide-panel="usage">
-            <div class="guide-card-grid guide-card-grid-steps">
-              <section class="guide-card">
-                <span>01</span>
-                <h4>进入房间</h4>
-                <p>同桌设备输入同一个房间 ID 后同步。没有联网或不填房间时，可作为本地筹码器使用。</p>
-              </section>
-              <section class="guide-card">
-                <span>02</span>
-                <h4>配置牌桌</h4>
-                <p>设置初始筹码和大盲注，再添加玩家。小盲默认为大盲的一半。</p>
-              </section>
-              <section class="guide-card">
-                <span>03</span>
-                <h4>开始牌局</h4>
-                <p>开始后系统分配 Dealer、小盲和大盲，并自动扣除盲注、指定首个行动玩家。</p>
-              </section>
-              <section class="guide-card">
-                <span>04</span>
-                <h4>执行行动</h4>
-                <p>按当前玩家选择 Check、Call、Raise、Fold 或 All In。按钮会根据当前下注状态变化。</p>
-              </section>
-              <section class="guide-card">
-                <span>05</span>
-                <h4>摊牌结算</h4>
-                <p>进入摊牌后，为每个奖池选择赢家。多人并列时可多选，筹码会尽量平均分配。</p>
-              </section>
-              <section class="guide-card">
-                <span>06</span>
-                <h4>开始下一局</h4>
-                <p>结算后点击下一局，Dealer 轮转，玩家筹码保留，日志继续记录本房间进程。</p>
-              </section>
-            </div>
-          </article>
-
-          <article class="guide-tab-panel" data-guide-panel="rules">
-            <ol class="guide-flow" aria-label="德州扑克流程">
-              <li><span>盲注</span></li>
-              <li><span>翻牌前</span></li>
-              <li><span>翻牌</span></li>
-              <li><span>转牌</span></li>
-              <li><span>河牌</span></li>
-              <li><span>摊牌</span></li>
-            </ol>
-            <div class="guide-card-grid guide-rule-grid">
-              <section class="guide-card">
-                <h4>行动顺序</h4>
-                <p>翻牌前通常从大盲左侧玩家开始；翻牌后各轮从 Dealer 左侧第一个未弃牌玩家开始。</p>
-              </section>
-              <section class="guide-card">
-                <h4>下注轮结束</h4>
-                <p>所有未弃牌且可行动的玩家投入相同，或只剩 All In 玩家等待摊牌时，本轮结束。</p>
-              </section>
-              <section class="guide-card">
-                <h4>All In 与边池</h4>
-                <p>玩家筹码不足时可 All In。不同投入额度会形成边池，只有参与对应奖池的玩家可赢该池。</p>
-              </section>
-              <section class="guide-card">
-                <h4>工具边界</h4>
-                <p>本项目管理筹码、下注、奖池和同步，不发牌，也不判断牌型胜负。</p>
-              </section>
-            </div>
-          </article>
-
-          <article class="guide-tab-panel" data-guide-panel="hands">
-            <ol class="hand-rank-list" aria-label="牌型从强到弱">
-              <li><strong>皇家同花顺</strong><span class="card-sample"><b>A♠</b><b>K♠</b><b>Q♠</b><b>J♠</b><b>10♠</b></span><em>同花色 A 到 10 的最大顺子</em></li>
-              <li><strong>同花顺</strong><span class="card-sample"><b>9♥</b><b>8♥</b><b>7♥</b><b>6♥</b><b>5♥</b></span><em>同花色连续五张</em></li>
-              <li><strong>四条</strong><span class="card-sample"><b>Q♠</b><b>Q♥</b><b>Q♦</b><b>Q♣</b><b>4♠</b></span><em>四张相同点数</em></li>
-              <li><strong>葫芦</strong><span class="card-sample"><b>10♠</b><b>10♥</b><b>10♦</b><b>6♣</b><b>6♠</b></span><em>三条加一对</em></li>
-              <li><strong>同花</strong><span class="card-sample"><b>A♦</b><b>J♦</b><b>8♦</b><b>5♦</b><b>2♦</b></span><em>五张同花色，不连续</em></li>
-              <li><strong>顺子</strong><span class="card-sample"><b>8♠</b><b>7♥</b><b>6♦</b><b>5♣</b><b>4♠</b></span><em>五张连续点数，不限花色</em></li>
-              <li><strong>三条</strong><span class="card-sample"><b>7♠</b><b>7♥</b><b>7♦</b><b>K♣</b><b>3♠</b></span><em>三张相同点数</em></li>
-              <li><strong>两对</strong><span class="card-sample"><b>J♠</b><b>J♥</b><b>4♦</b><b>4♣</b><b>A♠</b></span><em>两组对子</em></li>
-              <li><strong>一对</strong><span class="card-sample"><b>A♠</b><b>A♥</b><b>9♦</b><b>6♣</b><b>2♠</b></span><em>一组对子</em></li>
-              <li><strong>高牌</strong><span class="card-sample"><b>A♠</b><b>J♥</b><b>8♦</b><b>5♣</b><b>3♠</b></span><em>没有以上组合时比较最大牌</em></li>
-            </ol>
-          </article>
-        </div>
-      </section>
+      <div data-guide-mount="game"></div>
     </section>
   </div>
 

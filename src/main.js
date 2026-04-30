@@ -1,5 +1,6 @@
 // src/main.js
 import { db, get, onValue, ref, runTransaction, update } from "./firebase.js";
+import { initGuidePanels } from "./guide.js";
 import { initChipRiffle } from "./riffle.js";
 
 // ----------------------
@@ -28,6 +29,7 @@ const showdownPanel = document.getElementById("showdown-panel");
 const syncStatusEl = document.getElementById("sync-status");
 const riffleTrigger = document.querySelector(".brand-mark-button");
 
+initGuidePanels();
 initChipRiffle({ trigger: riffleTrigger });
 
 let bigBlind = 20;

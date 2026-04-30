@@ -21,6 +21,7 @@ index.html
   -> loads styles.css
   -> loads src/main.js as a module
        -> imports Firebase helpers from src/firebase.js
+       -> imports collapsible player manual rendering from src/guide.js
        -> imports chip riffle popover behavior from src/riffle.js
             -> imports sampled chip audio from src/riffle-sound.js
 
@@ -39,7 +40,7 @@ Owns the static DOM shell:
 - Player card container
 - Showdown panel container
 - Log panel container
-- Embedded player manual after the log panel
+- Player manual mount points after setup actions and after the log panel
 
 Important: many elements are selected by `id` in `src/main.js`. Preserve these IDs unless you update all JS references:
 
@@ -106,6 +107,10 @@ Contains most of the app:
 - DOM rendering
 
 There is no separate state store, reducer, rule engine, or test harness yet.
+
+### `src/guide.js`
+
+Owns the generated player manual shown in collapsible panels on both the setup screen and game screen. It keeps usage guidance, beginner-friendly Texas Hold'em rules, and hand rankings in one structured source so the two UI placements stay synchronized.
 
 ### `poker-game.js`
 
@@ -247,7 +252,7 @@ Implemented:
 - Responsive premium poker-themed UI
 - App icon and favicon
 - Chip Riffle popover with real-order chip animation, single/dual-color skins, CSS chip symbols, and sampled chip sound effects
-- Embedded player manual with usage guide, Texas Hold'em rules, and hand rankings
+- Collapsible player manual on setup and game screens with usage guide, Texas Hold'em rules, and hand rankings
 - Player creation/removal before game start
 - Initial chips and blind configuration
 - Dealer, small blind, and big blind assignment

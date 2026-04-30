@@ -18,7 +18,7 @@
 - 响应式界面，适配桌面和手机浏览器
 - 深绿牌桌主题和扑克筹码图标
 - 页眉筹码图标可打开 Chip Riffle 浮窗，支持换肤、真实顺序洗筹动画和真实筹码采样音效
-- 游戏区内嵌玩家手册，包含使用指南、德扑规则和牌型大小表
+- 初始页和游戏区提供折叠玩家手册，包含使用指南、德扑规则和牌型大小表
 
 ## Tech Stack
 
@@ -69,6 +69,7 @@ http://localhost:8000/
 │   └── poker-chip-icon.png
 ├── src/
 │   ├── firebase.js
+│   ├── guide.js
 │   ├── main.js
 │   ├── riffle.js
 │   └── riffle-sound.js
@@ -83,6 +84,7 @@ http://localhost:8000/
 - `styles.css`: 全站视觉主题、响应式布局、游戏控件样式和 Chip Riffle 外观皮肤。
 - `src/main.js`: 牌局状态、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
 - `src/firebase.js`: Firebase SDK 初始化与 Realtime Database API 导出。
+- `src/guide.js`: 初始页和游戏页折叠玩家手册的内容与渲染。
 - `src/riffle.js`: 页眉 Chip Riffle 浮窗、换肤按钮、真实顺序洗筹动画和交互状态。
 - `src/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
 - `poker-game.js`: 兼容入口，转发到 `src/main.js`。
