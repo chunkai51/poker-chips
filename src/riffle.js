@@ -78,7 +78,7 @@ export function initChipRiffle({ trigger }) {
     storeSoundMuted(soundMuted);
     updateMuteButton();
     if (!soundMuted) {
-      sound.unlock();
+      sound.refresh();
     }
     renderState();
   });

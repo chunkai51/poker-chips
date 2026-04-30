@@ -135,11 +135,19 @@ export function createRiffleSound() {
 
   function setMuted(nextMuted) {
     muted = Boolean(nextMuted);
-    if (!context || !outputGain) return;
+    if (!context || !outputGain) {
+      if (!muted) {
+        unlock();
+      }
+      return;
+    }
 
     const now = context.currentTime;
     outputGain.gain.cancelScheduledValues(now);
     outputGain.gain.setTargetAtTime(muted ? 0 : OUTPUT_GAIN, now, 0.018);
+    if (!muted) {
+      refresh();
+    }
   }
 
   function ensureContext() {
