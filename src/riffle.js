@@ -78,7 +78,7 @@ export function initChipRiffle({ trigger }) {
     storeSoundMuted(soundMuted);
     updateMuteButton();
     if (!soundMuted) {
-      sound.unlock();
+      sound.refresh();
     }
     renderState();
   });
@@ -203,6 +203,25 @@ export function initChipRiffle({ trigger }) {
   window.addEventListener("scroll", () => {
     if (isOpen) positionPopover();
   }, { passive: true });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      sound.resetProgress();
+      return;
+    }
+    if (!isOpen || soundMuted) return;
+    sound.refresh();
+  });
+
+  window.addEventListener("pageshow", () => {
+    if (!isOpen || soundMuted) return;
+    sound.refresh();
+  });
+
+  window.addEventListener("focus", () => {
+    if (!isOpen || soundMuted) return;
+    sound.refresh();
+  });
 
   function openPopover() {
     isOpen = true;

@@ -135,11 +135,19 @@ export function createRiffleSound() {
 
   function setMuted(nextMuted) {
     muted = Boolean(nextMuted);
-    if (!context || !outputGain) return;
+    if (!context || !outputGain) {
+      if (!muted) {
+        unlock();
+      }
+      return;
+    }
 
     const now = context.currentTime;
     outputGain.gain.cancelScheduledValues(now);
     outputGain.gain.setTargetAtTime(muted ? 0 : OUTPUT_GAIN, now, 0.018);
+    if (!muted) {
+      refresh();
+    }
   }
 
   function ensureContext() {
@@ -274,7 +282,11 @@ export function createRiffleSound() {
   }
 
   function playGroup(groupName, options = {}) {
-    if (!context || !sampleBus || muted || context.state === "suspended") return;
+    if (!context || !sampleBus || muted) return;
+    if (context.state === "suspended") {
+      unlock();
+      return;
+    }
 
     const group = SAMPLE_GROUPS[groupName] || [];
     const readySamples = group.filter(sample => decodedSamples.has(sample.id));
@@ -331,10 +343,20 @@ export function createRiffleSound() {
     source.stop(startTime + duration + 0.01);
   }
 
+  function refresh() {
+    if (!context) return;
+    if (context.state !== "running") {
+      unlock();
+      return;
+    }
+    primeContext();
+  }
+
   return {
     playSettle,
     playSplit,
     resetProgress,
+    refresh,
     setMuted,
     setProgress,
     unlock
