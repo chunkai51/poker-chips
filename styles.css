@@ -231,6 +231,53 @@ h3 {
   padding: clamp(22px, 5vw, 48px) 0 56px;
 }
 
+.site-footer {
+  display: flex;
+  width: min(1180px, calc(100% - 32px));
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 auto;
+  color: rgba(244, 234, 210, 0.48);
+  font-size: 0.78rem;
+  padding: 2px 0 18px;
+}
+
+.site-footer-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.site-footer-links::before {
+  color: rgba(244, 234, 210, 0.3);
+  content: "·";
+}
+
+.site-footer a {
+  color: rgba(242, 217, 141, 0.62);
+  text-decoration: none;
+  transition: color 160ms ease;
+}
+
+.site-footer a + a::before {
+  margin-right: 8px;
+  color: rgba(244, 234, 210, 0.3);
+  content: "·";
+}
+
+.site-footer a:hover {
+  color: rgba(242, 217, 141, 0.92);
+}
+
+.site-footer a:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid rgba(242, 217, 141, 0.72);
+  outline-offset: 3px;
+}
+
 .setup-panel,
 .game-table {
   position: relative;
@@ -1188,6 +1235,14 @@ h3 {
   .main-content {
     width: min(100% - 20px, 520px);
     padding-top: 18px;
+  }
+
+  .site-footer {
+    width: min(100% - 20px, 520px);
+    flex-wrap: wrap;
+    row-gap: 2px;
+    padding-bottom: 16px;
+    text-align: center;
   }
 
   .setup-panel,
