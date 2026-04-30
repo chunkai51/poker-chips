@@ -722,10 +722,10 @@ h3 {
 }
 
 .guide-summary {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 8px 16px;
   cursor: pointer;
   list-style: none;
   padding: 13px 15px;
@@ -756,6 +756,7 @@ h3 {
 
 .guide-summary::after {
   display: inline-flex;
+  grid-column: 3;
   min-height: 28px;
   align-items: center;
   border: 1px solid rgba(242, 217, 141, 0.24);
@@ -1619,25 +1620,87 @@ h3 {
   }
 
   .guide-summary {
-    align-items: start;
-    flex-direction: column;
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 12px 13px;
+  }
+
+  .guide-summary > span {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .guide-summary::after {
+    grid-column: 2;
+    grid-row: 1;
   }
 
   .guide-summary em {
+    grid-column: 1 / -1;
+    grid-row: 2;
     text-align: left;
   }
 
   .guide-tab-controls {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .guide-tab-controls label {
+    min-height: 34px;
+    font-size: 0.78rem;
+    padding: 6px 4px;
   }
 
   .guide-flow {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+    gap: 0;
+    margin-bottom: 12px;
+  }
+
+  .guide-flow li {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    counter-increment: guide-flow;
+  }
+
+  .guide-flow {
+    counter-reset: guide-flow;
+  }
+
+  .guide-flow li::before {
+    display: inline-flex;
+    z-index: 1;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(242, 217, 141, 0.28);
+    border-radius: 50%;
+    background: rgba(216, 180, 95, 0.12);
+    color: var(--gold-300);
+    content: counter(guide-flow);
+    font-size: 0.74rem;
+    font-weight: 900;
   }
 
   .guide-flow li:not(:last-child)::after {
-    display: none;
+    display: block;
+    top: 30px;
+    right: auto;
+    bottom: -10px;
+    left: 13px;
+    width: 1px;
+    height: auto;
+  }
+
+  .guide-flow span {
+    justify-content: flex-start;
+    min-height: 40px;
+    padding: 8px 10px;
+    text-align: left;
   }
 
   .hand-rank-list {
@@ -1672,7 +1735,7 @@ h3 {
   }
 }
 
-@media (max-height: 520px) and (orientation: landscape) {
+@media (min-width: 761px) and (max-height: 520px) and (orientation: landscape) {
   .guide-panel {
     margin-top: 0;
   }
