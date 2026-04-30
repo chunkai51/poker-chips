@@ -274,7 +274,11 @@ export function createRiffleSound() {
   }
 
   function playGroup(groupName, options = {}) {
-    if (!context || !sampleBus || muted || context.state === "suspended") return;
+    if (!context || !sampleBus || muted) return;
+    if (context.state === "suspended") {
+      unlock();
+      return;
+    }
 
     const group = SAMPLE_GROUPS[groupName] || [];
     const readySamples = group.filter(sample => decodedSamples.has(sample.id));
@@ -331,10 +335,20 @@ export function createRiffleSound() {
     source.stop(startTime + duration + 0.01);
   }
 
+  function refresh() {
+    if (!context) return;
+    if (context.state !== "running") {
+      unlock();
+      return;
+    }
+    primeContext();
+  }
+
   return {
     playSettle,
     playSplit,
     resetProgress,
+    refresh,
     setMuted,
     setProgress,
     unlock

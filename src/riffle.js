@@ -204,6 +204,25 @@ export function initChipRiffle({ trigger }) {
     if (isOpen) positionPopover();
   }, { passive: true });
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      sound.resetProgress();
+      return;
+    }
+    if (!isOpen || soundMuted) return;
+    sound.refresh();
+  });
+
+  window.addEventListener("pageshow", () => {
+    if (!isOpen || soundMuted) return;
+    sound.refresh();
+  });
+
+  window.addEventListener("focus", () => {
+    if (!isOpen || soundMuted) return;
+    sound.refresh();
+  });
+
   function openPopover() {
     isOpen = true;
     state = "single";
