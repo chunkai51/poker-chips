@@ -39,6 +39,7 @@ Owns the static DOM shell:
 - Player card container
 - Showdown panel container
 - Log panel container
+- Embedded player manual after the log panel
 
 Important: many elements are selected by `id` in `src/main.js`. Preserve these IDs unless you update all JS references:
 
@@ -246,6 +247,7 @@ Implemented:
 - Responsive premium poker-themed UI
 - App icon and favicon
 - Chip Riffle popover with real-order chip animation, single/dual-color skins, CSS chip symbols, and sampled chip sound effects
+- Embedded player manual with usage guide, Texas Hold'em rules, and hand rankings
 - Player creation/removal before game start
 - Initial chips and blind configuration
 - Dealer, small blind, and big blind assignment

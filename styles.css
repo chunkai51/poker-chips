@@ -708,6 +708,252 @@ h3 {
   margin-top: 8px;
 }
 
+.guide-panel {
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(216, 180, 95, 0.24);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 248, 232, 0.07), rgba(255, 248, 232, 0.018)),
+    rgba(3, 16, 12, 0.68);
+  padding: clamp(14px, 3vw, 18px);
+}
+
+.guide-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.guide-header h3 {
+  margin-top: 2px;
+  color: var(--ivory-50);
+  font-size: 1.28rem;
+  line-height: 1.1;
+}
+
+.guide-header > p {
+  max-width: 380px;
+  color: rgba(244, 234, 210, 0.68);
+  font-size: 0.9rem;
+  text-align: right;
+}
+
+.guide-tab-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.guide-tab-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  border: 1px solid rgba(244, 234, 210, 0.12);
+  border-radius: var(--radius);
+  background: rgba(1, 10, 8, 0.34);
+  padding: 5px;
+}
+
+.guide-tab-controls label {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: rgba(244, 234, 210, 0.64);
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 900;
+  padding: 7px 10px;
+  text-align: center;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.guide-tab-controls label:hover {
+  color: var(--ivory-50);
+}
+
+#guide-tab-usage:checked ~ .guide-tab-controls label[for="guide-tab-usage"],
+#guide-tab-rules:checked ~ .guide-tab-controls label[for="guide-tab-rules"],
+#guide-tab-hands:checked ~ .guide-tab-controls label[for="guide-tab-hands"] {
+  border-color: rgba(242, 217, 141, 0.34);
+  background: rgba(216, 180, 95, 0.15);
+  color: var(--gold-300);
+}
+
+.guide-tab-radio:focus-visible + .guide-tab-radio + .guide-tab-radio + .guide-tab-controls label[for="guide-tab-usage"],
+#guide-tab-rules:focus-visible ~ .guide-tab-controls label[for="guide-tab-rules"],
+#guide-tab-hands:focus-visible ~ .guide-tab-controls label[for="guide-tab-hands"] {
+  outline: 2px solid rgba(242, 217, 141, 0.72);
+  outline-offset: 2px;
+}
+
+.guide-tab-panel {
+  display: none;
+}
+
+#guide-tab-usage:checked ~ .guide-tab-panels [data-guide-panel="usage"],
+#guide-tab-rules:checked ~ .guide-tab-panels [data-guide-panel="rules"],
+#guide-tab-hands:checked ~ .guide-tab-panels [data-guide-panel="hands"] {
+  display: block;
+}
+
+.guide-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.guide-card-grid-steps {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.guide-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(244, 234, 210, 0.12);
+  border-radius: var(--radius);
+  background: rgba(255, 248, 232, 0.055);
+  padding: 12px;
+}
+
+.guide-card span {
+  color: rgba(242, 217, 141, 0.62);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.guide-card h4 {
+  margin: 0;
+  color: var(--ivory-50);
+  font-size: 0.98rem;
+  line-height: 1.22;
+}
+
+.guide-card p {
+  color: rgba(244, 234, 210, 0.66);
+  font-size: 0.86rem;
+}
+
+.guide-flow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-flow li {
+  position: relative;
+  min-width: 0;
+}
+
+.guide-flow li:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: -8px;
+  width: 8px;
+  height: 1px;
+  background: rgba(216, 180, 95, 0.32);
+  content: "";
+}
+
+.guide-flow span {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(216, 180, 95, 0.22);
+  border-radius: var(--radius);
+  background: rgba(216, 180, 95, 0.09);
+  color: var(--gold-300);
+  font-size: 0.82rem;
+  font-weight: 900;
+  padding: 8px;
+  text-align: center;
+}
+
+.hand-rank-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  counter-reset: hand-rank;
+  list-style: none;
+}
+
+.hand-rank-list li {
+  display: grid;
+  grid-template-columns: auto minmax(92px, 0.9fr) minmax(160px, 1.2fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid rgba(244, 234, 210, 0.12);
+  border-radius: var(--radius);
+  background: rgba(255, 248, 232, 0.052);
+  padding: 9px;
+  counter-increment: hand-rank;
+}
+
+.hand-rank-list li::before {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(216, 180, 95, 0.24);
+  border-radius: 50%;
+  background: rgba(216, 180, 95, 0.1);
+  color: var(--gold-300);
+  content: counter(hand-rank);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.hand-rank-list strong {
+  color: var(--ivory-50);
+  font-size: 0.9rem;
+}
+
+.hand-rank-list em {
+  grid-column: 2 / -1;
+  color: rgba(244, 234, 210, 0.62);
+  font-size: 0.8rem;
+  font-style: normal;
+}
+
+.card-sample {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+}
+
+.card-sample b {
+  display: inline-flex;
+  min-width: 29px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(244, 234, 210, 0.28);
+  border-radius: 4px;
+  background: rgba(255, 248, 232, 0.9);
+  color: #1e1911;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0 4px;
+}
+
 .riffle-dismiss-layer {
   position: fixed;
   inset: 0;
@@ -1256,6 +1502,9 @@ h3 {
 
   .player-inputs,
   .game-info,
+  .guide-card-grid,
+  .guide-card-grid-steps,
+  .guide-rule-grid,
   .player-div {
     grid-template-columns: 1fr;
   }
@@ -1302,6 +1551,37 @@ h3 {
   .player-badges {
     justify-content: flex-start;
   }
+
+  .guide-header {
+    align-items: start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .guide-header > p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .guide-tab-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .guide-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .guide-flow li:not(:last-child)::after {
+    display: none;
+  }
+
+  .hand-rank-list {
+    grid-template-columns: 1fr;
+  }
+
+  .hand-rank-list li {
+    grid-template-columns: auto minmax(76px, 0.7fr) minmax(0, 1.3fr);
+  }
 }
 
 @media (max-width: 420px) {
@@ -1315,5 +1595,33 @@ h3 {
 
   .raise-input {
     grid-template-columns: 1fr;
+  }
+
+  .hand-rank-list li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .card-sample,
+  .hand-rank-list em {
+    grid-column: 2;
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .guide-panel {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .guide-card {
+    padding: 10px;
+  }
+
+  .guide-tab-controls {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .guide-flow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
