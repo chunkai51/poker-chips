@@ -10,6 +10,7 @@ let players = [];
 let currentPlayerIndex = -1;
 let pot = 0;               // 累积奖池
 let currentBet = 0;        // 本轮最大下注
+let lastRaiseSize = 20;    // 本轮最近一次完整下注/加注幅度
 let currentRound = 0;      // 0-翻牌前、1-翻牌后、2-转牌、3-河牌
 const rounds = ["翻牌前", "翻牌后", "转牌", "河牌"];
 
@@ -80,6 +81,7 @@ let room = {
     currentRound: 0,
     pot: 0,
     currentBet: 0,
+    lastRaiseSize: 20,
     currentPlayerIndex: -1,
     logs: [],
     inProgress: false,
@@ -195,6 +197,100 @@ function getCallButtonLabel(player) {
   if (callAmount <= 0) return "Call";
   if (player.chips < callAmount) return `All In ${player.chips}`;
   return `Call ${callAmount}`;
+}
+
+function getRaiseUnavailableMessage(player) {
+  if (!player) return "当前不能加注";
+  if (getMaximumRaiseTarget(player) <= currentBet) {
+    return "剩余筹码不足以加注，可以跟注 All In";
+  }
+  if (currentBet > 0 && player.acted && player.bet < currentBet) {
+    return "短码 All In 未重新开放加注，只能跟注或弃牌";
+  }
+  return "";
+}
+
+function canPlayerRaise(player) {
+  return Boolean(player && canAct(player) && !getRaiseUnavailableMessage(player));
+}
+
+function getChipStep() {
+  return Math.max(1, Math.floor(smallBlind || bigBlind / 2) || 1);
+}
+
+function roundUpToChipStep(value) {
+  const step = getChipStep();
+  return Math.ceil(toNonNegativeNumber(value, 0) / step) * step;
+}
+
+function getMaximumRaiseTarget(player) {
+  if (!player) return 0;
+  return player.bet + player.chips;
+}
+
+function getMinimumRaiseTarget(player) {
+  if (!player) return Math.max(bigBlind, 1);
+  const minimumRaiseSize = Math.max(lastRaiseSize, bigBlind, 1);
+  const ruleTarget = currentBet > 0
+    ? currentBet + minimumRaiseSize
+    : player.bet + Math.max(bigBlind, 1);
+  return roundUpToChipStep(ruleTarget);
+}
+
+function getDefaultRaiseTarget(player) {
+  const maximumTarget = getMaximumRaiseTarget(player);
+  if (maximumTarget <= 0) return 0;
+  return Math.min(getMinimumRaiseTarget(player), maximumTarget);
+}
+
+function getPotSizedRaiseTarget(player, fraction) {
+  if (!player) return 0;
+  const callAmount = getCallAmount(player);
+  const extraBet = (pot + callAmount) * fraction;
+  const target = player.bet + callAmount + extraBet;
+  return Math.min(roundUpToChipStep(target), getMaximumRaiseTarget(player));
+}
+
+function getRaiseValidation(player, rawTarget) {
+  const targetBet = toPositiveInteger(rawTarget, 0);
+  const maximumTarget = getMaximumRaiseTarget(player);
+  const minimumTarget = getMinimumRaiseTarget(player);
+  const callAmount = getCallAmount(player);
+  const commitAmount = Math.max(0, targetBet - (player?.bet || 0));
+  const isAllIn = Boolean(player && commitAmount === player.chips && player.chips > 0);
+
+  if (!player || targetBet <= 0) {
+    return { valid: false, message: "请输入加注目标", targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
+  }
+  const unavailableMessage = getRaiseUnavailableMessage(player);
+  if (unavailableMessage) {
+    return { valid: false, message: unavailableMessage, targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
+  }
+  if (targetBet > maximumTarget) {
+    return { valid: false, message: `最多加到 ${maximumTarget}`, targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
+  }
+  if (commitAmount <= 0) {
+    return { valid: false, message: "加注目标必须高于当前投入", targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
+  }
+  if (currentBet > 0 && targetBet <= currentBet) {
+    return { valid: false, message: `要加注必须高于当前最高下注 ${currentBet}`, targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
+  }
+  if (commitAmount <= callAmount) {
+    return { valid: false, message: callAmount > 0 ? `本次投入需超过跟注额 ${callAmount}` : "请选择有效下注额", targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
+  }
+  if (targetBet < minimumTarget && !isAllIn) {
+    return { valid: false, message: `最小加注需要加到 ${minimumTarget}`, targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
+  }
+
+  return {
+    valid: true,
+    message: targetBet < minimumTarget && isAllIn ? "All In 未达到完整最小加注，不会更新最小加注幅度" : "",
+    targetBet,
+    commitAmount,
+    minimumTarget,
+    maximumTarget,
+    isAllIn
+  };
 }
 
 function createParagraph(text) {
@@ -353,6 +449,7 @@ async function updateFirebaseState(options = {}) {
     currentRound,
     pot,
     currentBet,
+    lastRaiseSize,
     currentPlayerIndex,
     logs: room.gameState.logs,
     inProgress: room.gameState.inProgress,
@@ -582,6 +679,7 @@ function applyRoomData(data) {
   currentRound = toNonNegativeNumber(gameState.currentRound, 0);
   pot = toNonNegativeNumber(gameState.pot, 0);
   currentBet = toNonNegativeNumber(gameState.currentBet, 0);
+  lastRaiseSize = toPositiveInteger(gameState.lastRaiseSize, bigBlind);
   currentPlayerIndex = Number.isInteger(gameState.currentPlayerIndex)
     ? gameState.currentPlayerIndex
     : -1;
@@ -829,6 +927,7 @@ startGameBtn.addEventListener("click", async () => {
     gameOver = false;
     currentRound = 0;
     currentBet = 0;
+    lastRaiseSize = bigBlind;
     pot = 0;
     room.players = players;
     room.gameState.inProgress = true;
@@ -989,6 +1088,7 @@ function getMaxStreetBet() {
 
 function startRound() {
   currentBet = 0;
+  lastRaiseSize = bigBlind;
   selectedWinnersByPot = {};
   pendingDealPrompt = null;
   settlementPreview = null;
@@ -1152,43 +1252,35 @@ async function playerAction(action, index, amount = 0) {
     }
 
     case "raise": {
-      const requested = toPositiveInteger(amount, 0);
-      if (requested <= 0) {
-        alert("请输入有效的加注金额！");
+      const targetBet = toPositiveInteger(amount, 0);
+      const validation = getRaiseValidation(player, targetBet);
+      if (!validation.valid) {
+        alert(validation.message);
         batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
       }
 
-      const callNeeded = Math.max(0, currentBet - player.bet);
-      const committed = Math.min(requested, player.chips);
-      const targetBet = player.bet + committed;
-      const isAllInCommit = committed === player.chips;
-
-      if (targetBet <= currentBet && !isAllInCommit) {
-        alert(`加注后的本轮总下注必须超过 ${currentBet}，否则请使用 Call`);
-        batchingStateUpdate = false;
-        setMutationInProgress(false);
-        return;
-      }
-      if (committed <= callNeeded && !isAllInCommit) {
-        alert(`本次投入必须大于跟注额 ${callNeeded}，否则请使用 Call`);
-        batchingStateUpdate = false;
-        setMutationInProgress(false);
-        return;
-      }
-
+      const previousBet = currentBet;
+      const committed = validation.commitAmount;
       commitChips(player, committed);
       player.acted = true;
 
-      if (player.bet > currentBet) {
+      if (player.bet > previousBet) {
+        const raiseSize = player.bet - previousBet;
+        const isFullRaise = player.bet >= validation.minimumTarget;
         currentBet = player.bet;
-        players.forEach((otherPlayer, otherIndex) => {
-          if (otherIndex !== index && !otherPlayer.folded && !otherPlayer.allIn) {
-            otherPlayer.acted = false;
-          }
-        });
-        logAction = player.allIn ? `All In 加注到 ${player.bet}` : `Raise 到 ${player.bet}`;
+        if (isFullRaise) {
+          lastRaiseSize = raiseSize;
+          players.forEach((otherPlayer, otherIndex) => {
+            if (otherIndex !== index && !otherPlayer.folded && !otherPlayer.allIn) {
+              otherPlayer.acted = false;
+            }
+          });
+        }
+        logAction = player.allIn
+          ? `All In 加到 ${player.bet}${isFullRaise ? "" : "（未达到完整最小加注）"}`
+          : `Raise 到 ${player.bet}`;
       } else {
         logAction = `All In 跟注 ${committed}`;
       }
@@ -1334,6 +1426,7 @@ function awardRemainingPot(winner) {
 
   pot = 0;
   currentBet = 0;
+  lastRaiseSize = bigBlind;
   currentPlayerIndex = -1;
   awaitingShowdown = false;
   pendingPots = [];
@@ -1825,6 +1918,7 @@ async function confirmSettlementPreview() {
 
   pot = 0;
   currentBet = 0;
+  lastRaiseSize = bigBlind;
   currentPlayerIndex = -1;
   awaitingShowdown = false;
   pendingPots = [];
@@ -2257,6 +2351,7 @@ async function resetHand(expectedHandId = handId) {
   batchingStateUpdate = true;
   currentRound = 0;
   currentBet = 0;
+  lastRaiseSize = bigBlind;
   pot = 0;
   currentPlayerIndex = -1;
   pendingPots = [];
@@ -2367,6 +2462,124 @@ function updateGameInfo() {
   potEl.textContent = `奖池: ${pot}`;
 }
 
+function createRaisePanel(player, index, actionDisabled) {
+  const panel = document.createElement("div");
+  panel.className = "raise-panel";
+  panel.hidden = true;
+
+  const raiseDisabled = actionDisabled || !canPlayerRaise(player);
+  const callAmount = getCallAmount(player);
+  const minimumTarget = getMinimumRaiseTarget(player);
+  const maximumTarget = getMaximumRaiseTarget(player);
+
+  const info = document.createElement("div");
+  info.className = "raise-panel-info";
+  [
+    `需跟 ${callAmount}`,
+    `最小加到 ${minimumTarget}`,
+    `奖池 ${pot}`
+  ].forEach(text => {
+    const item = document.createElement("span");
+    item.textContent = text;
+    info.appendChild(item);
+  });
+  panel.appendChild(info);
+
+  const presetGrid = document.createElement("div");
+  presetGrid.className = "raise-preset-grid";
+  [
+    ["最小", () => getDefaultRaiseTarget(player)],
+    ["1/2池", () => getPotSizedRaiseTarget(player, 0.5)],
+    ["2/3池", () => getPotSizedRaiseTarget(player, 2 / 3)],
+    ["一池", () => getPotSizedRaiseTarget(player, 1)],
+    ["All In", () => maximumTarget]
+  ].forEach(([label, getTarget]) => {
+    const target = getTarget();
+    presetGrid.appendChild(createButton(`${label} ${target}`, () => {
+      setTarget(target);
+    }, raiseDisabled || target <= 0, "raise-preset-button"));
+  });
+  panel.appendChild(presetGrid);
+
+  const inputRow = document.createElement("div");
+  inputRow.className = "raise-input-row";
+
+  const inputWrap = document.createElement("label");
+  inputWrap.className = "raise-target-field";
+  const inputLabel = document.createElement("span");
+  inputLabel.textContent = "加到";
+  const raiseInput = document.createElement("input");
+  raiseInput.type = "number";
+  raiseInput.inputMode = "numeric";
+  raiseInput.min = "0";
+  raiseInput.step = String(getChipStep());
+  raiseInput.value = String(getDefaultRaiseTarget(player));
+  inputWrap.appendChild(inputLabel);
+  inputWrap.appendChild(raiseInput);
+  inputRow.appendChild(inputWrap);
+
+  const nudgeGrid = document.createElement("div");
+  nudgeGrid.className = "raise-nudge-grid";
+  const step = getChipStep();
+  [
+    [`-${bigBlind}`, -bigBlind],
+    [`-${step}`, -step],
+    [`+${step}`, step],
+    [`+${bigBlind}`, bigBlind]
+  ].forEach(([label, delta]) => {
+    nudgeGrid.appendChild(createButton(label, () => {
+      setTarget(toPositiveInteger(raiseInput.value, 0) + delta);
+    }, raiseDisabled, "raise-nudge-button"));
+  });
+  inputRow.appendChild(nudgeGrid);
+  panel.appendChild(inputRow);
+
+  const preview = document.createElement("div");
+  preview.className = "raise-preview";
+  const previewTarget = document.createElement("span");
+  const previewCommit = document.createElement("span");
+  const previewMessage = document.createElement("em");
+  preview.appendChild(previewTarget);
+  preview.appendChild(previewCommit);
+  preview.appendChild(previewMessage);
+  panel.appendChild(preview);
+
+  const confirmButton = createButton("确认 Raise", () => {
+    playerAction("raise", index, raiseInput.value);
+    panel.hidden = true;
+  }, raiseDisabled, "action-btn action-confirm raise-confirm-button");
+  panel.appendChild(confirmButton);
+
+  function setTarget(value) {
+    const nextValue = Math.max(0, Math.min(toPositiveInteger(value, 0), maximumTarget));
+    raiseInput.value = String(nextValue);
+    updatePreview();
+  }
+
+  function updatePreview() {
+    const validation = getRaiseValidation(player, raiseInput.value);
+    previewTarget.textContent = `加到 ${validation.targetBet || 0}`;
+    previewCommit.textContent = `本次投入 ${validation.commitAmount || 0}`;
+    previewMessage.textContent = validation.message;
+    preview.classList.toggle("is-invalid", !validation.valid);
+    confirmButton.textContent = validation.valid
+      ? `确认加到 ${validation.targetBet}`
+      : "确认 Raise";
+    confirmButton.disabled = raiseDisabled || !validation.valid;
+  }
+
+  raiseInput.addEventListener("input", updatePreview);
+  updatePreview();
+
+  return {
+    panel,
+    toggle() {
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) updatePreview();
+    }
+  };
+}
+
 function updatePlayerBoxes() {
   const boxes = document.getElementById("player-boxes");
   boxes.replaceChildren();
@@ -2437,27 +2650,12 @@ function updatePlayerBoxes() {
       actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet, "action-btn action-check"));
       actions.appendChild(createButton(getCallButtonLabel(player), () => playerAction("call", index), actionDisabled || player.bet >= currentBet, "action-btn action-call"));
 
-      const raiseArea = document.createElement("div");
-      raiseArea.classList.add("raise-input");
-      raiseArea.style.display = "none";
-
-      const raiseInput = document.createElement("input");
-      raiseInput.type = "number";
-      raiseInput.inputMode = "numeric";
-      raiseInput.placeholder = "本次投入筹码";
-      raiseInput.step = "10";
-      raiseArea.appendChild(raiseInput);
-      raiseArea.appendChild(createButton("确认", () => {
-        playerAction("raise", index, raiseInput.value);
-        raiseArea.style.display = "none";
-      }, actionDisabled, "action-btn action-confirm"));
-
+      const raiseWidget = createRaisePanel(player, index, actionDisabled);
       actions.appendChild(createButton("Raise", () => {
-        raiseArea.style.display = raiseArea.style.display === "none" ? "grid" : "none";
-        raiseInput.focus();
-      }, actionDisabled, "action-btn action-raise"));
+        raiseWidget.toggle();
+      }, actionDisabled || !canPlayerRaise(player), "action-btn action-raise"));
       actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled, "action-btn action-fold danger"));
-      actions.appendChild(raiseArea);
+      actions.appendChild(raiseWidget.panel);
       box.appendChild(actions);
     }
 

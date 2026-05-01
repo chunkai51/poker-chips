@@ -151,6 +151,7 @@ Primary module-level variables in `src/main.js`:
 - `currentPlayerIndex`: index of the active player, or `-1`
 - `pot`: total current pot
 - `currentBet`: highest bet in the current betting round
+- `lastRaiseSize`: most recent full bet/raise increment in the current betting round; short all-in raises do not update it
 - `currentRound`: numeric street index
 - `rounds`: street labels
 - `bigBlind` / `smallBlind`
@@ -179,6 +180,7 @@ room = {
     currentRound,
     pot,
     currentBet,
+    lastRaiseSize,
     currentPlayerIndex,
     logs,
     inProgress,
@@ -222,6 +224,9 @@ Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players 
    - `playerAction(action, index, amount)`
    - Validates current player and remote state.
    - Applies check/call/raise/fold.
+   - Raise `amount` is the target street bet (“加到”), not just this click's committed chips.
+   - Minimum raise target is `currentBet + lastRaiseSize` when facing a bet, or at least one big blind for an opening bet.
+   - Short all-in raises above `currentBet` are allowed, but they do not update `lastRaiseSize` or reopen raising for players who already acted.
    - Advances to next player or next street.
    - Fold asks for local confirmation before writing state.
 5. End conditions:
@@ -286,6 +291,8 @@ Implemented:
 - Initial chips and blind configuration
 - Dealer, small blind, and big blind assignment
 - Betting actions: Check, Call, Raise, Fold
+- Raise panel with min / half-pot / two-thirds-pot / pot / all-in presets, step nudges, manual target input, and live commit validation
+- Minimum-raise tracking through `lastRaiseSize`; short all-in raises do not reopen betting to already-acted players
 - Call amount shown in player cards and the active Call button
 - Local Fold confirmation
 - Basic All In handling
@@ -351,9 +358,12 @@ Browser validation checklist:
 - Active player is visually obvious.
 - Active player card shows action buttons; inactive mobile cards stay compact.
 - Call button shows the needed call amount when calling is available.
+- Raise opens a panel instead of focusing a bare input.
+- Raise presets update the “加到” input and live “本次投入” preview.
+- Invalid raises stay blocked: below minimum, above stack, non-raise, and short all-in spots that do not reopen action.
 - Fold asks for confirmation before writing the action.
 - Completing a betting round shows a shared deal prompt and blocks player actions until confirmed.
-- Raise input expands without shifting outside the card.
+- Raise panel fits inside the active card on desktop, mobile portrait, and short landscape.
 - Showdown panel displays winner choices.
 - Generating settlement preview shows the payout plan on all clients.
 - Canceling settlement preview returns to winner selection; confirming settles once.
