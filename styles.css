@@ -765,7 +765,9 @@ h3 {
 
 .table-manager-panel {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   width: min(820px, 100%);
+  height: auto;
   max-height: min(780px, calc(100vh - 36px));
   overflow: hidden;
   border: 1px solid rgba(242, 217, 141, 0.24);
@@ -823,8 +825,12 @@ h3 {
 
 .table-manager-rows {
   display: grid;
+  min-height: 0;
+  align-content: start;
   gap: 8px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 14px 18px;
 }
 
@@ -1899,6 +1905,7 @@ h3 {
 
   .table-manager-panel {
     width: 100%;
+    height: min(88vh, 760px);
     max-height: min(88vh, 760px);
     border-right: 0;
     border-bottom: 0;
