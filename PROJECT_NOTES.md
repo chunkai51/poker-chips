@@ -161,6 +161,8 @@ Primary module-level variables in `src/main.js`:
 - `selectedWinnersByPot`
 - `pendingDealPrompt`
 - `settlementPreview`
+- `tableDraft`
+- `tableManagerOpen`
 - `handId`
 - `handStatus`: one of `setup`, `playing`, `waitingDeal`, `showdown`, `settlementPreview`, `settled`
 - `stateVersion`: optimistic concurrency guard for remote writes
@@ -193,6 +195,14 @@ room = {
   }
 }
 ```
+
+Player objects now include seat-management fields:
+
+- `seatIndex`: normalized seat order index. The array order is still the source of truth for seat order.
+- `seatStatus`: one of `seated`, `sittingOut`, `busted`, `left`.
+- `dealer`: marks the previous/current Button seat. Next-hand rotation skips non-eligible seats.
+
+Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players can have `chips === 0` during an all-in hand; they are not marked `busted` until settlement finishes.
 
 ## Core Flow
 
@@ -229,7 +239,14 @@ room = {
    - `confirmSettlementPreview()` applies payouts and marks the hand settled.
    - `cancelSettlementPreview()` returns all clients to winner selection.
 8. Next hand:
-   - `resetHand()` rotates dealer, resets hand state, and starts a new preflop round.
+   - `resetHand()` requires at least two eligible players.
+   - Dealer, small blind, big blind, and action order skip `busted`, `sittingOut`, and `left` seats.
+   - Heads-up rules are handled when exactly two eligible players remain.
+9. Table management:
+   - Available only after settlement.
+   - Edits are held in `tableDraft` and synchronized only when saved.
+   - Supports seat reorder, chip adjustment, sitting out, leaving, returning, and adding a player.
+   - “保存并开始下一局” first saves the table with a guarded write, then calls `resetHand()`.
 
 ## Firebase Sync and Concurrency
 
@@ -277,6 +294,8 @@ Implemented:
 - Operation log
 - Showdown panel
 - Synchronized settlement preview with confirm/cancel before payouts
+- Post-settlement table manager for seat order, chip edits, sit-out/leave/return, and add-player
+- Busted players: zero-chip seated players become `busted` after settlement and are skipped next hand until topped up
 - Side-pot construction and multi-winner distribution
 - Next-hand reset and dealer rotation
 - Firebase room sync with optimistic conflict checks
@@ -338,6 +357,10 @@ Browser validation checklist:
 - Showdown panel displays winner choices.
 - Generating settlement preview shows the payout plan on all clients.
 - Canceling settlement preview returns to winner selection; confirming settles once.
+- Zero-chip losers are marked “待补码” after settlement.
+- “牌桌管理” can adjust chips and return a busted player before the next hand.
+- Fewer than two eligible players disables “开始下一局”.
+- Moving seats changes the next-hand Button/blind preview and the next hand follows that seat order.
 - “开始下一局” appears only after settlement.
 - Sync status updates for success and failure states.
 

@@ -28,6 +28,8 @@ const logSummary = document.getElementById("log-summary");
 const showdownPanel = document.getElementById("showdown-panel");
 const dealPromptPanel = document.getElementById("deal-prompt-panel");
 const settlementPreviewPanel = document.getElementById("settlement-preview-panel");
+const tableManagerBackdrop = document.getElementById("table-manager-backdrop");
+const tableManagerPanel = document.getElementById("table-manager-panel");
 const syncStatusEl = document.getElementById("sync-status");
 const riffleTrigger = document.querySelector(".brand-mark-button");
 
@@ -44,6 +46,10 @@ let pendingPots = [];
 let selectedWinnersByPot = {};
 let pendingDealPrompt = null;
 let settlementPreview = null;
+let tableDraft = null;
+let tableManagerOpen = false;
+let tableDraftBaseHandId = null;
+let tableDraftBaseStateVersion = null;
 let unsubscribeRoom = null;
 let listenedRoomId = "";
 let stateVersion = 0;
@@ -56,6 +62,12 @@ let batchingStateUpdate = false;
 
 const CLIENT_ID_KEY = "pokerChipsClientId";
 const clientId = getClientId();
+const SEAT_STATUS_LABELS = {
+  seated: "已入座",
+  sittingOut: "坐出",
+  busted: "待补码",
+  left: "离桌"
+};
 
 // ----------------------
 // 房间系统数据结构
@@ -131,8 +143,46 @@ function getActivePlayers() {
   return players.filter(player => !player.folded);
 }
 
+function normalizeSeatStatus(value, chips = 0, allIn = false) {
+  const status = String(value || "");
+  if (Object.prototype.hasOwnProperty.call(SEAT_STATUS_LABELS, status)) {
+    if (chips <= 0 && !allIn && (status === "seated" || status === "sittingOut" || status === "busted")) return "busted";
+    if (status === "busted" && chips > 0) return "seated";
+    return status;
+  }
+  if (chips <= 0 && !allIn) return "busted";
+  return "seated";
+}
+
+function getSeatStatusLabel(status) {
+  return SEAT_STATUS_LABELS[status] || SEAT_STATUS_LABELS.seated;
+}
+
+function isEligibleForNextHand(player) {
+  return Boolean(player && player.seatStatus === "seated" && player.chips > 0);
+}
+
+function getEligiblePlayerIndices(list = players) {
+  return list
+    .map((player, index) => (isEligibleForNextHand(player) ? index : -1))
+    .filter(index => index >= 0);
+}
+
+function getNextEligibleIndexAfter(index, eligibleIndices = getEligiblePlayerIndices()) {
+  if (eligibleIndices.length === 0) return -1;
+  const normalizedIndex = Number.isInteger(index) ? index : -1;
+  const direct = eligibleIndices.find(candidate => candidate > normalizedIndex);
+  return direct ?? eligibleIndices[0];
+}
+
+function getNextEligibleIndexFrom(index, eligibleIndices = getEligiblePlayerIndices()) {
+  if (eligibleIndices.length === 0) return -1;
+  if (eligibleIndices.includes(index)) return index;
+  return getNextEligibleIndexAfter(index, eligibleIndices);
+}
+
 function canAct(player) {
-  return Boolean(player && !player.folded && !player.allIn && player.chips > 0);
+  return Boolean(player && player.seatStatus === "seated" && !player.folded && !player.allIn && player.chips > 0);
 }
 
 function getCallAmount(player) {
@@ -218,6 +268,7 @@ function refreshInteractiveControls() {
   updatePlayerBoxes();
   renderDealPromptPanel();
   renderSettlementPreviewPanel();
+  if (tableManagerOpen) renderTableManager();
 
   if (handStatus === "waitingDeal") {
     hideShowdownPanel();
@@ -392,15 +443,19 @@ function updateGameLog(message) {
 }
 
 function normalizeIncomingPlayer(player, index) {
+  const chips = toNonNegativeNumber(player?.chips, 0);
+  const allIn = Boolean(player?.allIn);
   return {
     id: String(player?.id || `player${index}`),
     name: String(player?.name || `玩家${index + 1}`),
-    chips: toNonNegativeNumber(player?.chips, 0),
+    seatIndex: toNonNegativeNumber(player?.seatIndex, index),
+    seatStatus: normalizeSeatStatus(player?.seatStatus, chips, allIn),
+    chips,
     folded: Boolean(player?.folded),
     dealer: Boolean(player?.dealer),
     bet: toNonNegativeNumber(player?.bet, 0),
     totalBet: toNonNegativeNumber(player?.totalBet, 0),
-    allIn: Boolean(player?.allIn),
+    allIn,
     acted: Boolean(player?.acted),
     position: String(player?.position || "")
   };
@@ -688,6 +743,8 @@ addPlayerBtn.addEventListener("click", () => {
   const player = {
     id: "player" + players.length,
     name: "",
+    seatIndex: players.length,
+    seatStatus: "seated",
     chips: toPositiveInteger(initialChipsInput.value, 1000),
     folded: false,
     dealer: false,
@@ -749,6 +806,8 @@ startGameBtn.addEventListener("click", async () => {
     players = Array.from(nameInputs).map((input, index) => ({
       id: "player" + index,
       name: input.value.trim() || `玩家${index + 1}`,
+      seatIndex: index,
+      seatStatus: "seated",
       chips: toPositiveInteger(chipsInputs[index].value, 1000),
       folded: false,
       dealer: index === 0,
@@ -804,10 +863,101 @@ function commitChips(player, requestedAmount) {
   return amount;
 }
 
+function getEligibleOrderFrom(startIndex, eligibleIndices = getEligiblePlayerIndices()) {
+  if (eligibleIndices.length === 0) return [];
+
+  const firstIndex = getNextEligibleIndexFrom(startIndex, eligibleIndices);
+  const ordered = [firstIndex];
+  while (ordered.length < eligibleIndices.length) {
+    ordered.push(getNextEligibleIndexAfter(ordered[ordered.length - 1], eligibleIndices));
+  }
+  return ordered;
+}
+
+function getHandLayout(dealerIndex, list = players) {
+  const eligibleIndices = getEligiblePlayerIndices(list);
+  const order = getEligibleOrderFrom(dealerIndex, eligibleIndices);
+  if (order.length === 0) {
+    return {
+      order,
+      dealerIndex: -1,
+      smallBlindIndex: -1,
+      bigBlindIndex: -1,
+      preflopFirstIndex: -1,
+      postflopFirstIndex: -1
+    };
+  }
+
+  if (order.length === 1) {
+    return {
+      order,
+      dealerIndex: order[0],
+      smallBlindIndex: -1,
+      bigBlindIndex: -1,
+      preflopFirstIndex: -1,
+      postflopFirstIndex: -1
+    };
+  }
+
+  if (order.length === 2) {
+    return {
+      order,
+      dealerIndex: order[0],
+      smallBlindIndex: order[0],
+      bigBlindIndex: order[1],
+      preflopFirstIndex: order[0],
+      postflopFirstIndex: order[1]
+    };
+  }
+
+  return {
+    order,
+    dealerIndex: order[0],
+    smallBlindIndex: order[1],
+    bigBlindIndex: order[2],
+    preflopFirstIndex: order[3 % order.length],
+    postflopFirstIndex: order[1]
+  };
+}
+
+function setDealer(index) {
+  players.forEach((player, playerIndex) => {
+    player.dealer = playerIndex === index;
+  });
+}
+
+function normalizeDealerForHand() {
+  const eligibleIndices = getEligiblePlayerIndices();
+  if (eligibleIndices.length === 0) {
+    players.forEach(player => {
+      player.dealer = false;
+    });
+    return -1;
+  }
+
+  const currentDealerIndex = players.findIndex(player => player.dealer);
+  const dealerIndex = currentDealerIndex >= 0
+    ? getNextEligibleIndexFrom(currentDealerIndex, eligibleIndices)
+    : eligibleIndices[0];
+  setDealer(dealerIndex);
+  return dealerIndex;
+}
+
 function assignPositions(dealerIndex) {
-  for (let offset = 0; offset < players.length; offset += 1) {
-    const index = (dealerIndex + offset) % players.length;
-    if (players.length === 2) {
+  players.forEach(player => {
+    player.position = getSeatStatusLabel(player.seatStatus);
+  });
+
+  const layout = getHandLayout(dealerIndex);
+  if (layout.order.length === 0) return;
+
+  if (layout.order.length === 1) {
+    players[layout.dealerIndex].position = "等待对手";
+    return;
+  }
+
+  layout.order.forEach((index, offset) => {
+    if (layout.order.length === 2) {
       players[index].position = offset === 0 ? "Dealer / 小盲" : "大盲";
     } else if (offset === 0) {
       players[index].position = "Dealer";
@@ -818,7 +968,7 @@ function assignPositions(dealerIndex) {
     } else {
       players[index].position = "普通玩家";
     }
-  }
+  });
 }
 
 function findNextActionableIndex(startIndex, includeStart = false) {
@@ -853,7 +1003,11 @@ function startRound() {
     players.forEach(player => {
       player.bet = 0;
       player.totalBet = 0;
-      player.folded = player.chips <= 0;
+      player.seatStatus = normalizeSeatStatus(player.seatStatus, player.chips, false);
+      if (player.chips <= 0 && player.seatStatus === "seated") {
+        player.seatStatus = "busted";
+      }
+      player.folded = !isEligibleForNextHand(player);
       player.acted = false;
       player.allIn = false;
     });
@@ -864,31 +1018,38 @@ function startRound() {
     });
   }
 
-  const dealerIndex = Math.max(players.findIndex(player => player.dealer), 0);
-  if (!players.some(player => player.dealer) && players[dealerIndex]) {
-    players[dealerIndex].dealer = true;
+  const eligibleIndices = getEligiblePlayerIndices();
+  if (currentRound === 0 && eligibleIndices.length < 2) {
+    currentPlayerIndex = -1;
+    gameOver = true;
+    handStatus = "settled";
+    assignPositions(normalizeDealerForHand());
+    updateGameInfo();
+    updatePlayerBoxes();
+    updateGameLog("至少需要 2 名已入座且有筹码的玩家才能开始下一局。");
+    showNextHandButton();
+    updateFirebaseState();
+    return;
   }
+
+  const dealerIndex = normalizeDealerForHand();
+  const layout = getHandLayout(dealerIndex);
   assignPositions(dealerIndex);
 
   let firstToActIndex;
   if (currentRound === 0) {
-    if (players.length === 2) {
-      const bigBlindIndex = (dealerIndex + 1) % players.length;
-      commitChips(players[dealerIndex], smallBlind);
-      commitChips(players[bigBlindIndex], bigBlind);
-      firstToActIndex = dealerIndex;
+    if (layout.order.length === 2) {
+      commitChips(players[layout.smallBlindIndex], smallBlind);
+      commitChips(players[layout.bigBlindIndex], bigBlind);
+      firstToActIndex = layout.preflopFirstIndex;
     } else {
-      const smallBlindIndex = (dealerIndex + 1) % players.length;
-      const bigBlindIndex = (dealerIndex + 2) % players.length;
-      commitChips(players[smallBlindIndex], smallBlind);
-      commitChips(players[bigBlindIndex], bigBlind);
-      firstToActIndex = (bigBlindIndex + 1) % players.length;
+      commitChips(players[layout.smallBlindIndex], smallBlind);
+      commitChips(players[layout.bigBlindIndex], bigBlind);
+      firstToActIndex = layout.preflopFirstIndex;
     }
     currentBet = getMaxStreetBet();
-  } else if (players.length === 2) {
-    firstToActIndex = (dealerIndex + 1) % players.length;
   } else {
-    firstToActIndex = (dealerIndex + 1) % players.length;
+    firstToActIndex = layout.postflopFirstIndex;
   }
 
   currentPlayerIndex = findNextActionableIndex(firstToActIndex, true);
@@ -1179,12 +1340,16 @@ function awardRemainingPot(winner) {
   selectedWinnersByPot = {};
   pendingDealPrompt = null;
   settlementPreview = null;
+  const bustedNames = markZeroChipPlayersBusted();
   gameOver = true;
   handStatus = "settled";
 
   updateGameInfo();
   updatePlayerBoxes();
   updateGameLog(`${winner ? getPlayerName(winner) : "无人"} 赢得奖池 ${wonAmount}`);
+  if (bustedNames.length > 0) {
+    updateGameLog(`${bustedNames.join("、")} 筹码归零，已设为待补码，下一手将跳过。`);
+  }
   hideDealPromptPanel();
   hideSettlementPreviewPanel();
   showNextHandButton();
@@ -1555,6 +1720,18 @@ function applySettlementPreviewPayouts(preview) {
   });
 }
 
+function markZeroChipPlayersBusted() {
+  const bustedNames = [];
+  players.forEach(player => {
+    if (player.chips <= 0 && player.seatStatus === "seated") {
+      player.chips = 0;
+      player.seatStatus = "busted";
+      bustedNames.push(getPlayerName(player));
+    }
+  });
+  return bustedNames;
+}
+
 async function confirmShowdown() {
   const expectedHandId = handId;
   const expectedStateVersion = stateVersion;
@@ -1654,6 +1831,7 @@ async function confirmSettlementPreview() {
   selectedWinnersByPot = {};
   pendingDealPrompt = null;
   settlementPreview = null;
+  const bustedNames = markZeroChipPlayersBusted();
   gameOver = true;
   handStatus = "settled";
 
@@ -1662,6 +1840,9 @@ async function confirmSettlementPreview() {
   updateGameInfo();
   updatePlayerBoxes();
   updateGameLog(`游戏结束，筹码分配：\n${reportLines.join("\n")}`);
+  if (bustedNames.length > 0) {
+    updateGameLog(`${bustedNames.join("、")} 筹码归零，已设为待补码，下一手将跳过。`);
+  }
   batchingStateUpdate = false;
   const saved = await updateFirebaseState({
     expectedHandId,
@@ -1677,6 +1858,378 @@ async function confirmSettlementPreview() {
 }
 
 // ----------------------
+// 牌桌管理
+// ----------------------
+if (tableManagerBackdrop) {
+  tableManagerBackdrop.addEventListener("click", (event) => {
+    if (event.target === tableManagerBackdrop) {
+      closeTableManager();
+    }
+  });
+}
+
+function createTableDraft() {
+  return players.map((player, index) => ({
+    id: String(player.id || `player${index}`),
+    name: getPlayerName(player),
+    seatIndex: index,
+    seatStatus: normalizeSeatStatus(player.seatStatus, player.chips, false),
+    chips: toNonNegativeNumber(player.chips, 0),
+    dealer: Boolean(player.dealer)
+  }));
+}
+
+function getNextPlayerIdFromDraft() {
+  const usedIds = new Set(tableDraft.map(player => player.id));
+  let index = players.length + tableDraft.length;
+  let id = `player${index}`;
+  while (usedIds.has(id)) {
+    index += 1;
+    id = `player${index}`;
+  }
+  return id;
+}
+
+function normalizeDraftPlayer(draftPlayer, index) {
+  let chips = toNonNegativeNumber(draftPlayer?.chips, 0);
+  let seatStatus = normalizeSeatStatus(draftPlayer?.seatStatus, chips, false);
+  if (chips <= 0) {
+    chips = 0;
+    if (seatStatus === "seated" || seatStatus === "sittingOut") {
+      seatStatus = "busted";
+    }
+  } else if (seatStatus === "busted") {
+    seatStatus = "seated";
+  }
+
+  return {
+    id: String(draftPlayer?.id || `player${index}`),
+    name: String(draftPlayer?.name || `玩家${index + 1}`).trim() || `玩家${index + 1}`,
+    seatIndex: index,
+    seatStatus,
+    chips,
+    folded: !isEligibleForNextHand({ seatStatus, chips }),
+    dealer: Boolean(draftPlayer?.dealer),
+    bet: 0,
+    totalBet: 0,
+    allIn: false,
+    acted: false,
+    position: getSeatStatusLabel(seatStatus)
+  };
+}
+
+function normalizeTableDraftPlayers() {
+  const normalized = tableDraft.map(normalizeDraftPlayer);
+  const dealerCount = normalized.filter(player => player.dealer).length;
+  if (dealerCount > 1) {
+    let firstDealerSeen = false;
+    normalized.forEach(player => {
+      if (player.dealer && !firstDealerSeen) {
+        firstDealerSeen = true;
+      } else {
+        player.dealer = false;
+      }
+    });
+  }
+  return normalized;
+}
+
+function getPreviewDealerIndex(list = tableDraft) {
+  const eligibleIndices = getEligiblePlayerIndices(list);
+  if (eligibleIndices.length === 0) return -1;
+
+  const currentDealerIndex = list.findIndex(player => player.dealer);
+  if (currentDealerIndex === -1) return eligibleIndices[0];
+  return getNextEligibleIndexAfter(currentDealerIndex, eligibleIndices);
+}
+
+function getTableDraftSummary() {
+  const normalized = tableDraft.map(normalizeDraftPlayer);
+  const eligibleIndices = getEligiblePlayerIndices(normalized);
+  const sittingOutCount = normalized.filter(player => player.seatStatus === "sittingOut").length;
+  const bustedCount = normalized.filter(player => player.seatStatus === "busted").length;
+  const leftCount = normalized.filter(player => player.seatStatus === "left").length;
+
+  if (eligibleIndices.length < 2) {
+    return `下一手可参与 ${eligibleIndices.length} 人 · 至少需要 2 名已入座且有筹码的玩家`;
+  }
+
+  const dealerIndex = getPreviewDealerIndex(normalized);
+  const layout = getHandLayout(dealerIndex, normalized);
+  const detail = [
+    `下一手可参与 ${eligibleIndices.length} 人`,
+    `Button ${getPlayerName(normalized[layout.dealerIndex])}`,
+    `小盲 ${getPlayerName(normalized[layout.smallBlindIndex])}`,
+    `大盲 ${getPlayerName(normalized[layout.bigBlindIndex])}`
+  ];
+
+  const pending = [];
+  if (bustedCount > 0) pending.push(`${bustedCount} 人待补码`);
+  if (sittingOutCount > 0) pending.push(`${sittingOutCount} 人坐出`);
+  if (leftCount > 0) pending.push(`${leftCount} 人离桌`);
+  if (pending.length > 0) detail.push(pending.join("，"));
+  return detail.join(" · ");
+}
+
+function openTableManager() {
+  if (handStatus !== "settled") {
+    alert("牌桌管理只在本手结算完成后开放，避免影响正在进行的牌局。");
+    return;
+  }
+
+  tableDraft = createTableDraft();
+  tableDraftBaseHandId = handId;
+  tableDraftBaseStateVersion = stateVersion;
+  tableManagerOpen = true;
+  renderTableManager();
+}
+
+function closeTableManager() {
+  tableManagerOpen = false;
+  tableDraft = null;
+  tableDraftBaseHandId = null;
+  tableDraftBaseStateVersion = null;
+  if (tableManagerBackdrop) tableManagerBackdrop.hidden = true;
+  if (tableManagerPanel) tableManagerPanel.replaceChildren();
+}
+
+function renderTableManager() {
+  if (!tableManagerBackdrop || !tableManagerPanel || !tableManagerOpen || !tableDraft) return;
+
+  tableManagerBackdrop.hidden = false;
+  tableManagerPanel.replaceChildren();
+
+  const header = document.createElement("div");
+  header.className = "table-manager-header";
+
+  const copy = document.createElement("div");
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "prompt-eyebrow";
+  eyebrow.textContent = "下一手牌桌预设";
+  copy.appendChild(eyebrow);
+
+  const title = document.createElement("h3");
+  title.id = "table-manager-title";
+  title.textContent = "牌桌管理";
+  copy.appendChild(title);
+  copy.appendChild(createParagraph("调整座次、筹码和离桌/回桌状态；保存后只影响下一手。"));
+  header.appendChild(copy);
+
+  const closeButton = createButton("×", closeTableManager, false, "table-manager-close");
+  closeButton.setAttribute("aria-label", "关闭牌桌管理");
+  header.appendChild(closeButton);
+  tableManagerPanel.appendChild(header);
+
+  const summary = document.createElement("div");
+  summary.className = "table-manager-summary";
+  summary.textContent = getTableDraftSummary();
+  tableManagerPanel.appendChild(summary);
+
+  const rows = document.createElement("div");
+  rows.className = "table-manager-rows";
+  tableDraft.forEach((draftPlayer, index) => {
+    rows.appendChild(createTableManagerRow(draftPlayer, index));
+  });
+  tableManagerPanel.appendChild(rows);
+
+  const addButton = createButton("添加玩家", () => {
+    const id = getNextPlayerIdFromDraft();
+    tableDraft.push({
+      id,
+      name: `玩家${tableDraft.length + 1}`,
+      seatIndex: tableDraft.length,
+      seatStatus: "seated",
+      chips: toPositiveInteger(initialChipsInput.value, 1000),
+      dealer: false
+    });
+    renderTableManager();
+  }, isSharedPromptActionLocked(), "prompt-secondary");
+
+  const footer = document.createElement("div");
+  footer.className = "table-manager-footer";
+  footer.appendChild(addButton);
+
+  const actionGroup = document.createElement("div");
+  actionGroup.className = "table-manager-save-actions";
+  actionGroup.appendChild(createButton("取消", closeTableManager, false, "prompt-secondary"));
+  actionGroup.appendChild(createButton("保存牌桌", () => saveTableDraft({ startNextHand: false }), isSharedPromptActionLocked(), "prompt-secondary"));
+  actionGroup.appendChild(createButton("保存并开始下一局", () => saveTableDraft({ startNextHand: true }), isSharedPromptActionLocked() || getEligiblePlayerIndices(tableDraft.map(normalizeDraftPlayer)).length < 2, "prompt-primary"));
+  footer.appendChild(actionGroup);
+  tableManagerPanel.appendChild(footer);
+}
+
+function createTableManagerRow(draftPlayer, index) {
+  const row = document.createElement("div");
+  row.className = "table-manager-row";
+  if (!isEligibleForNextHand(normalizeDraftPlayer(draftPlayer, index))) {
+    row.classList.add("is-inactive");
+  }
+
+  const seat = document.createElement("div");
+  seat.className = "table-seat-cell";
+  const seatLabel = document.createElement("strong");
+  seatLabel.textContent = `座位 ${index + 1}`;
+  seat.appendChild(seatLabel);
+  const moveActions = document.createElement("div");
+  moveActions.className = "table-seat-actions";
+  moveActions.appendChild(createButton("↑", () => moveDraftPlayer(index, -1), index === 0, "table-icon-button"));
+  moveActions.appendChild(createButton("↓", () => moveDraftPlayer(index, 1), index === tableDraft.length - 1, "table-icon-button"));
+  seat.appendChild(moveActions);
+  row.appendChild(seat);
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.value = draftPlayer.name;
+  nameInput.setAttribute("aria-label", `座位 ${index + 1} 玩家名`);
+  nameInput.addEventListener("input", () => {
+    tableDraft[index].name = nameInput.value;
+  });
+  row.appendChild(nameInput);
+
+  const chipsCell = document.createElement("div");
+  chipsCell.className = "table-chip-cell";
+  const chipsInput = document.createElement("input");
+  chipsInput.type = "number";
+  chipsInput.inputMode = "numeric";
+  chipsInput.min = "0";
+  chipsInput.step = "10";
+  chipsInput.value = String(draftPlayer.chips);
+  chipsInput.setAttribute("aria-label", `${getPlayerName(draftPlayer)} 筹码`);
+  chipsInput.addEventListener("change", () => {
+    setDraftChips(index, chipsInput.value);
+  });
+  chipsCell.appendChild(chipsInput);
+
+  const chipActions = document.createElement("div");
+  chipActions.className = "table-chip-actions";
+  chipActions.appendChild(createButton("-100", () => adjustDraftChips(index, -100), draftPlayer.chips <= 0, "table-chip-button"));
+  chipActions.appendChild(createButton("+100", () => adjustDraftChips(index, 100), false, "table-chip-button"));
+  chipActions.appendChild(createButton("+500", () => adjustDraftChips(index, 500), false, "table-chip-button"));
+  chipActions.appendChild(createButton("+1000", () => adjustDraftChips(index, 1000), false, "table-chip-button"));
+  chipsCell.appendChild(chipActions);
+  row.appendChild(chipsCell);
+
+  const statusCell = document.createElement("div");
+  statusCell.className = "table-status-cell";
+  const statusSelect = document.createElement("select");
+  statusSelect.setAttribute("aria-label", `${getPlayerName(draftPlayer)} 状态`);
+  Object.entries(SEAT_STATUS_LABELS).forEach(([status, label]) => {
+    const option = document.createElement("option");
+    option.value = status;
+    option.textContent = label;
+    option.selected = draftPlayer.seatStatus === status;
+    statusSelect.appendChild(option);
+  });
+  statusSelect.addEventListener("change", () => {
+    setDraftStatus(index, statusSelect.value);
+  });
+  statusCell.appendChild(statusSelect);
+
+  const quickActions = document.createElement("div");
+  quickActions.className = "table-status-actions";
+  if (draftPlayer.seatStatus === "seated") {
+    quickActions.appendChild(createButton("坐出", () => setDraftStatus(index, "sittingOut"), false, "table-chip-button"));
+    quickActions.appendChild(createButton("离桌", () => setDraftStatus(index, "left"), false, "table-chip-button table-danger-button"));
+  } else {
+    quickActions.appendChild(createButton("回桌", () => {
+      if (tableDraft[index].chips <= 0) {
+        tableDraft[index].chips = toPositiveInteger(initialChipsInput.value, 1000);
+      }
+      setDraftStatus(index, "seated");
+    }, false, "table-chip-button"));
+  }
+  statusCell.appendChild(quickActions);
+  row.appendChild(statusCell);
+
+  return row;
+}
+
+function moveDraftPlayer(index, direction) {
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= tableDraft.length) return;
+  const [player] = tableDraft.splice(index, 1);
+  tableDraft.splice(nextIndex, 0, player);
+  renderTableManager();
+}
+
+function adjustDraftChips(index, delta) {
+  const draftPlayer = tableDraft[index];
+  draftPlayer.chips = Math.max(0, toNonNegativeNumber(draftPlayer.chips, 0) + delta);
+  if (draftPlayer.chips <= 0 && draftPlayer.seatStatus === "seated") {
+    draftPlayer.seatStatus = "busted";
+  } else if (draftPlayer.chips > 0 && draftPlayer.seatStatus === "busted") {
+    draftPlayer.seatStatus = "seated";
+  }
+  renderTableManager();
+}
+
+function setDraftChips(index, value) {
+  tableDraft[index].chips = toNonNegativeNumber(value, 0);
+  adjustDraftChips(index, 0);
+}
+
+function setDraftStatus(index, status) {
+  if (status === "seated" && tableDraft[index].chips <= 0) {
+    tableDraft[index].chips = toPositiveInteger(initialChipsInput.value, 1000);
+  } else if (status === "busted") {
+    tableDraft[index].chips = 0;
+  }
+  tableDraft[index].seatStatus = normalizeSeatStatus(status, tableDraft[index].chips, false);
+  renderTableManager();
+}
+
+async function saveTableDraft({ startNextHand = false } = {}) {
+  if (!tableDraft || handStatus !== "settled") {
+    alert("当前不能保存牌桌管理设置");
+    return;
+  }
+
+  const nextPlayers = normalizeTableDraftPlayers();
+  if (startNextHand && getEligiblePlayerIndices(nextPlayers).length < 2) {
+    alert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
+    renderTableManager();
+    return;
+  }
+
+  const expectedHandId = tableDraftBaseHandId;
+  const expectedStateVersion = tableDraftBaseStateVersion;
+  if (expectedHandId !== handId || expectedStateVersion !== stateVersion) {
+    alert("牌桌已被其他设备更新，请关闭后重新打开牌桌管理。");
+    closeTableManager();
+    return;
+  }
+
+  setMutationInProgress(true);
+  batchingStateUpdate = true;
+
+  players = nextPlayers;
+  room.players = players;
+  players.forEach(player => {
+    player.position = getSeatStatusLabel(player.seatStatus);
+  });
+  updatePlayerBoxes();
+  updateGameLog(`牌桌已更新：${getTableDraftSummary()}`);
+
+  batchingStateUpdate = false;
+  const saved = await updateFirebaseState({
+    expectedHandId,
+    allowedStatuses: ["settled"],
+    expectedStateVersion
+  });
+  setMutationInProgress(false);
+
+  if (!saved) {
+    alert("牌桌管理没有保存成功，已恢复到最新远端状态");
+    return;
+  }
+
+  closeTableManager();
+  if (startNextHand) {
+    await resetHand(expectedHandId);
+  }
+}
+
+// ----------------------
 // 下一局
 // ----------------------
 async function resetHand(expectedHandId = handId) {
@@ -1684,6 +2237,11 @@ async function resetHand(expectedHandId = handId) {
   if (mutationInProgress) return;
   if (!gameOver || handStatus !== "settled") {
     alert("当前手牌还没有完成结算，不能开始下一局");
+    return;
+  }
+  if (getEligiblePlayerIndices().length < 2) {
+    alert("至少需要 2 名已入座且有筹码的玩家才能开始下一局，请先打开牌桌管理补码或回桌。");
+    renderNextHandButton();
     return;
   }
 
@@ -1718,7 +2276,13 @@ async function resetHand(expectedHandId = handId) {
     player.allIn = false;
   });
 
-  rotateDealer();
+  if (!rotateDealer()) {
+    batchingStateUpdate = false;
+    setMutationInProgress(false);
+    alert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
+    renderNextHandButton();
+    return;
+  }
   clearGameLog();
   clearHandActions();
   hideShowdownPanel();
@@ -1739,26 +2303,30 @@ async function resetHand(expectedHandId = handId) {
 }
 
 function rotateDealer() {
-  if (players.length === 0) return;
+  const eligibleIndices = getEligiblePlayerIndices();
+  if (eligibleIndices.length < 2) return false;
 
   let dealerIndex = players.findIndex(player => player.dealer);
-  if (dealerIndex === -1) dealerIndex = 0;
+  if (dealerIndex === -1) dealerIndex = eligibleIndices[eligibleIndices.length - 1];
 
-  players[dealerIndex].dealer = false;
-  const nextIndex = (dealerIndex + 1) % players.length;
-  players[nextIndex].dealer = true;
+  const nextIndex = getNextEligibleIndexAfter(dealerIndex, eligibleIndices);
+  setDealer(nextIndex);
+  return true;
 }
 
 function renderNextHandButton() {
   if (!handActions) return;
 
   const buttonHandId = handId;
+  const eligibleCount = getEligiblePlayerIndices().length;
+  const manageButton = createButton("牌桌管理", openTableManager, isInteractionLocked() || handStatus !== "settled", "table-manager-button");
   const button = createButton("开始下一局", () => {
     resetHand(buttonHandId);
-  }, isInteractionLocked() || handStatus !== "settled", "next-hand-button");
+  }, isInteractionLocked() || handStatus !== "settled" || eligibleCount < 2, "next-hand-button");
   button.id = "next-hand-button";
   handActions.replaceChildren();
   handActions.hidden = false;
+  handActions.appendChild(manageButton);
   handActions.appendChild(button);
 }
 
@@ -1807,6 +2375,7 @@ function updatePlayerBoxes() {
     const box = document.createElement("div");
     box.classList.add("player-box");
     if (player.folded) box.classList.add("folded");
+    if (player.seatStatus !== "seated") box.classList.add("seat-inactive");
     if (index === currentPlayerIndex) box.classList.add("active");
 
     const header = document.createElement("div");
@@ -1824,7 +2393,9 @@ function updatePlayerBoxes() {
     positionBadge.textContent = player.position || "-";
     badges.appendChild(positionBadge);
 
-    const statusClass = player.folded
+    const statusClass = player.seatStatus !== "seated"
+      ? "is-seat-inactive"
+      : player.folded
       ? "is-folded"
       : player.allIn
         ? "is-all-in"
@@ -1895,6 +2466,7 @@ function updatePlayerBoxes() {
 }
 
 function getPlayerStatus(player) {
+  if (player.seatStatus !== "seated") return getSeatStatusLabel(player.seatStatus);
   if (player.folded) return "Folded";
   if (player.allIn) return "All In";
   if (players.indexOf(player) === currentPlayerIndex) return "行动中";
