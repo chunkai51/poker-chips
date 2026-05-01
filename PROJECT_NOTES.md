@@ -159,8 +159,10 @@ Primary module-level variables in `src/main.js`:
 - `awaitingShowdown`
 - `pendingPots`
 - `selectedWinnersByPot`
+- `pendingDealPrompt`
+- `settlementPreview`
 - `handId`
-- `handStatus`: one of `setup`, `playing`, `showdown`, `settled`
+- `handStatus`: one of `setup`, `playing`, `waitingDeal`, `showdown`, `settlementPreview`, `settled`
 - `stateVersion`: optimistic concurrency guard for remote writes
 - `mutationInProgress`, `syncReady`, `syncWriteInProgress`, `batchingStateUpdate`
 
@@ -181,6 +183,9 @@ room = {
     gameOver,
     awaitingShowdown,
     pendingPots,
+    selectedWinnersByPot,
+    pendingDealPrompt,
+    settlementPreview,
     handId,
     handStatus,
     stateVersion,
@@ -208,15 +213,22 @@ room = {
    - Validates current player and remote state.
    - Applies check/call/raise/fold.
    - Advances to next player or next street.
+   - Fold asks for local confirmation before writing state.
 5. End conditions:
    - Single active player wins immediately.
    - All remaining players are all-in or betting is complete by river.
    - Otherwise advance street.
-6. Showdown:
+6. Street transition:
+   - Betting completion before the river creates `pendingDealPrompt`.
+   - `handStatus` becomes `waitingDeal`.
+   - All clients see the same deal prompt; one confirmed click advances into the next street by guarded transaction.
+7. Showdown:
    - `beginShowdown()` builds side pots.
    - UI asks user to choose winner(s) per pot.
-   - `confirmShowdown()` distributes chips and marks hand settled.
-7. Next hand:
+   - `confirmShowdown()` now creates `settlementPreview` rather than distributing immediately.
+   - `confirmSettlementPreview()` applies payouts and marks the hand settled.
+   - `cancelSettlementPreview()` returns all clients to winner selection.
+8. Next hand:
    - `resetHand()` rotates dealer, resets hand state, and starts a new preflop round.
 
 ## Firebase Sync and Concurrency
@@ -257,11 +269,14 @@ Implemented:
 - Initial chips and blind configuration
 - Dealer, small blind, and big blind assignment
 - Betting actions: Check, Call, Raise, Fold
+- Call amount shown in player cards and the active Call button
+- Local Fold confirmation
 - Basic All In handling
-- Automatic street progression
+- Automatic betting completion with synchronized deal prompts between streets
 - Pot and per-player bet tracking
 - Operation log
 - Showdown panel
+- Synchronized settlement preview with confirm/cancel before payouts
 - Side-pot construction and multi-winner distribution
 - Next-hand reset and dealer rotation
 - Firebase room sync with optimistic conflict checks
@@ -315,8 +330,14 @@ Browser validation checklist:
 - Starting a game creates or joins a room.
 - Player cards fit without horizontal overflow at about 390px width.
 - Active player is visually obvious.
+- Active player card shows action buttons; inactive mobile cards stay compact.
+- Call button shows the needed call amount when calling is available.
+- Fold asks for confirmation before writing the action.
+- Completing a betting round shows a shared deal prompt and blocks player actions until confirmed.
 - Raise input expands without shifting outside the card.
 - Showdown panel displays winner choices.
+- Generating settlement preview shows the payout plan on all clients.
+- Canceling settlement preview returns to winner selection; confirming settles once.
 - “开始下一局” appears only after settlement.
 - Sync status updates for success and failure states.
 

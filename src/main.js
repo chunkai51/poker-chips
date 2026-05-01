@@ -26,6 +26,8 @@ const gameLog = document.getElementById("game-log");
 const handActions = document.getElementById("hand-actions");
 const logSummary = document.getElementById("log-summary");
 const showdownPanel = document.getElementById("showdown-panel");
+const dealPromptPanel = document.getElementById("deal-prompt-panel");
+const settlementPreviewPanel = document.getElementById("settlement-preview-panel");
 const syncStatusEl = document.getElementById("sync-status");
 const riffleTrigger = document.querySelector(".brand-mark-button");
 
@@ -40,6 +42,8 @@ let gameStarted = false;
 let awaitingShowdown = false;
 let pendingPots = [];
 let selectedWinnersByPot = {};
+let pendingDealPrompt = null;
+let settlementPreview = null;
 let unsubscribeRoom = null;
 let listenedRoomId = "";
 let stateVersion = 0;
@@ -70,6 +74,9 @@ let room = {
     gameOver: false,
     awaitingShowdown: false,
     pendingPots: [],
+    selectedWinnersByPot: {},
+    pendingDealPrompt: null,
+    settlementPreview: null,
     handId: 0,
     handStatus: "setup",
     stateVersion: 0,
@@ -126,6 +133,18 @@ function getActivePlayers() {
 
 function canAct(player) {
   return Boolean(player && !player.folded && !player.allIn && player.chips > 0);
+}
+
+function getCallAmount(player) {
+  if (!player || player.folded || player.allIn) return 0;
+  return Math.max(0, currentBet - player.bet);
+}
+
+function getCallButtonLabel(player) {
+  const callAmount = getCallAmount(player);
+  if (callAmount <= 0) return "Call";
+  if (player.chips < callAmount) return `All In ${player.chips}`;
+  return `Call ${callAmount}`;
 }
 
 function createParagraph(text) {
@@ -191,9 +210,22 @@ function isInteractionLocked() {
   return mutationInProgress || syncWriteInProgress || !syncReady;
 }
 
+function isSharedPromptActionLocked() {
+  return mutationInProgress || syncWriteInProgress || !syncReady;
+}
+
 function refreshInteractiveControls() {
   updatePlayerBoxes();
-  if (awaitingShowdown) {
+  renderDealPromptPanel();
+  renderSettlementPreviewPanel();
+
+  if (handStatus === "waitingDeal") {
+    hideShowdownPanel();
+    clearHandActions();
+  } else if (handStatus === "settlementPreview") {
+    hideShowdownPanel();
+    clearHandActions();
+  } else if (awaitingShowdown) {
     renderShowdownPanel();
   } else if (gameOver) {
     renderNextHandButton();
@@ -276,6 +308,9 @@ async function updateFirebaseState(options = {}) {
     gameOver,
     awaitingShowdown,
     pendingPots,
+    selectedWinnersByPot: serializeSelectedWinnersByPot(),
+    pendingDealPrompt,
+    settlementPreview,
     handId,
     handStatus,
     stateVersion: nextStateVersion,
@@ -385,6 +420,108 @@ function normalizeIncomingPots(pots) {
   })).filter(sidePot => sidePot.amount > 0 && sidePot.contenders.length > 0);
 }
 
+function serializeSelectedWinnersByPot() {
+  return Object.fromEntries(Object.entries(selectedWinnersByPot).map(([potIndex, value]) => {
+    const ids = value instanceof Set ? Array.from(value) : Array.isArray(value) ? value : [];
+    return [potIndex, [...new Set(ids.map(String))]];
+  }));
+}
+
+function normalizeSelectedWinnersByPot(value) {
+  if (!value || typeof value !== "object") return {};
+
+  return Object.fromEntries(Object.entries(value).map(([potIndex, ids]) => [
+    potIndex,
+    new Set(ids instanceof Set
+      ? Array.from(ids).map(String)
+      : Array.isArray(ids)
+        ? ids.map(String)
+        : [])
+  ]));
+}
+
+function getDealPromptMeta(nextRound) {
+  const prompts = {
+    1: {
+      title: "请发翻牌",
+      cardText: "发三张公共牌",
+      detail: "确认后进入翻牌后下注。"
+    },
+    2: {
+      title: "请发转牌",
+      cardText: "发一张转牌",
+      detail: "确认后进入转牌下注。"
+    },
+    3: {
+      title: "请发河牌",
+      cardText: "发一张河牌",
+      detail: "确认后进入河牌下注。"
+    }
+  };
+
+  return prompts[nextRound] || {
+    title: "请发下一张公共牌",
+    cardText: "发公共牌",
+    detail: "确认后继续牌局。"
+  };
+}
+
+function createDealPrompt(nextRound) {
+  const prompt = getDealPromptMeta(nextRound);
+  return {
+    id: `deal_${handId}_${nextRound}_${Date.now()}`,
+    nextRound,
+    ...prompt
+  };
+}
+
+function normalizeIncomingDealPrompt(prompt) {
+  if (!prompt || typeof prompt !== "object") return null;
+
+  const nextRound = Number(prompt.nextRound);
+  if (!Number.isInteger(nextRound) || nextRound <= 0 || nextRound >= rounds.length) {
+    return null;
+  }
+
+  const fallback = getDealPromptMeta(nextRound);
+  return {
+    id: String(prompt.id || `deal_${handId}_${nextRound}`),
+    nextRound,
+    title: String(prompt.title || fallback.title),
+    cardText: String(prompt.cardText || fallback.cardText),
+    detail: String(prompt.detail || fallback.detail)
+  };
+}
+
+function normalizeSettlementPreview(preview) {
+  if (!preview || typeof preview !== "object") return null;
+
+  const pots = Array.isArray(preview.pots)
+    ? preview.pots.map((previewPot, index) => ({
+      index: Number.isInteger(previewPot?.index) ? previewPot.index : index,
+      amount: toNonNegativeNumber(previewPot?.amount, 0),
+      winnerIds: Array.isArray(previewPot?.winnerIds)
+        ? previewPot.winnerIds.map(String)
+        : [],
+      payouts: Array.isArray(previewPot?.payouts)
+        ? previewPot.payouts.map(payout => ({
+          playerId: String(payout?.playerId || ""),
+          amount: toNonNegativeNumber(payout?.amount, 0)
+        })).filter(payout => payout.playerId && payout.amount > 0)
+        : []
+    })).filter(previewPot => previewPot.amount > 0 && previewPot.payouts.length > 0)
+    : [];
+
+  if (pots.length === 0) return null;
+
+  return {
+    id: String(preview.id || `settlement_${handId}`),
+    total: toNonNegativeNumber(preview.total, pots.reduce((sum, previewPot) => sum + previewPot.amount, 0)),
+    winnersByPot: normalizeSelectedWinnersByPot(preview.winnersByPot),
+    pots
+  };
+}
+
 function applyRoomData(data) {
   const gameState = data.gameState;
   currentRound = toNonNegativeNumber(gameState.currentRound, 0);
@@ -396,6 +533,9 @@ function applyRoomData(data) {
   gameOver = Boolean(gameState.gameOver);
   awaitingShowdown = Boolean(gameState.awaitingShowdown);
   pendingPots = normalizeIncomingPots(gameState.pendingPots);
+  selectedWinnersByPot = normalizeSelectedWinnersByPot(gameState.selectedWinnersByPot);
+  pendingDealPrompt = normalizeIncomingDealPrompt(gameState.pendingDealPrompt);
+  settlementPreview = normalizeSettlementPreview(gameState.settlementPreview);
   handId = toNonNegativeNumber(gameState.handId, handId);
   handStatus = String(gameState.handStatus || inferHandStatus(gameState));
   stateVersion = toNonNegativeNumber(gameState.stateVersion, stateVersion);
@@ -409,8 +549,16 @@ function applyRoomData(data) {
   renderGameLog(room.gameState.logs);
   updateGameInfo();
   updatePlayerBoxes();
+  renderDealPromptPanel();
+  renderSettlementPreviewPanel();
 
-  if (awaitingShowdown) {
+  if (handStatus === "waitingDeal") {
+    hideShowdownPanel();
+    clearHandActions();
+  } else if (handStatus === "settlementPreview") {
+    hideShowdownPanel();
+    clearHandActions();
+  } else if (awaitingShowdown) {
     renderShowdownPanel();
   } else {
     hideShowdownPanel();
@@ -612,6 +760,8 @@ startGameBtn.addEventListener("click", async () => {
     }));
 
     selectedWinnersByPot = {};
+    pendingDealPrompt = null;
+    settlementPreview = null;
     pendingPots = [];
     awaitingShowdown = false;
     handId += 1;
@@ -629,6 +779,8 @@ startGameBtn.addEventListener("click", async () => {
     gameContainer.style.display = "grid";
     clearHandActions();
     hideShowdownPanel();
+    hideDealPromptPanel();
+    hideSettlementPreviewPanel();
     startRound();
   } finally {
     setMutationInProgress(false);
@@ -688,7 +840,11 @@ function getMaxStreetBet() {
 function startRound() {
   currentBet = 0;
   selectedWinnersByPot = {};
+  pendingDealPrompt = null;
+  settlementPreview = null;
   hideShowdownPanel();
+  hideDealPromptPanel();
+  hideSettlementPreviewPanel();
 
   if (currentRound === 0) {
     pot = 0;
@@ -771,6 +927,11 @@ async function playerAction(action, index, amount = 0) {
   if (!canAct(player)) {
     alert("该玩家当前不能行动");
     return;
+  }
+
+  if (action === "fold") {
+    const confirmed = window.confirm(`${getPlayerName(player)} 确认弃牌？`);
+    if (!confirmed) return;
   }
 
   setMutationInProgress(true);
@@ -964,8 +1125,44 @@ function nextPlayer() {
 }
 
 function endRound() {
-  currentRound += 1;
+  const nextRound = currentRound + 1;
+  pendingDealPrompt = createDealPrompt(nextRound);
+  handStatus = "waitingDeal";
+  currentPlayerIndex = -1;
+  updateGameLog(`${rounds[currentRound]} 下注结束，${pendingDealPrompt.cardText}后继续。`);
+  updateGameInfo();
+  updatePlayerBoxes();
+  renderDealPromptPanel();
+  clearHandActions();
+}
+
+async function confirmDealPrompt() {
+  const prompt = pendingDealPrompt;
+  const expectedHandId = handId;
+  const expectedStateVersion = stateVersion;
+
+  if (isSharedPromptActionLocked() || handStatus !== "waitingDeal" || !prompt) {
+    alert("当前没有等待确认的发牌提示");
+    return;
+  }
+
+  setMutationInProgress(true);
+  batchingStateUpdate = true;
+  currentRound = prompt.nextRound;
+  handStatus = "playing";
+  pendingDealPrompt = null;
   startRound();
+  batchingStateUpdate = false;
+
+  const saved = await updateFirebaseState({
+    expectedHandId,
+    allowedStatuses: ["waitingDeal"],
+    expectedStateVersion
+  });
+  setMutationInProgress(false);
+  if (!saved) {
+    alert("发牌确认没有同步成功，已恢复到最新远端状态");
+  }
 }
 
 function awardRemainingPot(winner) {
@@ -980,12 +1177,16 @@ function awardRemainingPot(winner) {
   awaitingShowdown = false;
   pendingPots = [];
   selectedWinnersByPot = {};
+  pendingDealPrompt = null;
+  settlementPreview = null;
   gameOver = true;
   handStatus = "settled";
 
   updateGameInfo();
   updatePlayerBoxes();
   updateGameLog(`${winner ? getPlayerName(winner) : "无人"} 赢得奖池 ${wonAmount}`);
+  hideDealPromptPanel();
+  hideSettlementPreviewPanel();
   showNextHandButton();
   updateFirebaseState();
 }
@@ -1074,6 +1275,8 @@ function beginShowdown() {
   currentPlayerIndex = -1;
   pendingPots = buildSidePots();
   selectedWinnersByPot = {};
+  pendingDealPrompt = null;
+  settlementPreview = null;
 
   pendingPots.forEach((sidePot, index) => {
     if (sidePot.contenders.length === 1) {
@@ -1084,6 +1287,8 @@ function beginShowdown() {
   updateGameInfo();
   updatePlayerBoxes();
   updateGameLog("下注结束，请开牌，并在下方为每个奖池选择赢家后确认结算。");
+  hideDealPromptPanel();
+  hideSettlementPreviewPanel();
   renderShowdownPanel();
   updateFirebaseState();
 }
@@ -1093,8 +1298,109 @@ function hideShowdownPanel() {
   showdownPanel.replaceChildren();
 }
 
+function hideDealPromptPanel() {
+  if (!dealPromptPanel) return;
+  dealPromptPanel.hidden = true;
+  dealPromptPanel.replaceChildren();
+}
+
+function renderDealPromptPanel() {
+  if (!dealPromptPanel) return;
+  if (handStatus !== "waitingDeal" || !pendingDealPrompt) {
+    hideDealPromptPanel();
+    return;
+  }
+
+  dealPromptPanel.hidden = false;
+  dealPromptPanel.replaceChildren();
+
+  const body = document.createElement("div");
+  body.className = "prompt-copy";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "prompt-eyebrow";
+  eyebrow.textContent = "发牌提醒";
+  body.appendChild(eyebrow);
+
+  const title = document.createElement("h3");
+  title.textContent = pendingDealPrompt.title;
+  body.appendChild(title);
+  body.appendChild(createParagraph(`${pendingDealPrompt.cardText}。${pendingDealPrompt.detail}`));
+
+  const actions = document.createElement("div");
+  actions.className = "prompt-actions";
+  actions.appendChild(createButton("已发牌，继续", confirmDealPrompt, isSharedPromptActionLocked(), "prompt-primary"));
+
+  dealPromptPanel.appendChild(body);
+  dealPromptPanel.appendChild(actions);
+}
+
+function hideSettlementPreviewPanel() {
+  if (!settlementPreviewPanel) return;
+  settlementPreviewPanel.hidden = true;
+  settlementPreviewPanel.replaceChildren();
+}
+
+function renderSettlementPreviewPanel() {
+  if (!settlementPreviewPanel) return;
+  if (handStatus !== "settlementPreview" || !settlementPreview) {
+    hideSettlementPreviewPanel();
+    return;
+  }
+
+  settlementPreviewPanel.hidden = false;
+  settlementPreviewPanel.replaceChildren();
+
+  const header = document.createElement("div");
+  header.className = "prompt-copy";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "prompt-eyebrow";
+  eyebrow.textContent = "结算确认";
+  header.appendChild(eyebrow);
+
+  const title = document.createElement("h3");
+  title.textContent = "请确认本手筹码分配";
+  header.appendChild(title);
+  header.appendChild(createParagraph("任一设备取消都会回到赢家选择；确认只会被同步结算一次。"));
+  settlementPreviewPanel.appendChild(header);
+
+  const list = document.createElement("div");
+  list.className = "settlement-preview-list";
+
+  settlementPreview.pots.forEach(previewPot => {
+    const card = document.createElement("div");
+    card.className = "settlement-preview-card";
+
+    const heading = document.createElement("strong");
+    heading.textContent = `奖池 ${previewPot.index + 1}: ${previewPot.amount} 筹码`;
+    card.appendChild(heading);
+
+    previewPot.payouts.forEach(payout => {
+      const winner = getPlayerById(payout.playerId);
+      const row = document.createElement("p");
+      row.className = "settlement-preview-row";
+      row.appendChild(document.createTextNode(getPlayerName(winner)));
+      const amount = document.createElement("span");
+      amount.textContent = `+${payout.amount}`;
+      row.appendChild(amount);
+      card.appendChild(row);
+    });
+
+    list.appendChild(card);
+  });
+
+  settlementPreviewPanel.appendChild(list);
+
+  const actions = document.createElement("div");
+  actions.className = "prompt-actions";
+  actions.appendChild(createButton("取消，重新选择", cancelSettlementPreview, isSharedPromptActionLocked(), "prompt-secondary"));
+  actions.appendChild(createButton("确认结算", confirmSettlementPreview, isSharedPromptActionLocked(), "prompt-primary"));
+  settlementPreviewPanel.appendChild(actions);
+}
+
 function renderShowdownPanel() {
-  if (!awaitingShowdown) {
+  if (!awaitingShowdown || handStatus !== "showdown") {
     hideShowdownPanel();
     return;
   }
@@ -1130,6 +1436,9 @@ function renderShowdownPanel() {
     if (!selectedWinnersByPot[potIndex]) {
       selectedWinnersByPot[potIndex] = new Set();
     }
+    if (sidePot.contenders.length === 1) {
+      selectedWinnersByPot[potIndex].add(sidePot.contenders[0]);
+    }
 
     sidePot.contenders.forEach(playerId => {
       const player = getPlayerById(playerId);
@@ -1149,7 +1458,7 @@ function renderShowdownPanel() {
 
   const actions = document.createElement("div");
   actions.classList.add("showdown-actions");
-  actions.appendChild(createButton("确认结算", confirmShowdown, isInteractionLocked() || handStatus !== "showdown"));
+  actions.appendChild(createButton("生成结算预览", confirmShowdown, isInteractionLocked() || handStatus !== "showdown"));
   showdownPanel.appendChild(actions);
 }
 
@@ -1166,33 +1475,21 @@ function toggleWinner(potIndex, playerId) {
   renderShowdownPanel();
 }
 
-function distributePot(sidePot, winnerIds) {
+function calculatePayouts(sidePot, winnerIds) {
   const baseShare = Math.floor(sidePot.amount / winnerIds.length);
   let remainder = sidePot.amount % winnerIds.length;
-  const lines = [];
 
-  winnerIds.forEach(playerId => {
-    const winner = getPlayerById(playerId);
-    if (!winner) return;
-
+  return winnerIds.map(playerId => {
     const extraChip = remainder > 0 ? 1 : 0;
     if (remainder > 0) remainder -= 1;
-    const payout = baseShare + extraChip;
-    winner.chips += payout;
-    lines.push(`${getPlayerName(winner)} 获得 ${payout} 筹码`);
+    return {
+      playerId,
+      amount: baseShare + extraChip
+    };
   });
-
-  return lines;
 }
 
-async function confirmShowdown() {
-  const expectedHandId = handId;
-  const expectedStateVersion = stateVersion;
-  if (isInteractionLocked() || handStatus !== "showdown") {
-    alert("当前手牌已不在摊牌结算阶段");
-    return;
-  }
-
+function buildSettlementPlan() {
   const settlementPlan = [];
 
   for (let index = 0; index < pendingPots.length; index += 1) {
@@ -1207,40 +1504,87 @@ async function confirmShowdown() {
 
     if (winnerIds.length === 0) {
       alert(`请为奖池 ${index + 1} 至少选择一位赢家`);
-      return;
+      return null;
     }
 
-    settlementPlan.push({ sidePot, winnerIds });
+    settlementPlan.push({
+      potIndex: index,
+      sidePot,
+      winnerIds,
+      payouts: calculatePayouts(sidePot, winnerIds)
+    });
   }
+
+  return settlementPlan;
+}
+
+function createSettlementPreview(settlementPlan) {
+  return {
+    id: `settlement_${handId}_${Date.now()}`,
+    total: settlementPlan.reduce((sum, item) => sum + item.sidePot.amount, 0),
+    winnersByPot: Object.fromEntries(settlementPlan.map(item => [item.potIndex, item.winnerIds])),
+    pots: settlementPlan.map(item => ({
+      index: item.potIndex,
+      amount: item.sidePot.amount,
+      winnerIds: item.winnerIds,
+      payouts: item.payouts
+    }))
+  };
+}
+
+function getSettlementReportLines(preview) {
+  const lines = [];
+  preview.pots.forEach(previewPot => {
+    lines.push(`奖池 ${previewPot.index + 1}（${previewPot.amount}）:`);
+    previewPot.payouts.forEach(payout => {
+      const winner = getPlayerById(payout.playerId);
+      lines.push(`${getPlayerName(winner)} 获得 ${payout.amount} 筹码`);
+    });
+  });
+  return lines;
+}
+
+function applySettlementPreviewPayouts(preview) {
+  preview.pots.forEach(previewPot => {
+    previewPot.payouts.forEach(payout => {
+      const winner = getPlayerById(payout.playerId);
+      if (winner) {
+        winner.chips += payout.amount;
+      }
+    });
+  });
+}
+
+async function confirmShowdown() {
+  const expectedHandId = handId;
+  const expectedStateVersion = stateVersion;
+  if (isInteractionLocked() || handStatus !== "showdown") {
+    alert("当前手牌已不在摊牌结算阶段");
+    return;
+  }
+
+  const settlementPlan = buildSettlementPlan();
+  if (!settlementPlan) return;
 
   setMutationInProgress(true);
   const canSettle = await isRemoteHandStill(expectedHandId, ["showdown"]);
   if (!canSettle) {
     setMutationInProgress(false);
-    alert("其他设备已经完成结算，请等待同步最新状态");
+    alert("其他设备已经更新结算状态，请等待同步最新状态");
     return;
   }
 
   batchingStateUpdate = true;
-  const reportLines = [];
-  settlementPlan.forEach(({ sidePot, winnerIds }, index) => {
-    reportLines.push(`奖池 ${index + 1}（${sidePot.amount}）:`);
-    reportLines.push(...distributePot(sidePot, winnerIds));
-  });
-
-  pot = 0;
-  currentBet = 0;
-  currentPlayerIndex = -1;
-  awaitingShowdown = false;
-  pendingPots = [];
-  selectedWinnersByPot = {};
+  settlementPreview = createSettlementPreview(settlementPlan);
+  selectedWinnersByPot = normalizeSelectedWinnersByPot(settlementPreview.winnersByPot);
+  handStatus = "settlementPreview";
+  awaitingShowdown = true;
   gameOver = true;
-  handStatus = "settled";
+  currentPlayerIndex = -1;
 
   hideShowdownPanel();
-  updateGameInfo();
-  updatePlayerBoxes();
-  updateGameLog(`游戏结束，筹码分配：\n${reportLines.join("\n")}`);
+  renderSettlementPreviewPanel();
+  updateGameLog("已生成结算预览，请确认或取消。");
   batchingStateUpdate = false;
   const saved = await updateFirebaseState({
     expectedHandId,
@@ -1248,9 +1592,85 @@ async function confirmShowdown() {
     expectedStateVersion
   });
   setMutationInProgress(false);
+  if (!saved) {
+    alert("结算预览没有同步成功，已恢复到最新远端状态");
+  }
+}
+
+async function cancelSettlementPreview() {
+  const preview = settlementPreview;
+  const expectedHandId = handId;
+  const expectedStateVersion = stateVersion;
+
+  if (isSharedPromptActionLocked() || handStatus !== "settlementPreview" || !preview) {
+    alert("当前没有可取消的结算预览");
+    return;
+  }
+
+  setMutationInProgress(true);
+  batchingStateUpdate = true;
+  selectedWinnersByPot = normalizeSelectedWinnersByPot(preview.winnersByPot);
+  settlementPreview = null;
+  awaitingShowdown = true;
+  gameOver = true;
+  handStatus = "showdown";
+  currentPlayerIndex = -1;
+
+  hideSettlementPreviewPanel();
+  renderShowdownPanel();
+  updateGameLog("结算预览已取消，请重新选择赢家。");
+  batchingStateUpdate = false;
+  const saved = await updateFirebaseState({
+    expectedHandId,
+    allowedStatuses: ["settlementPreview"],
+    expectedStateVersion
+  });
+  setMutationInProgress(false);
+  if (!saved) {
+    alert("取消结算预览没有同步成功，已恢复到最新远端状态");
+  }
+}
+
+async function confirmSettlementPreview() {
+  const preview = settlementPreview;
+  const expectedHandId = handId;
+  const expectedStateVersion = stateVersion;
+
+  if (isSharedPromptActionLocked() || handStatus !== "settlementPreview" || !preview) {
+    alert("当前没有可确认的结算预览");
+    return;
+  }
+
+  setMutationInProgress(true);
+  batchingStateUpdate = true;
+  const reportLines = getSettlementReportLines(preview);
+  applySettlementPreviewPayouts(preview);
+
+  pot = 0;
+  currentBet = 0;
+  currentPlayerIndex = -1;
+  awaitingShowdown = false;
+  pendingPots = [];
+  selectedWinnersByPot = {};
+  pendingDealPrompt = null;
+  settlementPreview = null;
+  gameOver = true;
+  handStatus = "settled";
+
+  hideShowdownPanel();
+  hideSettlementPreviewPanel();
+  updateGameInfo();
+  updatePlayerBoxes();
+  updateGameLog(`游戏结束，筹码分配：\n${reportLines.join("\n")}`);
+  batchingStateUpdate = false;
+  const saved = await updateFirebaseState({
+    expectedHandId,
+    allowedStatuses: ["settlementPreview"],
+    expectedStateVersion
+  });
+  setMutationInProgress(false);
   if (saved) {
     showNextHandButton();
-    alert(`结算完成！\n${reportLines.join("\n")}`);
   } else {
     alert("结算没有同步成功，已恢复到最新远端状态");
   }
@@ -1283,6 +1703,8 @@ async function resetHand(expectedHandId = handId) {
   currentPlayerIndex = -1;
   pendingPots = [];
   selectedWinnersByPot = {};
+  pendingDealPrompt = null;
+  settlementPreview = null;
   awaitingShowdown = false;
   gameOver = false;
   handId = expectedHandId + 1;
@@ -1300,6 +1722,8 @@ async function resetHand(expectedHandId = handId) {
   clearGameLog();
   clearHandActions();
   hideShowdownPanel();
+  hideDealPromptPanel();
+  hideSettlementPreviewPanel();
   room.gameState.inProgress = true;
   startRound();
   batchingStateUpdate = false;
@@ -1349,6 +1773,8 @@ function showNextHandButton() {
 }
 
 function inferHandStatus(gameState) {
+  if (gameState.pendingDealPrompt) return "waitingDeal";
+  if (gameState.settlementPreview) return "settlementPreview";
   if (gameState.awaitingShowdown) return "showdown";
   if (gameState.gameOver) return "settled";
   if (gameState.inProgress) return "playing";
@@ -1361,7 +1787,15 @@ function inferHandStatus(gameState) {
 function updateGameInfo() {
   const roundEl = document.getElementById("current-round");
   const potEl = document.getElementById("pot-amount");
-  roundEl.textContent = `当前轮次: ${rounds[currentRound] || "-"}`;
+  let roundText = `当前轮次: ${rounds[currentRound] || "-"}`;
+  if (handStatus === "waitingDeal" && pendingDealPrompt) {
+    roundText = `等待发牌: ${pendingDealPrompt.cardText}`;
+  } else if (handStatus === "settlementPreview") {
+    roundText = "等待结算确认";
+  } else if (handStatus === "showdown") {
+    roundText = "摊牌结算";
+  }
+  roundEl.textContent = roundText;
   potEl.textContent = `奖池: ${pot}`;
 }
 
@@ -1415,42 +1849,46 @@ function updatePlayerBoxes() {
     metrics.className = "player-metrics";
     metrics.appendChild(createPlayerMetric("本轮下注", player.bet));
     metrics.appendChild(createPlayerMetric("本手投入", player.totalBet));
+    metrics.appendChild(createPlayerMetric("需跟注", getCallAmount(player)));
     box.appendChild(metrics);
 
-    const actions = document.createElement("div");
-    actions.classList.add("actions");
+    const shouldShowActions = !gameOver &&
+      !awaitingShowdown &&
+      handStatus === "playing" &&
+      index === currentPlayerIndex &&
+      canAct(player);
+    if (shouldShowActions) {
+      box.classList.add("has-actions");
+      const actions = document.createElement("div");
+      actions.classList.add("actions");
 
-    const actionDisabled = isInteractionLocked() ||
-      gameOver ||
-      awaitingShowdown ||
-      handStatus !== "playing" ||
-      index !== currentPlayerIndex ||
-      !canAct(player);
-    actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet, "action-btn action-check"));
-    actions.appendChild(createButton("Call", () => playerAction("call", index), actionDisabled || player.bet >= currentBet, "action-btn action-call"));
+      const actionDisabled = isInteractionLocked();
+      actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet, "action-btn action-check"));
+      actions.appendChild(createButton(getCallButtonLabel(player), () => playerAction("call", index), actionDisabled || player.bet >= currentBet, "action-btn action-call"));
 
-    const raiseArea = document.createElement("div");
-    raiseArea.classList.add("raise-input");
-    raiseArea.style.display = "none";
-
-    const raiseInput = document.createElement("input");
-    raiseInput.type = "number";
-    raiseInput.inputMode = "numeric";
-    raiseInput.placeholder = "本次投入筹码";
-    raiseInput.step = "10";
-    raiseArea.appendChild(raiseInput);
-    raiseArea.appendChild(createButton("确认", () => {
-      playerAction("raise", index, raiseInput.value);
+      const raiseArea = document.createElement("div");
+      raiseArea.classList.add("raise-input");
       raiseArea.style.display = "none";
-    }, actionDisabled, "action-btn action-confirm"));
 
-    actions.appendChild(createButton("Raise", () => {
-      raiseArea.style.display = raiseArea.style.display === "none" ? "grid" : "none";
-      raiseInput.focus();
-    }, actionDisabled, "action-btn action-raise"));
-    actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled, "action-btn action-fold danger"));
-    actions.appendChild(raiseArea);
-    box.appendChild(actions);
+      const raiseInput = document.createElement("input");
+      raiseInput.type = "number";
+      raiseInput.inputMode = "numeric";
+      raiseInput.placeholder = "本次投入筹码";
+      raiseInput.step = "10";
+      raiseArea.appendChild(raiseInput);
+      raiseArea.appendChild(createButton("确认", () => {
+        playerAction("raise", index, raiseInput.value);
+        raiseArea.style.display = "none";
+      }, actionDisabled, "action-btn action-confirm"));
+
+      actions.appendChild(createButton("Raise", () => {
+        raiseArea.style.display = raiseArea.style.display === "none" ? "grid" : "none";
+        raiseInput.focus();
+      }, actionDisabled, "action-btn action-raise"));
+      actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled, "action-btn action-fold danger"));
+      actions.appendChild(raiseArea);
+      box.appendChild(actions);
+    }
 
     boxes.appendChild(box);
   });
