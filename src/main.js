@@ -2696,35 +2696,99 @@ function createPositionMarker(label, type) {
   return marker;
 }
 
-function signedPow(value, power) {
-  return Math.sign(value) * Math.pow(Math.abs(value), power);
+function createSeatPoint(left, top, side, mobileLeft = left, mobileTop = top) {
+  return { left, top, side, mobileLeft, mobileTop };
 }
+
+const TABLE_SEAT_LAYOUTS = {
+  1: [
+    createSeatPoint(50, 14, "seat-top", 50, 7)
+  ],
+  2: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(50, 86, "seat-bottom", 50, 93)
+  ],
+  3: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(82, 70, "seat-right", 76, 76),
+    createSeatPoint(18, 70, "seat-left", 24, 76)
+  ],
+  4: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(88, 50, "seat-right", 79, 30),
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(12, 50, "seat-left", 21, 70)
+  ],
+  5: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(86, 34, "seat-right", 79, 28),
+    createSeatPoint(76, 82, "seat-bottom", 73, 82.5),
+    createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
+    createSeatPoint(14, 34, "seat-left", 21, 28)
+  ],
+  6: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(80, 22, "seat-top", 74, 17.5),
+    createSeatPoint(80, 78, "seat-bottom", 74, 82.5),
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(20, 78, "seat-bottom", 26, 82.5),
+    createSeatPoint(20, 22, "seat-top", 26, 17.5)
+  ],
+  7: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(80, 21, "seat-top", 74, 17.5),
+    createSeatPoint(88, 58, "seat-right", 79, 66),
+    createSeatPoint(72, 84, "seat-bottom", 73, 82.5),
+    createSeatPoint(50, 88, "seat-bottom", 50, 93),
+    createSeatPoint(28, 84, "seat-bottom", 27, 82.5),
+    createSeatPoint(12, 58, "seat-left", 21, 66)
+  ],
+  8: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(78, 20, "seat-top", 73, 17.5),
+    createSeatPoint(88, 50, "seat-right", 79, 31),
+    createSeatPoint(78, 80, "seat-bottom", 73, 82.5),
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(22, 80, "seat-bottom", 27, 82.5),
+    createSeatPoint(12, 50, "seat-left", 21, 69),
+    createSeatPoint(22, 20, "seat-top", 27, 17.5)
+  ],
+  9: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(78, 20, "seat-top", 73, 17.5),
+    createSeatPoint(88, 38, "seat-right", 79, 30),
+    createSeatPoint(88, 68, "seat-right", 79, 70),
+    createSeatPoint(76, 82, "seat-bottom", 73, 82.5),
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
+    createSeatPoint(12, 54, "seat-left", 21, 70),
+    createSeatPoint(22, 20, "seat-top", 27, 17.5)
+  ],
+  10: [
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(76, 18, "seat-top", 73, 17.5),
+    createSeatPoint(88, 34, "seat-right", 79, 30),
+    createSeatPoint(88, 66, "seat-right", 79, 70),
+    createSeatPoint(76, 82, "seat-bottom", 73, 82.5),
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
+    createSeatPoint(12, 66, "seat-left", 21, 70),
+    createSeatPoint(12, 34, "seat-left", 21, 30),
+    createSeatPoint(24, 18, "seat-top", 27, 17.5)
+  ]
+};
 
 function getSeatCoordinates(index, count) {
-  if (count <= 0) return { x: 0, y: -1 };
-
-  const angle = (-Math.PI / 2) + (index * 2 * Math.PI / count);
-  const cornerBias = count >= 6 ? 0.42 : 0.72;
-
-  return {
-    x: signedPow(Math.cos(angle), cornerBias),
-    y: signedPow(Math.sin(angle), cornerBias)
-  };
-}
-
-function getSeatSideClass(x, y) {
-  if (x < -0.34) return "seat-left";
-  if (x > 0.34) return "seat-right";
-  if (y < 0) return "seat-top";
-  return "seat-bottom";
+  const layout = TABLE_SEAT_LAYOUTS[Math.min(Math.max(count, 1), MAX_PLAYERS)] || TABLE_SEAT_LAYOUTS[1];
+  return layout[index] || layout[index % layout.length];
 }
 
 function getCompactPlayerStatus(player) {
   if (player.seatStatus !== "seated") return getSeatStatusLabel(player.seatStatus);
   if (player.folded) return "弃牌";
   if (player.allIn) return "All In";
-  if (players.indexOf(player) === currentPlayerIndex) return "行动";
-  if (player.acted) return "已动";
+  if (players.indexOf(player) === currentPlayerIndex) return "行动中";
+  if (player.acted) return "已行动";
   return "等待";
 }
 
@@ -2837,19 +2901,19 @@ function updatePlayerBoxes() {
   boxes.appendChild(createTableCenterPanel());
 
   players.forEach((player, index) => {
-    const { x, y } = getSeatCoordinates(index, players.length);
+    const seat = getSeatCoordinates(index, players.length);
 
     const box = document.createElement("div");
     box.classList.add("player-box");
-    box.classList.add(getSeatSideClass(x, y));
+    box.classList.add(seat.side);
     if (player.folded) box.classList.add("folded");
     if (player.allIn) box.classList.add("all-in");
     if (player.seatStatus !== "seated") box.classList.add("seat-inactive");
     if (index === currentPlayerIndex) box.classList.add("active");
-    box.style.setProperty("--seat-left", `${50 + x * 43}%`);
-    box.style.setProperty("--seat-top", `${50 + y * 39}%`);
-    box.style.setProperty("--seat-left-mobile", `${50 + x * 36}%`);
-    box.style.setProperty("--seat-top-mobile", `${50 + y * 44}%`);
+    box.style.setProperty("--seat-left", `${seat.left}%`);
+    box.style.setProperty("--seat-top", `${seat.top}%`);
+    box.style.setProperty("--seat-left-mobile", `${seat.mobileLeft}%`);
+    box.style.setProperty("--seat-top-mobile", `${seat.mobileTop}%`);
     box.setAttribute("aria-label", `${getPlayerName(player)}，筹码 ${player.chips}，本轮下注 ${player.bet}，${getPlayerStatus(player)}`);
     box.setAttribute("role", "button");
     box.setAttribute("aria-expanded", "false");
@@ -2895,7 +2959,7 @@ function updatePlayerBoxes() {
 
     const betBadge = document.createElement("span");
     betBadge.className = "seat-bet-badge";
-    betBadge.textContent = `投${player.bet}`;
+    betBadge.textContent = `本轮 ${player.bet}`;
     meta.appendChild(betBadge);
 
     const status = document.createElement("p");
