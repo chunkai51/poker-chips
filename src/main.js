@@ -310,30 +310,6 @@ function createButton(label, onClick, disabled = false, className = "") {
   return button;
 }
 
-function createBadge(text, className = "") {
-  const badge = document.createElement("span");
-  badge.className = className ? `status-badge ${className}` : "status-badge";
-  badge.textContent = text;
-  return badge;
-}
-
-function createPlayerMetric(label, value) {
-  const row = document.createElement("p");
-  row.className = "player-meta";
-
-  const labelEl = document.createElement("span");
-  labelEl.className = "meta-label";
-  labelEl.textContent = label;
-
-  const valueEl = document.createElement("strong");
-  valueEl.className = "meta-value";
-  valueEl.textContent = String(value);
-
-  row.appendChild(labelEl);
-  row.appendChild(valueEl);
-  return row;
-}
-
 function clearGameLog() {
   gameLog.replaceChildren();
   room.gameState.logs = [];
@@ -1985,6 +1961,12 @@ if (tableManagerBackdrop) {
   });
 }
 
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.(".player-box")) {
+    closeSeatDetailPopovers();
+  }
+});
+
 function createTableDraft() {
   return players.map((player, index) => ({
     id: String(player.id || `player${index}`),
@@ -2714,6 +2696,86 @@ function createPositionMarker(label, type) {
   return marker;
 }
 
+function signedPow(value, power) {
+  return Math.sign(value) * Math.pow(Math.abs(value), power);
+}
+
+function getSeatCoordinates(index, count) {
+  if (count <= 0) return { x: 0, y: -1 };
+
+  const angle = (-Math.PI / 2) + (index * 2 * Math.PI / count);
+  const cornerBias = count >= 6 ? 0.42 : 0.72;
+
+  return {
+    x: signedPow(Math.cos(angle), cornerBias),
+    y: signedPow(Math.sin(angle), cornerBias)
+  };
+}
+
+function getSeatSideClass(x, y) {
+  if (x < -0.34) return "seat-left";
+  if (x > 0.34) return "seat-right";
+  if (y < 0) return "seat-top";
+  return "seat-bottom";
+}
+
+function getCompactPlayerStatus(player) {
+  if (player.seatStatus !== "seated") return getSeatStatusLabel(player.seatStatus);
+  if (player.folded) return "弃牌";
+  if (player.allIn) return "All In";
+  if (players.indexOf(player) === currentPlayerIndex) return "行动";
+  if (player.acted) return "已动";
+  return "等待";
+}
+
+function closeSeatDetailPopovers() {
+  document.querySelectorAll(".seat-detail-popover").forEach(popover => popover.remove());
+  document.querySelectorAll(".player-box.is-detail-open").forEach(box => {
+    box.classList.remove("is-detail-open");
+    box.setAttribute("aria-expanded", "false");
+  });
+}
+
+function createSeatDetailPopover(player, index) {
+  const popover = document.createElement("div");
+  popover.className = "seat-detail-popover";
+  popover.setAttribute("role", "tooltip");
+  popover.addEventListener("click", event => event.stopPropagation());
+
+  const title = document.createElement("strong");
+  title.textContent = getPlayerName(player);
+  popover.appendChild(title);
+
+  [
+    ["座位", String(index + 1)],
+    ["位置", player.position || "-"],
+    ["剩余", String(player.chips)],
+    ["本轮下注", String(player.bet)],
+    ["本局投入", String(player.totalBet || 0)],
+    ["状态", getPlayerStatus(player)]
+  ].forEach(([label, value]) => {
+    const row = document.createElement("span");
+    const labelEl = document.createElement("em");
+    labelEl.textContent = label;
+    const valueEl = document.createElement("b");
+    valueEl.textContent = value;
+    row.append(labelEl, valueEl);
+    popover.appendChild(row);
+  });
+
+  return popover;
+}
+
+function toggleSeatDetail(box, player, index) {
+  const alreadyOpen = box.classList.contains("is-detail-open");
+  closeSeatDetailPopovers();
+  if (alreadyOpen) return;
+
+  box.classList.add("is-detail-open");
+  box.setAttribute("aria-expanded", "true");
+  box.appendChild(createSeatDetailPopover(player, index));
+}
+
 function createTableCenterPanel() {
   const center = document.createElement("section");
   center.className = "poker-table-center";
@@ -2775,32 +2837,47 @@ function updatePlayerBoxes() {
   boxes.appendChild(createTableCenterPanel());
 
   players.forEach((player, index) => {
-    const angle = players.length > 0
-      ? (-Math.PI / 2) + (index * 2 * Math.PI / players.length)
-      : -Math.PI / 2;
-    const x = Math.cos(angle);
-    const y = Math.sin(angle);
+    const { x, y } = getSeatCoordinates(index, players.length);
 
     const box = document.createElement("div");
     box.classList.add("player-box");
+    box.classList.add(getSeatSideClass(x, y));
     if (player.folded) box.classList.add("folded");
     if (player.allIn) box.classList.add("all-in");
     if (player.seatStatus !== "seated") box.classList.add("seat-inactive");
     if (index === currentPlayerIndex) box.classList.add("active");
-    box.style.setProperty("--seat-left", `${50 + x * 42}%`);
-    box.style.setProperty("--seat-top", `${50 + y * 36}%`);
-    box.style.setProperty("--seat-left-mobile", `${50 + x * 34}%`);
-    box.style.setProperty("--seat-top-mobile", `${50 + y * 43}%`);
+    box.style.setProperty("--seat-left", `${50 + x * 43}%`);
+    box.style.setProperty("--seat-top", `${50 + y * 39}%`);
+    box.style.setProperty("--seat-left-mobile", `${50 + x * 36}%`);
+    box.style.setProperty("--seat-top-mobile", `${50 + y * 44}%`);
     box.setAttribute("aria-label", `${getPlayerName(player)}，筹码 ${player.chips}，本轮下注 ${player.bet}，${getPlayerStatus(player)}`);
+    box.setAttribute("role", "button");
+    box.setAttribute("aria-expanded", "false");
+    box.tabIndex = 0;
+    box.addEventListener("click", () => {
+      toggleSeatDetail(box, player, index);
+    });
+    box.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      toggleSeatDetail(box, player, index);
+    });
 
-    const header = document.createElement("div");
-    header.className = "player-card-header";
-
+    const main = document.createElement("div");
+    main.className = "player-seat-main";
     const name = document.createElement("h3");
     name.className = "player-name";
     name.textContent = getPlayerName(player);
-    header.appendChild(name);
+    main.appendChild(name);
 
+    const chipValue = document.createElement("p");
+    chipValue.className = "seat-chip";
+    chipValue.textContent = String(player.chips);
+    main.appendChild(chipValue);
+    box.appendChild(main);
+
+    const meta = document.createElement("div");
+    meta.className = "seat-meta";
     const badges = document.createElement("div");
     badges.className = "player-badges";
     const positionMarkers = getPositionMarkers(player.position);
@@ -2814,27 +2891,18 @@ function updatePlayerBoxes() {
       seatMarker.textContent = String(index + 1);
       badges.appendChild(seatMarker);
     }
-    header.appendChild(badges);
-    box.appendChild(header);
+    meta.appendChild(badges);
 
-    const chipStack = document.createElement("div");
-    chipStack.className = "chip-stack";
-    const chipLabel = document.createElement("span");
-    chipLabel.textContent = "剩余筹码";
-    const chipValue = document.createElement("strong");
-    chipValue.textContent = String(player.chips);
-    chipStack.appendChild(chipLabel);
-    chipStack.appendChild(chipValue);
-    box.appendChild(chipStack);
+    const betBadge = document.createElement("span");
+    betBadge.className = "seat-bet-badge";
+    betBadge.textContent = `投${player.bet}`;
+    meta.appendChild(betBadge);
 
-    const metrics = document.createElement("div");
-    metrics.className = "player-metrics";
-    metrics.appendChild(createPlayerMetric("本轮", player.bet));
     const status = document.createElement("p");
-    status.className = "player-meta seat-status-line";
-    status.textContent = getPlayerStatus(player);
-    metrics.appendChild(status);
-    box.appendChild(metrics);
+    status.className = "seat-status-badge";
+    status.textContent = getCompactPlayerStatus(player);
+    meta.appendChild(status);
+    box.appendChild(meta);
 
     boxes.appendChild(box);
   });
