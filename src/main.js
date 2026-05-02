@@ -2487,9 +2487,7 @@ function inferHandStatus(gameState) {
 // ----------------------
 // UI 更新
 // ----------------------
-function updateGameInfo() {
-  const roundEl = document.getElementById("current-round");
-  const potEl = document.getElementById("pot-amount");
+function getRoundDisplayText() {
   let roundText = `当前轮次: ${rounds[currentRound] || "-"}`;
   if (handStatus === "waitingDeal" && pendingDealPrompt) {
     roundText = `等待发牌: ${pendingDealPrompt.cardText}`;
@@ -2498,7 +2496,13 @@ function updateGameInfo() {
   } else if (handStatus === "showdown") {
     roundText = "摊牌结算";
   }
-  roundEl.textContent = roundText;
+  return roundText;
+}
+
+function updateGameInfo() {
+  const roundEl = document.getElementById("current-round");
+  const potEl = document.getElementById("pot-amount");
+  roundEl.textContent = getRoundDisplayText();
   potEl.textContent = `奖池: ${pot}`;
 }
 
@@ -2695,16 +2699,99 @@ function renderCurrentActionPanel() {
   handActions.hidden = false;
 }
 
+function getPositionMarkers(position = "") {
+  const markers = [];
+  if (position.includes("Dealer")) markers.push(["D", "dealer"]);
+  if (position.includes("小盲")) markers.push(["SB", "small-blind"]);
+  if (position.includes("大盲")) markers.push(["BB", "big-blind"]);
+  return markers;
+}
+
+function createPositionMarker(label, type) {
+  const marker = document.createElement("span");
+  marker.className = `seat-marker seat-marker-${type}`;
+  marker.textContent = label;
+  return marker;
+}
+
+function createTableCenterPanel() {
+  const center = document.createElement("section");
+  center.className = "poker-table-center";
+  center.setAttribute("aria-label", "牌桌状态");
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "prompt-eyebrow";
+  eyebrow.textContent = "Poker Table";
+  center.appendChild(eyebrow);
+
+  const potBlock = document.createElement("div");
+  potBlock.className = "table-center-pot";
+  const potLabel = document.createElement("span");
+  potLabel.textContent = "奖池";
+  const potValue = document.createElement("strong");
+  potValue.textContent = String(pot);
+  potBlock.append(potLabel, potValue);
+  center.appendChild(potBlock);
+
+  const meta = document.createElement("div");
+  meta.className = "table-center-meta";
+  [getRoundDisplayText(), `最高下注 ${currentBet}`].forEach(text => {
+    const item = document.createElement("span");
+    item.textContent = text;
+    meta.appendChild(item);
+  });
+  center.appendChild(meta);
+
+  const turn = document.createElement("div");
+  turn.className = "table-center-turn";
+  if (shouldShowCurrentActionPanel()) {
+    const player = players[currentPlayerIndex];
+    turn.textContent = `${getPlayerName(player)} 行动 · 需跟 ${getCallAmount(player)}`;
+  } else if (handStatus === "waitingDeal" && pendingDealPrompt) {
+    turn.textContent = pendingDealPrompt.title;
+  } else if (handStatus === "showdown") {
+    turn.textContent = "等待选择赢家";
+  } else if (handStatus === "settlementPreview") {
+    turn.textContent = "等待结算确认";
+  } else if (handStatus === "settled") {
+    turn.textContent = "本手已结算";
+  } else {
+    turn.textContent = "等待牌局更新";
+  }
+  center.appendChild(turn);
+
+  const reserve = document.createElement("div");
+  reserve.className = "table-center-action-slot";
+  reserve.textContent = "操作区";
+  center.appendChild(reserve);
+
+  return center;
+}
+
 function updatePlayerBoxes() {
   const boxes = document.getElementById("player-boxes");
   boxes.replaceChildren();
+  boxes.style.setProperty("--player-count", players.length);
+  boxes.appendChild(createTableCenterPanel());
 
   players.forEach((player, index) => {
+    const angle = players.length > 0
+      ? (-Math.PI / 2) + (index * 2 * Math.PI / players.length)
+      : -Math.PI / 2;
+    const x = Math.cos(angle);
+    const y = Math.sin(angle);
+
     const box = document.createElement("div");
     box.classList.add("player-box");
     if (player.folded) box.classList.add("folded");
+    if (player.allIn) box.classList.add("all-in");
     if (player.seatStatus !== "seated") box.classList.add("seat-inactive");
     if (index === currentPlayerIndex) box.classList.add("active");
+    box.style.setProperty("--seat-left", `${50 + x * 42}%`);
+    box.style.setProperty("--seat-top", `${50 + y * 36}%`);
+    box.style.setProperty("--seat-left-mobile", `${50 + x * 34}%`);
+    box.style.setProperty("--seat-top-mobile", `${50 + y * 43}%`);
+    box.setAttribute("aria-label", `${getPlayerName(player)}，筹码 ${player.chips}，本轮下注 ${player.bet}，${getPlayerStatus(player)}`);
 
     const header = document.createElement("div");
     header.className = "player-card-header";
@@ -2716,21 +2803,17 @@ function updatePlayerBoxes() {
 
     const badges = document.createElement("div");
     badges.className = "player-badges";
-    const positionBadge = document.createElement("span");
-    positionBadge.className = "position-badge";
-    positionBadge.textContent = player.position || "-";
-    badges.appendChild(positionBadge);
-
-    const statusClass = player.seatStatus !== "seated"
-      ? "is-seat-inactive"
-      : player.folded
-      ? "is-folded"
-      : player.allIn
-        ? "is-all-in"
-        : index === currentPlayerIndex
-          ? "is-active"
-          : "";
-    badges.appendChild(createBadge(getPlayerStatus(player), statusClass));
+    const positionMarkers = getPositionMarkers(player.position);
+    if (positionMarkers.length > 0) {
+      positionMarkers.forEach(([label, type]) => {
+        badges.appendChild(createPositionMarker(label, type));
+      });
+    } else {
+      const seatMarker = document.createElement("span");
+      seatMarker.className = "seat-marker seat-marker-seat";
+      seatMarker.textContent = String(index + 1);
+      badges.appendChild(seatMarker);
+    }
     header.appendChild(badges);
     box.appendChild(header);
 
@@ -2746,22 +2829,12 @@ function updatePlayerBoxes() {
 
     const metrics = document.createElement("div");
     metrics.className = "player-metrics";
-    metrics.appendChild(createPlayerMetric("本轮下注", player.bet));
-    metrics.appendChild(createPlayerMetric("本手投入", player.totalBet));
-    metrics.appendChild(createPlayerMetric("需跟注", getCallAmount(player)));
+    metrics.appendChild(createPlayerMetric("本轮", player.bet));
+    const status = document.createElement("p");
+    status.className = "player-meta seat-status-line";
+    status.textContent = getPlayerStatus(player);
+    metrics.appendChild(status);
     box.appendChild(metrics);
-
-    const shouldShowActions = !gameOver &&
-      !awaitingShowdown &&
-      handStatus === "playing" &&
-      index === currentPlayerIndex &&
-      canAct(player);
-    if (shouldShowActions) {
-      box.classList.add("has-actions");
-      const actionDisabled = isInteractionLocked();
-      const actions = createActionControls(player, index, actionDisabled, "mobile-card-actions");
-      box.appendChild(actions);
-    }
 
     boxes.appendChild(box);
   });

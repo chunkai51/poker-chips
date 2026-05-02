@@ -81,8 +81,8 @@ The current UI theme uses deep emerald, antique gold, ivory, and chip red. Avoid
 
 Desktop and mobile share the same DOM. The layout switches mainly through CSS breakpoints:
 
-- Desktop keeps player cards in an auto-fit grid and renders active controls in `#hand-actions` as a standalone current-action panel.
-- Mobile hides the standalone current-action panel and shows the same controls inside the active player card, keeping the current player close to their action buttons.
+- Desktop renders the player area as a horizontal oval poker table with evenly distributed seat labels, plus active controls in `#hand-actions` above the table.
+- Mobile uses the same seat-label DOM on a taller vertical oval table and keeps active controls in `#hand-actions` above the table.
 - The player cap is 10, matching a full-ring Texas Hold'em table and keeping future seat/oval-table layouts bounded.
 
 ### `src/firebase.js`
@@ -290,6 +290,7 @@ Implemented:
 
 - Static app shell
 - Responsive premium poker-themed UI
+- Oval poker-table player layout with compact seat labels and center table status
 - App icon and favicon
 - Chip Riffle popover with real-order chip animation, single/dual-color skins, CSS chip symbols, and sampled chip sound effects
 - Collapsible player manual on setup and game screens with usage guide, Texas Hold'em rules, and hand rankings
@@ -299,7 +300,7 @@ Implemented:
 - Dealer, small blind, and big blind assignment
 - Betting actions: Check, Call, Raise, Fold
 - Raise panel with min / half-pot / two-thirds-pot / pot / all-in presets, step nudges, manual target input, and live commit validation
-- Desktop current-action panel; mobile active-card actions
+- Current-action panel above the table on desktop and mobile
 - Minimum-raise tracking through `lastRaiseSize`; short all-in raises do not reopen betting to already-acted players
 - Call amount shown in player cards and the active Call button
 - Local Fold confirmation
@@ -364,7 +365,8 @@ Browser validation checklist:
 - Starting a game creates or joins a room.
 - Player cards fit without horizontal overflow at about 390px width.
 - Active player is visually obvious.
-- Desktop shows action buttons in the standalone current-action panel; mobile shows them inside the active player card.
+- Desktop and mobile show action buttons in the standalone current-action panel above the oval table.
+- Seat labels stay evenly distributed around the oval for 2-10 players.
 - Adding players is capped at 10 in setup and table management.
 - Call button shows the needed call amount when calling is available.
 - Raise opens a panel instead of focusing a bare input.
