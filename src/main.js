@@ -62,6 +62,7 @@ let syncWriteInProgress = false;
 let batchingStateUpdate = false;
 
 const CLIENT_ID_KEY = "pokerChipsClientId";
+const MAX_PLAYERS = 10;
 const clientId = getClientId();
 const SEAT_STATUS_LABELS = {
   seated: "已入座",
@@ -376,6 +377,8 @@ function refreshInteractiveControls() {
     renderShowdownPanel();
   } else if (gameOver) {
     renderNextHandButton();
+  } else if (handStatus === "playing") {
+    renderCurrentActionPanel();
   } else {
     clearHandActions();
   }
@@ -719,6 +722,8 @@ function applyRoomData(data) {
 
   if (gameOver && !awaitingShowdown) {
     renderNextHandButton();
+  } else if (!gameOver && handStatus === "playing") {
+    renderCurrentActionPanel();
   } else {
     clearHandActions();
   }
@@ -822,7 +827,19 @@ if (manualSyncBtn) {
 // ----------------------
 // 添加玩家逻辑
 // ----------------------
+function updateSetupActionState() {
+  startGameBtn.disabled = players.length < 2;
+  addPlayerBtn.disabled = players.length >= MAX_PLAYERS;
+  addPlayerBtn.textContent = players.length >= MAX_PLAYERS ? `最多 ${MAX_PLAYERS} 人` : "添加玩家";
+}
+
 addPlayerBtn.addEventListener("click", () => {
+  if (players.length >= MAX_PLAYERS) {
+    alert(`最多支持 ${MAX_PLAYERS} 名玩家`);
+    updateSetupActionState();
+    return;
+  }
+
   const playerDiv = document.createElement("div");
   playerDiv.classList.add("player-div");
 
@@ -856,7 +873,7 @@ addPlayerBtn.addEventListener("click", () => {
   const delBtn = createButton("删除", () => {
     playerDiv.remove();
     players = players.filter(item => item !== player);
-    startGameBtn.disabled = players.length < 2;
+    updateSetupActionState();
   }, false, "delete-player-button danger");
 
   playerDiv.appendChild(nameInput);
@@ -865,8 +882,9 @@ addPlayerBtn.addEventListener("click", () => {
   playerNameInputsContainer.appendChild(playerDiv);
 
   players.push(player);
-  startGameBtn.disabled = players.length < 2;
+  updateSetupActionState();
 });
+updateSetupActionState();
 
 // ----------------------
 // 开始游戏逻辑
@@ -896,6 +914,10 @@ startGameBtn.addEventListener("click", async () => {
     const chipsInputs = document.querySelectorAll(".player-chips-input");
     if (nameInputs.length < 2) {
       alert("至少需要两个玩家开始游戏");
+      return;
+    }
+    if (nameInputs.length > MAX_PLAYERS) {
+      alert(`最多支持 ${MAX_PLAYERS} 名玩家`);
       return;
     }
 
@@ -1547,6 +1569,7 @@ function beginShowdown() {
   updateGameLog("下注结束，请开牌，并在下方为每个奖池选择赢家后确认结算。");
   hideDealPromptPanel();
   hideSettlementPreviewPanel();
+  clearHandActions();
   renderShowdownPanel();
   updateFirebaseState();
 }
@@ -2127,6 +2150,12 @@ function renderTableManager() {
   tableManagerPanel.appendChild(rows);
 
   const addButton = createButton("添加玩家", () => {
+    if (tableDraft.length >= MAX_PLAYERS) {
+      alert(`最多支持 ${MAX_PLAYERS} 名玩家`);
+      renderTableManager();
+      return;
+    }
+
     const id = getNextPlayerIdFromDraft();
     tableDraft.push({
       id,
@@ -2137,7 +2166,10 @@ function renderTableManager() {
       dealer: false
     });
     renderTableManager();
-  }, isSharedPromptActionLocked(), "prompt-secondary");
+  }, isSharedPromptActionLocked() || tableDraft.length >= MAX_PLAYERS, "prompt-secondary");
+  if (tableDraft.length >= MAX_PLAYERS) {
+    addButton.textContent = `最多 ${MAX_PLAYERS} 人`;
+  }
 
   const footer = document.createElement("div");
   footer.className = "table-manager-footer";
@@ -2279,6 +2311,12 @@ async function saveTableDraft({ startNextHand = false } = {}) {
   }
 
   const nextPlayers = normalizeTableDraftPlayers();
+  if (nextPlayers.length > MAX_PLAYERS) {
+    alert(`最多支持 ${MAX_PLAYERS} 名玩家`);
+    renderTableManager();
+    return;
+  }
+
   if (startNextHand && getEligiblePlayerIndices(nextPlayers).length < 2) {
     alert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
     renderTableManager();
@@ -2420,6 +2458,7 @@ function renderNextHandButton() {
   }, isInteractionLocked() || handStatus !== "settled" || eligibleCount < 2, "next-hand-button");
   button.id = "next-hand-button";
   handActions.replaceChildren();
+  handActions.classList.remove("is-current-action");
   handActions.hidden = false;
   handActions.appendChild(manageButton);
   handActions.appendChild(button);
@@ -2428,6 +2467,7 @@ function renderNextHandButton() {
 function clearHandActions() {
   if (!handActions) return;
   handActions.replaceChildren();
+  handActions.classList.remove("is-current-action");
   handActions.hidden = true;
 }
 
@@ -2580,6 +2620,81 @@ function createRaisePanel(player, index, actionDisabled) {
   };
 }
 
+function shouldShowCurrentActionPanel() {
+  return !gameOver &&
+    !awaitingShowdown &&
+    handStatus === "playing" &&
+    currentPlayerIndex >= 0 &&
+    canAct(players[currentPlayerIndex]);
+}
+
+function createActionControls(player, index, actionDisabled, className = "") {
+  const actions = document.createElement("div");
+  actions.className = className ? `actions ${className}` : "actions";
+
+  actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet, "action-btn action-check"));
+  actions.appendChild(createButton(getCallButtonLabel(player), () => playerAction("call", index), actionDisabled || player.bet >= currentBet, "action-btn action-call"));
+
+  const raiseWidget = createRaisePanel(player, index, actionDisabled);
+  actions.appendChild(createButton("Raise", () => {
+    raiseWidget.toggle();
+  }, actionDisabled || !canPlayerRaise(player), "action-btn action-raise"));
+  actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled, "action-btn action-fold danger"));
+  actions.appendChild(raiseWidget.panel);
+  return actions;
+}
+
+function renderCurrentActionPanel() {
+  if (!handActions) return;
+  if (!shouldShowCurrentActionPanel()) {
+    if (handActions.classList.contains("is-current-action")) {
+      clearHandActions();
+    }
+    return;
+  }
+
+  const index = currentPlayerIndex;
+  const player = players[index];
+  const actionDisabled = isInteractionLocked();
+
+  const panel = document.createElement("section");
+  panel.className = "current-action-panel";
+  panel.setAttribute("aria-label", "当前操作面板");
+
+  const copy = document.createElement("div");
+  copy.className = "current-action-copy";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "prompt-eyebrow";
+  eyebrow.textContent = "Current Action";
+  copy.appendChild(eyebrow);
+
+  const title = document.createElement("h3");
+  title.textContent = `${getPlayerName(player)} 行动`;
+  copy.appendChild(title);
+
+  const meta = document.createElement("div");
+  meta.className = "current-action-meta";
+  [
+    player.position || "-",
+    `筹码 ${player.chips}`,
+    `需跟 ${getCallAmount(player)}`,
+    `本轮 ${player.bet}`
+  ].forEach(text => {
+    const item = document.createElement("span");
+    item.textContent = text;
+    meta.appendChild(item);
+  });
+  copy.appendChild(meta);
+  panel.appendChild(copy);
+
+  panel.appendChild(createActionControls(player, index, actionDisabled, "current-action-buttons"));
+
+  handActions.replaceChildren(panel);
+  handActions.classList.add("is-current-action");
+  handActions.hidden = false;
+}
+
 function updatePlayerBoxes() {
   const boxes = document.getElementById("player-boxes");
   boxes.replaceChildren();
@@ -2643,24 +2758,15 @@ function updatePlayerBoxes() {
       canAct(player);
     if (shouldShowActions) {
       box.classList.add("has-actions");
-      const actions = document.createElement("div");
-      actions.classList.add("actions");
-
       const actionDisabled = isInteractionLocked();
-      actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet, "action-btn action-check"));
-      actions.appendChild(createButton(getCallButtonLabel(player), () => playerAction("call", index), actionDisabled || player.bet >= currentBet, "action-btn action-call"));
-
-      const raiseWidget = createRaisePanel(player, index, actionDisabled);
-      actions.appendChild(createButton("Raise", () => {
-        raiseWidget.toggle();
-      }, actionDisabled || !canPlayerRaise(player), "action-btn action-raise"));
-      actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled, "action-btn action-fold danger"));
-      actions.appendChild(raiseWidget.panel);
+      const actions = createActionControls(player, index, actionDisabled, "mobile-card-actions");
       box.appendChild(actions);
     }
 
     boxes.appendChild(box);
   });
+
+  renderCurrentActionPanel();
 }
 
 function getPlayerStatus(player) {

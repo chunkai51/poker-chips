@@ -79,6 +79,12 @@ Owns the full visual system:
 
 The current UI theme uses deep emerald, antique gold, ivory, and chip red. Avoid replacing it with broad one-color gradients or generic dashboard styling unless the user explicitly asks for a redesign.
 
+Desktop and mobile share the same DOM. The layout switches mainly through CSS breakpoints:
+
+- Desktop keeps player cards in an auto-fit grid and renders active controls in `#hand-actions` as a standalone current-action panel.
+- Mobile hides the standalone current-action panel and shows the same controls inside the active player card, keeping the current player close to their action buttons.
+- The player cap is 10, matching a full-ring Texas Hold'em table and keeping future seat/oval-table layouts bounded.
+
 ### `src/firebase.js`
 
 Initializes Firebase and exports the small API surface used by the app:
@@ -288,10 +294,12 @@ Implemented:
 - Chip Riffle popover with real-order chip animation, single/dual-color skins, CSS chip symbols, and sampled chip sound effects
 - Collapsible player manual on setup and game screens with usage guide, Texas Hold'em rules, and hand rankings
 - Player creation/removal before game start
+- Maximum 10 players in setup and post-settlement table management
 - Initial chips and blind configuration
 - Dealer, small blind, and big blind assignment
 - Betting actions: Check, Call, Raise, Fold
 - Raise panel with min / half-pot / two-thirds-pot / pot / all-in presets, step nudges, manual target input, and live commit validation
+- Desktop current-action panel; mobile active-card actions
 - Minimum-raise tracking through `lastRaiseSize`; short all-in raises do not reopen betting to already-acted players
 - Call amount shown in player cards and the active Call button
 - Local Fold confirmation
@@ -356,7 +364,8 @@ Browser validation checklist:
 - Starting a game creates or joins a room.
 - Player cards fit without horizontal overflow at about 390px width.
 - Active player is visually obvious.
-- Active player card shows action buttons; inactive mobile cards stay compact.
+- Desktop shows action buttons in the standalone current-action panel; mobile shows them inside the active player card.
+- Adding players is capped at 10 in setup and table management.
 - Call button shows the needed call amount when calling is available.
 - Raise opens a panel instead of focusing a bare input.
 - Raise presets update the “加到” input and live “本次投入” preview.
