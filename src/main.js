@@ -1542,7 +1542,7 @@ function beginShowdown() {
 
   updateGameInfo();
   updatePlayerBoxes();
-  updateGameLog("下注结束，请开牌，并在下方为每个奖池选择赢家后确认结算。");
+  updateGameLog("下注结束，请开牌，并在牌桌中央为每个奖池选择赢家后确认结算。");
   hideDealPromptPanel();
   hideSettlementPreviewPanel();
   clearHandActions();
@@ -1563,33 +1563,7 @@ function hideDealPromptPanel() {
 
 function renderDealPromptPanel() {
   if (!dealPromptPanel) return;
-  if (handStatus !== "waitingDeal" || !pendingDealPrompt) {
-    hideDealPromptPanel();
-    return;
-  }
-
-  dealPromptPanel.hidden = false;
-  dealPromptPanel.replaceChildren();
-
-  const body = document.createElement("div");
-  body.className = "prompt-copy";
-
-  const eyebrow = document.createElement("span");
-  eyebrow.className = "prompt-eyebrow";
-  eyebrow.textContent = "发牌提醒";
-  body.appendChild(eyebrow);
-
-  const title = document.createElement("h3");
-  title.textContent = pendingDealPrompt.title;
-  body.appendChild(title);
-  body.appendChild(createParagraph(`${pendingDealPrompt.cardText}。${pendingDealPrompt.detail}`));
-
-  const actions = document.createElement("div");
-  actions.className = "prompt-actions";
-  actions.appendChild(createButton("已发牌，继续", confirmDealPrompt, isSharedPromptActionLocked(), "prompt-primary"));
-
-  dealPromptPanel.appendChild(body);
-  dealPromptPanel.appendChild(actions);
+  hideDealPromptPanel();
 }
 
 function hideSettlementPreviewPanel() {
@@ -1600,123 +1574,11 @@ function hideSettlementPreviewPanel() {
 
 function renderSettlementPreviewPanel() {
   if (!settlementPreviewPanel) return;
-  if (handStatus !== "settlementPreview" || !settlementPreview) {
-    hideSettlementPreviewPanel();
-    return;
-  }
-
-  settlementPreviewPanel.hidden = false;
-  settlementPreviewPanel.replaceChildren();
-
-  const header = document.createElement("div");
-  header.className = "prompt-copy";
-
-  const eyebrow = document.createElement("span");
-  eyebrow.className = "prompt-eyebrow";
-  eyebrow.textContent = "结算确认";
-  header.appendChild(eyebrow);
-
-  const title = document.createElement("h3");
-  title.textContent = "请确认本手筹码分配";
-  header.appendChild(title);
-  header.appendChild(createParagraph("任一设备取消都会回到赢家选择；确认只会被同步结算一次。"));
-  settlementPreviewPanel.appendChild(header);
-
-  const list = document.createElement("div");
-  list.className = "settlement-preview-list";
-
-  settlementPreview.pots.forEach(previewPot => {
-    const card = document.createElement("div");
-    card.className = "settlement-preview-card";
-
-    const heading = document.createElement("strong");
-    heading.textContent = `奖池 ${previewPot.index + 1}: ${previewPot.amount} 筹码`;
-    card.appendChild(heading);
-
-    previewPot.payouts.forEach(payout => {
-      const winner = getPlayerById(payout.playerId);
-      const row = document.createElement("p");
-      row.className = "settlement-preview-row";
-      row.appendChild(document.createTextNode(getPlayerName(winner)));
-      const amount = document.createElement("span");
-      amount.textContent = `+${payout.amount}`;
-      row.appendChild(amount);
-      card.appendChild(row);
-    });
-
-    list.appendChild(card);
-  });
-
-  settlementPreviewPanel.appendChild(list);
-
-  const actions = document.createElement("div");
-  actions.className = "prompt-actions";
-  actions.appendChild(createButton("取消，重新选择", cancelSettlementPreview, isSharedPromptActionLocked(), "prompt-secondary"));
-  actions.appendChild(createButton("确认结算", confirmSettlementPreview, isSharedPromptActionLocked(), "prompt-primary"));
-  settlementPreviewPanel.appendChild(actions);
+  hideSettlementPreviewPanel();
 }
 
 function renderShowdownPanel() {
-  if (!awaitingShowdown || handStatus !== "showdown") {
-    hideShowdownPanel();
-    return;
-  }
-
-  showdownPanel.hidden = false;
-  showdownPanel.replaceChildren();
-
-  const title = document.createElement("h3");
-  title.textContent = "请开牌并选择赢家";
-  showdownPanel.appendChild(title);
-
-  const description = createParagraph("每个奖池可选择一个或多个赢家；选择多个时自动平分，余数给第一个被选中的赢家。");
-  showdownPanel.appendChild(description);
-
-  pendingPots.forEach((sidePot, potIndex) => {
-    const card = document.createElement("div");
-    card.classList.add("pot-card");
-
-    const heading = document.createElement("strong");
-    heading.textContent = `奖池 ${potIndex + 1}: ${sidePot.amount} 筹码`;
-    card.appendChild(heading);
-
-    const contenderNames = sidePot.contenders
-      .map(id => getPlayerById(id))
-      .filter(Boolean)
-      .map(getPlayerName)
-      .join("、");
-    card.appendChild(createParagraph(`可争夺玩家: ${contenderNames || "无"}`));
-
-    const options = document.createElement("div");
-    options.classList.add("winner-options");
-
-    if (!selectedWinnersByPot[potIndex]) {
-      selectedWinnersByPot[potIndex] = new Set();
-    }
-    if (sidePot.contenders.length === 1) {
-      selectedWinnersByPot[potIndex].add(sidePot.contenders[0]);
-    }
-
-    sidePot.contenders.forEach(playerId => {
-      const player = getPlayerById(playerId);
-      if (!player) return;
-
-      const selected = selectedWinnersByPot[potIndex].has(playerId);
-      const option = createButton(getPlayerName(player), () => {
-        toggleWinner(potIndex, playerId);
-      }, isInteractionLocked() || sidePot.contenders.length === 1, "winner-option");
-      if (selected) option.classList.add("selected");
-      options.appendChild(option);
-    });
-
-    card.appendChild(options);
-    showdownPanel.appendChild(card);
-  });
-
-  const actions = document.createElement("div");
-  actions.classList.add("showdown-actions");
-  actions.appendChild(createButton("生成结算预览", confirmShowdown, isInteractionLocked() || handStatus !== "showdown"));
-  showdownPanel.appendChild(actions);
+  hideShowdownPanel();
 }
 
 function toggleWinner(potIndex, playerId) {
@@ -1853,6 +1715,8 @@ async function confirmShowdown() {
 
   hideShowdownPanel();
   renderSettlementPreviewPanel();
+  updateGameInfo();
+  updatePlayerBoxes();
   updateGameLog("已生成结算预览，请确认或取消。");
   batchingStateUpdate = false;
   const saved = await updateFirebaseState({
@@ -1887,6 +1751,8 @@ async function cancelSettlementPreview() {
 
   hideSettlementPreviewPanel();
   renderShowdownPanel();
+  updateGameInfo();
+  updatePlayerBoxes();
   updateGameLog("结算预览已取消，请重新选择赢家。");
   batchingStateUpdate = false;
   const saved = await updateFirebaseState({
@@ -1966,6 +1832,53 @@ document.addEventListener("click", (event) => {
     closeSeatDetailPopovers();
   }
 });
+
+function closeTableActionDialog() {
+  document.querySelectorAll(".table-action-dialog-backdrop").forEach(dialog => dialog.remove());
+}
+
+function openTableActionDialog({ title, description = "", className = "", buildContent }) {
+  closeTableActionDialog();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = className
+    ? `table-action-dialog-backdrop ${className}`
+    : "table-action-dialog-backdrop";
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) closeTableActionDialog();
+  });
+
+  const panel = document.createElement("section");
+  panel.className = "table-action-dialog";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-modal", "true");
+  panel.addEventListener("click", event => event.stopPropagation());
+
+  const header = document.createElement("div");
+  header.className = "table-action-dialog-header";
+
+  const copy = document.createElement("div");
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  copy.appendChild(heading);
+  if (description) {
+    copy.appendChild(createParagraph(description));
+  }
+  header.appendChild(copy);
+
+  const closeButton = createButton("×", closeTableActionDialog, false, "table-action-dialog-close");
+  closeButton.setAttribute("aria-label", "关闭浮窗");
+  header.appendChild(closeButton);
+  panel.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "table-action-dialog-body";
+  buildContent(body, closeTableActionDialog);
+  panel.appendChild(body);
+
+  backdrop.appendChild(panel);
+  document.body.appendChild(backdrop);
+}
 
 function createTableDraft() {
   return players.map((player, index) => ({
@@ -2431,19 +2344,7 @@ function rotateDealer() {
 
 function renderNextHandButton() {
   if (!handActions) return;
-
-  const buttonHandId = handId;
-  const eligibleCount = getEligiblePlayerIndices().length;
-  const manageButton = createButton("牌桌管理", openTableManager, isInteractionLocked() || handStatus !== "settled", "table-manager-button");
-  const button = createButton("开始下一局", () => {
-    resetHand(buttonHandId);
-  }, isInteractionLocked() || handStatus !== "settled" || eligibleCount < 2, "next-hand-button");
-  button.id = "next-hand-button";
-  handActions.replaceChildren();
-  handActions.classList.remove("is-current-action");
-  handActions.hidden = false;
-  handActions.appendChild(manageButton);
-  handActions.appendChild(button);
+  clearHandActions();
 }
 
 function clearHandActions() {
@@ -2455,6 +2356,7 @@ function clearHandActions() {
 
 function showNextHandButton() {
   renderNextHandButton();
+  updatePlayerBoxes();
 }
 
 function inferHandStatus(gameState) {
@@ -2489,119 +2391,123 @@ function updateGameInfo() {
 }
 
 function createRaisePanel(player, index, actionDisabled) {
-  const panel = document.createElement("div");
-  panel.className = "raise-panel";
-  panel.hidden = true;
-
   const raiseDisabled = actionDisabled || !canPlayerRaise(player);
   const callAmount = getCallAmount(player);
   const minimumTarget = getMinimumRaiseTarget(player);
   const maximumTarget = getMaximumRaiseTarget(player);
 
-  const info = document.createElement("div");
-  info.className = "raise-panel-info";
-  [
-    `需跟 ${callAmount}`,
-    `最小加到 ${minimumTarget}`,
-    `奖池 ${pot}`
-  ].forEach(text => {
-    const item = document.createElement("span");
-    item.textContent = text;
-    info.appendChild(item);
-  });
-  panel.appendChild(info);
-
-  const presetGrid = document.createElement("div");
-  presetGrid.className = "raise-preset-grid";
-  [
-    ["最小", () => getDefaultRaiseTarget(player)],
-    ["1/2池", () => getPotSizedRaiseTarget(player, 0.5)],
-    ["2/3池", () => getPotSizedRaiseTarget(player, 2 / 3)],
-    ["一池", () => getPotSizedRaiseTarget(player, 1)],
-    ["All In", () => maximumTarget]
-  ].forEach(([label, getTarget]) => {
-    const target = getTarget();
-    presetGrid.appendChild(createButton(`${label} ${target}`, () => {
-      setTarget(target);
-    }, raiseDisabled || target <= 0, "raise-preset-button"));
-  });
-  panel.appendChild(presetGrid);
-
-  const inputRow = document.createElement("div");
-  inputRow.className = "raise-input-row";
-
-  const inputWrap = document.createElement("label");
-  inputWrap.className = "raise-target-field";
-  const inputLabel = document.createElement("span");
-  inputLabel.textContent = "加到";
-  const raiseInput = document.createElement("input");
-  raiseInput.type = "number";
-  raiseInput.inputMode = "numeric";
-  raiseInput.min = "0";
-  raiseInput.step = String(getChipStep());
-  raiseInput.value = String(getDefaultRaiseTarget(player));
-  inputWrap.appendChild(inputLabel);
-  inputWrap.appendChild(raiseInput);
-  inputRow.appendChild(inputWrap);
-
-  const nudgeGrid = document.createElement("div");
-  nudgeGrid.className = "raise-nudge-grid";
-  const step = getChipStep();
-  [
-    [`-${bigBlind}`, -bigBlind],
-    [`-${step}`, -step],
-    [`+${step}`, step],
-    [`+${bigBlind}`, bigBlind]
-  ].forEach(([label, delta]) => {
-    nudgeGrid.appendChild(createButton(label, () => {
-      setTarget(toPositiveInteger(raiseInput.value, 0) + delta);
-    }, raiseDisabled, "raise-nudge-button"));
-  });
-  inputRow.appendChild(nudgeGrid);
-  panel.appendChild(inputRow);
-
-  const preview = document.createElement("div");
-  preview.className = "raise-preview";
-  const previewTarget = document.createElement("span");
-  const previewCommit = document.createElement("span");
-  const previewMessage = document.createElement("em");
-  preview.appendChild(previewTarget);
-  preview.appendChild(previewCommit);
-  preview.appendChild(previewMessage);
-  panel.appendChild(preview);
-
-  const confirmButton = createButton("确认 Raise", () => {
-    playerAction("raise", index, raiseInput.value);
-    panel.hidden = true;
-  }, raiseDisabled, "action-btn action-confirm raise-confirm-button");
-  panel.appendChild(confirmButton);
-
-  function setTarget(value) {
-    const nextValue = Math.max(0, Math.min(toPositiveInteger(value, 0), maximumTarget));
-    raiseInput.value = String(nextValue);
-    updatePreview();
-  }
-
-  function updatePreview() {
-    const validation = getRaiseValidation(player, raiseInput.value);
-    previewTarget.textContent = `加到 ${validation.targetBet || 0}`;
-    previewCommit.textContent = `本次投入 ${validation.commitAmount || 0}`;
-    previewMessage.textContent = validation.message;
-    preview.classList.toggle("is-invalid", !validation.valid);
-    confirmButton.textContent = validation.valid
-      ? `确认加到 ${validation.targetBet}`
-      : "确认 Raise";
-    confirmButton.disabled = raiseDisabled || !validation.valid;
-  }
-
-  raiseInput.addEventListener("input", updatePreview);
-  updatePreview();
-
   return {
-    panel,
-    toggle() {
-      panel.hidden = !panel.hidden;
-      if (!panel.hidden) updatePreview();
+    open() {
+      openTableActionDialog({
+        title: `${getPlayerName(player)} 加注`,
+        description: `需跟 ${callAmount}，最小加到 ${minimumTarget}，当前奖池 ${pot}。`,
+        className: "raise-action-dialog",
+        buildContent(body, closeDialog) {
+          const panel = document.createElement("div");
+          panel.className = "raise-panel";
+
+          const info = document.createElement("div");
+          info.className = "raise-panel-info";
+          [
+            `需跟 ${callAmount}`,
+            `最小加到 ${minimumTarget}`,
+            `奖池 ${pot}`
+          ].forEach(text => {
+            const item = document.createElement("span");
+            item.textContent = text;
+            info.appendChild(item);
+          });
+          panel.appendChild(info);
+
+          const presetGrid = document.createElement("div");
+          presetGrid.className = "raise-preset-grid";
+          [
+            ["最小", () => getDefaultRaiseTarget(player)],
+            ["1/2池", () => getPotSizedRaiseTarget(player, 0.5)],
+            ["2/3池", () => getPotSizedRaiseTarget(player, 2 / 3)],
+            ["一池", () => getPotSizedRaiseTarget(player, 1)],
+            ["All In", () => maximumTarget]
+          ].forEach(([label, getTarget]) => {
+            const target = getTarget();
+            presetGrid.appendChild(createButton(`${label} ${target}`, () => {
+              setTarget(target);
+            }, raiseDisabled || target <= 0, "raise-preset-button"));
+          });
+          panel.appendChild(presetGrid);
+
+          const inputRow = document.createElement("div");
+          inputRow.className = "raise-input-row";
+
+          const inputWrap = document.createElement("label");
+          inputWrap.className = "raise-target-field";
+          const inputLabel = document.createElement("span");
+          inputLabel.textContent = "加到";
+          const raiseInput = document.createElement("input");
+          raiseInput.type = "number";
+          raiseInput.inputMode = "numeric";
+          raiseInput.min = "0";
+          raiseInput.step = String(getChipStep());
+          raiseInput.value = String(getDefaultRaiseTarget(player));
+          inputWrap.appendChild(inputLabel);
+          inputWrap.appendChild(raiseInput);
+          inputRow.appendChild(inputWrap);
+
+          const nudgeGrid = document.createElement("div");
+          nudgeGrid.className = "raise-nudge-grid";
+          const step = getChipStep();
+          [
+            [`-${bigBlind}`, -bigBlind],
+            [`-${step}`, -step],
+            [`+${step}`, step],
+            [`+${bigBlind}`, bigBlind]
+          ].forEach(([label, delta]) => {
+            nudgeGrid.appendChild(createButton(label, () => {
+              setTarget(toPositiveInteger(raiseInput.value, 0) + delta);
+            }, raiseDisabled, "raise-nudge-button"));
+          });
+          inputRow.appendChild(nudgeGrid);
+          panel.appendChild(inputRow);
+
+          const preview = document.createElement("div");
+          preview.className = "raise-preview";
+          const previewTarget = document.createElement("span");
+          const previewCommit = document.createElement("span");
+          const previewMessage = document.createElement("em");
+          preview.appendChild(previewTarget);
+          preview.appendChild(previewCommit);
+          preview.appendChild(previewMessage);
+          panel.appendChild(preview);
+
+          const confirmButton = createButton("确认 Raise", () => {
+            closeDialog();
+            playerAction("raise", index, raiseInput.value);
+          }, raiseDisabled, "action-btn action-confirm raise-confirm-button");
+          panel.appendChild(confirmButton);
+
+          function setTarget(value) {
+            const nextValue = Math.max(0, Math.min(toPositiveInteger(value, 0), maximumTarget));
+            raiseInput.value = String(nextValue);
+            updatePreview();
+          }
+
+          function updatePreview() {
+            const validation = getRaiseValidation(player, raiseInput.value);
+            previewTarget.textContent = `加到 ${validation.targetBet || 0}`;
+            previewCommit.textContent = `本次投入 ${validation.commitAmount || 0}`;
+            previewMessage.textContent = validation.message;
+            preview.classList.toggle("is-invalid", !validation.valid);
+            confirmButton.textContent = validation.valid
+              ? `确认加到 ${validation.targetBet}`
+              : "确认 Raise";
+            confirmButton.disabled = raiseDisabled || !validation.valid;
+          }
+
+          raiseInput.addEventListener("input", updatePreview);
+          updatePreview();
+          body.appendChild(panel);
+          requestAnimationFrame(() => raiseInput.focus());
+        }
+      });
     }
   };
 }
@@ -2623,68 +2529,234 @@ function createActionControls(player, index, actionDisabled, className = "") {
 
   const raiseWidget = createRaisePanel(player, index, actionDisabled);
   actions.appendChild(createButton("Raise", () => {
-    raiseWidget.toggle();
+    raiseWidget.open();
   }, actionDisabled || !canPlayerRaise(player), "action-btn action-raise"));
   actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled, "action-btn action-fold danger"));
-  actions.appendChild(raiseWidget.panel);
   return actions;
 }
 
 function renderCurrentActionPanel() {
   if (!handActions) return;
-  if (!shouldShowCurrentActionPanel()) {
-    if (handActions.classList.contains("is-current-action")) {
-      clearHandActions();
-    }
-    return;
+  clearHandActions();
+}
+
+function createCenterOperationHeader(titleText, metaItems = []) {
+  const header = document.createElement("div");
+  header.className = "table-center-operation-header";
+
+  const title = document.createElement("strong");
+  title.textContent = titleText;
+  header.appendChild(title);
+
+  if (metaItems.length > 0) {
+    const meta = document.createElement("div");
+    meta.className = "table-center-operation-meta";
+    metaItems.forEach(text => {
+      const item = document.createElement("span");
+      item.textContent = text;
+      meta.appendChild(item);
+    });
+    header.appendChild(meta);
   }
 
-  const index = currentPlayerIndex;
-  const player = players[index];
-  const actionDisabled = isInteractionLocked();
+  return header;
+}
 
-  const panel = document.createElement("section");
-  panel.className = "current-action-panel";
-  panel.setAttribute("aria-label", "当前操作面板");
+function openShowdownDialog() {
+  if (!awaitingShowdown || handStatus !== "showdown") return;
 
-  const copy = document.createElement("div");
-  copy.className = "current-action-copy";
-
-  const eyebrow = document.createElement("span");
-  eyebrow.className = "prompt-eyebrow";
-  eyebrow.textContent = "Current Action";
-  copy.appendChild(eyebrow);
-
-  const title = document.createElement("h3");
-  title.textContent = `${getPlayerName(player)} 行动`;
-  copy.appendChild(title);
-
-  const meta = document.createElement("div");
-  meta.className = "current-action-meta";
-  [
-    player.position || "-",
-    `筹码 ${player.chips}`,
-    `需跟 ${getCallAmount(player)}`,
-    `本轮 ${player.bet}`
-  ].forEach(text => {
-    const item = document.createElement("span");
-    item.textContent = text;
-    meta.appendChild(item);
+  openTableActionDialog({
+    title: "选择赢家",
+    description: "每个奖池可选择一个或多个赢家；多人平分时，余数给第一个被选中的赢家。",
+    className: "showdown-action-dialog",
+    buildContent(body, closeDialog) {
+      renderShowdownDialogBody(body, closeDialog);
+    }
   });
-  copy.appendChild(meta);
-  panel.appendChild(copy);
+}
 
-  panel.appendChild(createActionControls(player, index, actionDisabled, "current-action-buttons"));
+function renderShowdownDialogBody(body, closeDialog) {
+  body.replaceChildren();
 
-  handActions.replaceChildren(panel);
-  handActions.classList.add("is-current-action");
-  handActions.hidden = false;
+  pendingPots.forEach((sidePot, potIndex) => {
+    const card = document.createElement("div");
+    card.classList.add("pot-card");
+
+    const heading = document.createElement("strong");
+    heading.textContent = `奖池 ${potIndex + 1}: ${sidePot.amount} 筹码`;
+    card.appendChild(heading);
+
+    const contenderNames = sidePot.contenders
+      .map(id => getPlayerById(id))
+      .filter(Boolean)
+      .map(getPlayerName)
+      .join("、");
+    card.appendChild(createParagraph(`可争夺玩家: ${contenderNames || "无"}`));
+
+    const options = document.createElement("div");
+    options.classList.add("winner-options");
+
+    if (!selectedWinnersByPot[potIndex]) {
+      selectedWinnersByPot[potIndex] = new Set();
+    }
+    if (sidePot.contenders.length === 1) {
+      selectedWinnersByPot[potIndex].add(sidePot.contenders[0]);
+    }
+
+    sidePot.contenders.forEach(playerId => {
+      const player = getPlayerById(playerId);
+      if (!player) return;
+
+      const selected = selectedWinnersByPot[potIndex].has(playerId);
+      const option = createButton(getPlayerName(player), () => {
+        const selectedSet = selectedWinnersByPot[potIndex] || new Set();
+        if (selectedSet.has(playerId)) {
+          selectedSet.delete(playerId);
+        } else {
+          selectedSet.add(playerId);
+        }
+        selectedWinnersByPot[potIndex] = selectedSet;
+        renderShowdownDialogBody(body, closeDialog);
+      }, isInteractionLocked() || sidePot.contenders.length === 1, "winner-option");
+      if (selected) option.classList.add("selected");
+      options.appendChild(option);
+    });
+
+    card.appendChild(options);
+    body.appendChild(card);
+  });
+
+  const actions = document.createElement("div");
+  actions.classList.add("showdown-actions");
+  actions.appendChild(createButton("生成结算预览", () => {
+    if (!buildSettlementPlan()) return;
+    closeDialog();
+    confirmShowdown();
+  }, isInteractionLocked() || handStatus !== "showdown", "prompt-primary"));
+  body.appendChild(actions);
+}
+
+function openSettlementPreviewDialog() {
+  if (handStatus !== "settlementPreview" || !settlementPreview) return;
+
+  openTableActionDialog({
+    title: "确认结算",
+    description: "请检查本手筹码分配。取消或确认只同步最终结果，不会强制其他设备弹出这个浮窗。",
+    className: "settlement-action-dialog",
+    buildContent(body, closeDialog) {
+      const list = document.createElement("div");
+      list.className = "settlement-preview-list";
+
+      settlementPreview.pots.forEach(previewPot => {
+        const card = document.createElement("div");
+        card.className = "settlement-preview-card";
+
+        const heading = document.createElement("strong");
+        heading.textContent = `奖池 ${previewPot.index + 1}: ${previewPot.amount} 筹码`;
+        card.appendChild(heading);
+
+        previewPot.payouts.forEach(payout => {
+          const winner = getPlayerById(payout.playerId);
+          const row = document.createElement("p");
+          row.className = "settlement-preview-row";
+          row.appendChild(document.createTextNode(getPlayerName(winner)));
+          const amount = document.createElement("span");
+          amount.textContent = `+${payout.amount}`;
+          row.appendChild(amount);
+          card.appendChild(row);
+        });
+
+        list.appendChild(card);
+      });
+      body.appendChild(list);
+
+      const actions = document.createElement("div");
+      actions.className = "prompt-actions";
+      actions.appendChild(createButton("取消，重新选择", () => {
+        closeDialog();
+        cancelSettlementPreview();
+      }, isSharedPromptActionLocked(), "prompt-secondary"));
+      actions.appendChild(createButton("确认结算", () => {
+        closeDialog();
+        confirmSettlementPreview();
+      }, isSharedPromptActionLocked(), "prompt-primary"));
+      body.appendChild(actions);
+    }
+  });
+}
+
+function createTableCenterOperations() {
+  const operations = document.createElement("div");
+  operations.className = "table-center-action-slot";
+
+  if (shouldShowCurrentActionPanel()) {
+    const index = currentPlayerIndex;
+    const player = players[index];
+    const actionDisabled = isInteractionLocked();
+    operations.appendChild(createCenterOperationHeader(`${getPlayerName(player)} 行动`, [
+      `筹码 ${player.chips}`,
+      `需跟 ${getCallAmount(player)}`,
+      `本轮 ${player.bet}`
+    ]));
+    operations.appendChild(createActionControls(player, index, actionDisabled, "table-center-action-buttons"));
+    return operations;
+  }
+
+  if (handStatus === "waitingDeal" && pendingDealPrompt) {
+    operations.appendChild(createCenterOperationHeader(pendingDealPrompt.title, [
+      pendingDealPrompt.cardText
+    ]));
+    operations.appendChild(createButton("已发牌，继续", confirmDealPrompt, isSharedPromptActionLocked(), "prompt-primary"));
+    return operations;
+  }
+
+  if (handStatus === "showdown") {
+    operations.appendChild(createCenterOperationHeader("摊牌结算", [
+      `${pendingPots.length || 1} 个奖池`
+    ]));
+    operations.appendChild(createButton("选择赢家", openShowdownDialog, isInteractionLocked(), "prompt-primary"));
+    return operations;
+  }
+
+  if (handStatus === "settlementPreview") {
+    operations.appendChild(createCenterOperationHeader("等待结算确认", [
+      `总额 ${settlementPreview?.total || pot}`
+    ]));
+    operations.appendChild(createButton("查看并确认", openSettlementPreviewDialog, isSharedPromptActionLocked(), "prompt-primary"));
+    return operations;
+  }
+
+  if (handStatus === "settled") {
+    const eligibleCount = getEligiblePlayerIndices().length;
+    const buttonHandId = handId;
+    operations.appendChild(createCenterOperationHeader("本手已结算", [
+      `可参与 ${eligibleCount} 人`
+    ]));
+    const group = document.createElement("div");
+    group.className = "table-center-action-buttons table-center-next-buttons";
+    group.appendChild(createButton("牌桌管理", openTableManager, isInteractionLocked(), "table-manager-button"));
+    group.appendChild(createButton("开始下一局", () => {
+      resetHand(buttonHandId);
+    }, isInteractionLocked() || eligibleCount < 2, "next-hand-button"));
+    operations.appendChild(group);
+    return operations;
+  }
+
+  operations.textContent = "操作区";
+  return operations;
 }
 
 function getPositionMarkers(position = "") {
   const markers = [];
-  if (position.includes("Dealer")) markers.push(["D", "dealer"]);
-  if (position.includes("小盲")) markers.push(["SB", "small-blind"]);
+  const isDealer = position.includes("Dealer");
+  const isSmallBlind = position.includes("小盲");
+  if (isDealer && isSmallBlind) {
+    markers.push(["D/SB", "dealer-small-blind"]);
+  } else if (isDealer) {
+    markers.push(["D", "dealer"]);
+  } else if (isSmallBlind) {
+    markers.push(["SB", "small-blind"]);
+  }
   if (position.includes("大盲")) markers.push(["BB", "big-blind"]);
   return markers;
 }
@@ -2886,10 +2958,7 @@ function createTableCenterPanel() {
   }
   center.appendChild(turn);
 
-  const reserve = document.createElement("div");
-  reserve.className = "table-center-action-slot";
-  reserve.textContent = "操作区";
-  center.appendChild(reserve);
+  center.appendChild(createTableCenterOperations());
 
   return center;
 }
@@ -2897,6 +2966,8 @@ function createTableCenterPanel() {
 function updatePlayerBoxes() {
   const boxes = document.getElementById("player-boxes");
   boxes.replaceChildren();
+  boxes.className = "player-boxes";
+  boxes.classList.add(`player-count-${Math.min(players.length, MAX_PLAYERS)}`);
   boxes.style.setProperty("--player-count", players.length);
   boxes.appendChild(createTableCenterPanel());
 
