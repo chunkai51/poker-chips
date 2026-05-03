@@ -2940,6 +2940,7 @@ function createTableCenterPanel() {
   });
   center.appendChild(meta);
 
+  /*
   const turn = document.createElement("div");
   turn.className = "table-center-turn";
   if (shouldShowCurrentActionPanel()) {
@@ -2957,6 +2958,8 @@ function createTableCenterPanel() {
     turn.textContent = "等待牌局更新";
   }
   center.appendChild(turn);
+  */
+
 
   center.appendChild(createTableCenterOperations());
 
