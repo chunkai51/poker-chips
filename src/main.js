@@ -2628,7 +2628,7 @@ function renderShowdownDialogBody(body, closeDialog) {
 
   const actions = document.createElement("div");
   actions.classList.add("showdown-actions");
-  actions.appendChild(createButton("生成结算预览", () => {
+  actions.appendChild(createButton("预结算", () => {
     if (!buildSettlementPlan()) return;
     closeDialog();
     confirmShowdown();
@@ -2641,7 +2641,7 @@ function openSettlementPreviewDialog() {
 
   openTableActionDialog({
     title: "确认结算",
-    description: "请检查本手筹码分配。取消或确认只同步最终结果，不会强制其他设备弹出这个浮窗。",
+    description: "请检查本手筹码分配。",
     className: "settlement-action-dialog",
     buildContent(body, closeDialog) {
       const list = document.createElement("div");
@@ -2696,7 +2696,7 @@ function createTableCenterOperations() {
     operations.appendChild(createCenterOperationHeader(`${getPlayerName(player)} 行动`, [
       `筹码 ${player.chips}`,
       `需跟 ${getCallAmount(player)}`,
-      `本轮 ${player.bet}`
+      `本轮下注 ${player.bet}`
     ]));
     operations.appendChild(createActionControls(player, index, actionDisabled, "table-center-action-buttons"));
     return operations;
@@ -2730,7 +2730,7 @@ function createTableCenterOperations() {
     const eligibleCount = getEligiblePlayerIndices().length;
     const buttonHandId = handId;
     operations.appendChild(createCenterOperationHeader("本手已结算", [
-      `可参与 ${eligibleCount} 人`
+      `下一局可参与 ${eligibleCount} 人`
     ]));
     const group = document.createElement("div");
     group.className = "table-center-action-buttons table-center-next-buttons";
