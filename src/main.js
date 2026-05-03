@@ -319,7 +319,7 @@ function clearGameLog() {
 function updateLogSummary() {
   if (!logSummary) return;
   const count = room.gameState.logs.length;
-  logSummary.textContent = count > 0 ? `操作日志（${count}）` : "操作日志";
+  logSummary.textContent = count > 0 ? `操作记录（${count}）` : "操作记录";
 }
 
 function setSyncStatus(message, status = "") {
