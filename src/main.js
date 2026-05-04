@@ -2400,7 +2400,7 @@ function createRaisePanel(player, index, actionDisabled) {
     open() {
       openTableActionDialog({
         title: `${getPlayerName(player)} 加注`,
-        description: `需跟 ${callAmount}，最小加到 ${minimumTarget}，当前奖池 ${pot}。`,
+        description: `需跟 ${callAmount}，最小加注 ${minimumTarget}，当前奖池 ${pot}。`,
         className: "raise-action-dialog",
         buildContent(body, closeDialog) {
           const panel = document.createElement("div");
@@ -2885,7 +2885,7 @@ function createSeatDetailPopover(player, index) {
   [
     ["座位", String(index + 1)],
     ["位置", player.position || "-"],
-    ["剩余", String(player.chips)],
+    ["剩余筹码", String(player.chips)],
     ["本轮下注", String(player.bet)],
     ["本局投入", String(player.totalBet || 0)],
     ["状态", getPlayerStatus(player)]
@@ -3033,7 +3033,7 @@ function updatePlayerBoxes() {
 
     const betBadge = document.createElement("span");
     betBadge.className = "seat-bet-badge";
-    betBadge.textContent = `本轮 ${player.bet}`;
+    betBadge.textContent = `Bet ${player.bet}`;
     meta.appendChild(betBadge);
 
     const status = document.createElement("p");
