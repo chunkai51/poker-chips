@@ -117,7 +117,7 @@ Owns the compatibility identity layer for the multiplayer-by-player roadmap:
 - Optional `ownerClientId` normalization for player objects
 - Permission helper stubs such as `canClientControlPlayer()` and `isRoomHost()`
 
-Important: this layer is currently scaffolding. Unbound players (`ownerClientId === ""`) remain controllable by legacy/shared-room clients so existing rooms and single-device usage keep working. Strict permission enforcement should be added in a later phase after the join/claim-player UI exists.
+Important: this layer is still frontend-only. The app now uses it to gate host actions, own-player actions, Dealer confirmation, and multi-player approvals in the UI/write entrypoints, but it is not a security boundary until Firebase Auth and Database Rules are added. Unbound players (`ownerClientId === ""`) are controlled by the host as a proxy so rooms do not become stuck.
 
 ### `src/game-rules.js`
 
@@ -249,6 +249,8 @@ Room identity fields:
 - `hostClientId`: normalized room host id. Existing rooms fall back to `operator`.
 - `members`: map keyed by `clientId`, currently used as presence/identity scaffolding.
 - Table view rotation is intentionally local-only. The offset is stored in `localStorage` under `pokerChipsTableViewRotation:{roomId}` and is never written to Firebase.
+- `gameState.nextHandApprovals`: room-mode readiness map for starting the next hand.
+- `gameState.settlementPreview.approvals`: room-mode confirmation map for applying the settlement preview.
 
 Player objects now include seat-management fields:
 
@@ -265,7 +267,8 @@ Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players 
 2. Start game:
    - Choose local mode or room mode.
    - In room mode, create a room or join by room id.
-   - In room mode, devices can claim an unclaimed player seat before the hand starts. This currently affects identity display and local seat orientation, not permissions.
+   - In room mode, devices can claim an unclaimed player seat before the hand starts; that ownership controls action permissions and table perspective.
+   - In room mode, only the host can add/remove players, edit setup stacks, and start the first hand.
    - Read player names/chips.
    - Initialize hand state.
    - Call `startRound()`.
@@ -284,6 +287,7 @@ Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players 
    - Short all-in raises above `currentBet` are allowed, but they do not update `lastRaiseSize` or reopen raising for players who already acted.
    - Advances to next player or next street.
    - Fold asks for local confirmation before writing state.
+   - In room mode, only the player owner can act; if a player is unbound, the host is treated as that player's proxy.
 5. End conditions:
    - Single active player wins immediately.
    - All remaining players are all-in or betting is complete by river.
@@ -291,22 +295,25 @@ Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players 
 6. Street transition:
    - Betting completion before the river creates `pendingDealPrompt`.
    - `handStatus` becomes `waitingDeal`.
-   - All clients see the same deal prompt; one confirmed click advances into the next street by guarded transaction.
+   - All clients see the same deal prompt. Only the Dealer owner can confirm; if the Dealer is unbound, the host can confirm.
 7. Showdown:
    - `beginShowdown()` builds side pots.
    - UI asks user to choose winner(s) per pot.
    - `confirmShowdown()` now creates `settlementPreview` rather than distributing immediately.
-   - `confirmSettlementPreview()` applies payouts and marks the hand settled.
+   - In room mode, `confirmSettlementPreview()` records the current device's approval. Payouts are applied only after all required approvers have confirmed.
    - `cancelSettlementPreview()` returns all clients to winner selection.
 8. Next hand:
    - `resetHand()` requires at least two eligible players.
+   - In room mode, `approveNextHandStart()` records readiness and only calls `resetHand()` after all next-hand approvers have confirmed.
+   - Seat claim changes while settled clear `nextHandApprovals`, because they change who must approve the next hand.
    - Dealer, small blind, big blind, and action order skip `busted`, `sittingOut`, and `left` seats.
    - Heads-up rules are handled when exactly two eligible players remain.
 9. Table management:
    - Available only after settlement.
+   - In room mode, only the host can open and save table management.
    - Edits are held in `tableDraft` and synchronized only when saved.
    - Supports seat reorder, chip adjustment, sitting out, leaving, returning, and adding a player.
-   - “保存并开始下一局” first saves the table with a guarded write, then calls `resetHand()`.
+   - “保存并开始下一局” first saves the table with a guarded write, then calls `approveNextHandStart()`; in room mode this records the host's next-hand approval instead of skipping the all-player confirmation flow.
 
 ## Firebase Sync and Concurrency
 
@@ -373,12 +380,15 @@ Implemented:
 - Custom in-app alert/confirm dialog UI instead of native browser dialogs
 - Extracted pure game/table rules in `src/game-rules.js`
 - Compatibility identity layer in `src/identity.js` with `clientId`, `mode`, `hostClientId`, `members`, and player `ownerClientId`
+- Frontend permission layer for room mode: host setup/table management, own-player actions, Dealer-only deal confirmation with host proxy for unbound players
+- All-required-player confirmation for settlement preview and next-hand start
 
 Needs more validation:
 
 - Complex All In and side-pot scenarios with 3+ players
 - Multiple clients acting at nearly the same time
 - Firebase permission-denied and offline cases
+- Permission edge cases with unbound players, host reconnects, and simultaneous approvals
 - Recovery from partially created or stale rooms
 - Long sessions with many hands/log entries
 
@@ -391,8 +401,7 @@ Not implemented:
 - Lint/format tooling
 - Authentication
 - Database security rules in this repository
-- Strict per-player operation permissions
-- All-player confirmation flow for settlement and next-hand start
+- Security-grade permission enforcement against malicious clients
 
 ## Development Notes
 
@@ -424,11 +433,14 @@ Browser validation checklist:
 - Creating a room writes a setup room and shows the generated room id.
 - Joining a room loads setup players when the remote room is still in setup.
 - Claiming a player marks only one player as this device's seat; claiming another releases the previous one.
+- Non-host room clients cannot add/delete setup players, edit setup stacks, open table management, or start the first hand.
 - Adding two players enables “开始游戏”.
 - Starting a game in local mode does not create a remote room and actions are not blocked by sync state.
 - Starting a game in room mode creates or joins a room.
 - Player cards fit without horizontal overflow at about 390px width.
 - Active player is visually obvious.
+- Room-mode action buttons are enabled only on the device that owns the current player; unbound players are controlled by the host.
+- Deal prompts can only be confirmed by the Dealer owner, or by the host when Dealer is unbound.
 - In room mode, a claimed player appears at the bottom-center seat on that device when the view offset is reset.
 - Room-mode rotation buttons change only the current browser's layout and do not change another browser's layout.
 - Desktop and mobile show action buttons in the standalone current-action panel above the oval table.
@@ -443,10 +455,12 @@ Browser validation checklist:
 - Raise panel fits inside the active card on desktop, mobile portrait, and short landscape.
 - Showdown panel displays winner choices.
 - Generating settlement preview shows the payout plan on all clients.
-- Canceling settlement preview returns to winner selection; confirming settles once.
+- Canceling settlement preview returns to winner selection on all clients.
+- Confirming settlement preview records one approval per required player/proxy and settles once all are complete.
 - Zero-chip losers are marked “待补码” after settlement.
 - “牌桌管理” can adjust chips and return a busted player before the next hand.
 - Fewer than two eligible players disables “开始下一局”.
+- Room-mode next-hand start records one approval per required player/proxy and starts once all are complete.
 - Moving seats changes the next-hand Button/blind preview and the next hand follows that seat order.
 - “开始下一局” appears only after settlement.
 - Sync status updates for success and failure states.
@@ -469,9 +483,9 @@ Browser validation checklist:
 
 ## Suggested Next Steps
 
-1. Enforce permissions in phases: own-player actions first, dealer-only deal confirmation, host-only table management after settlement.
-2. Add all-player confirmation state for settlement preview and next-hand start.
-3. Add a clearer player-join flow for late joiners and reconnects, including “create new player” requests in an existing room.
+1. Add Firebase Auth and Realtime Database Rules so the frontend permission model becomes a security boundary.
+2. Add a clearer player-join flow for late joiners and reconnects, including “create new player” requests in an existing room.
+3. Add host transfer / reconnect handling so a vanished host does not strand unbound players.
 4. Add unit tests for `src/game-rules.js` and `src/identity.js`, especially all-in, side-pot, split-pot, and heads-up rotation cases.
 5. Add Firebase rules documentation before treating identity fields as security boundaries.
 6. Consider room lifecycle controls: leave room, reset room, archive hand log.

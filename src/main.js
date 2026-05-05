@@ -85,6 +85,7 @@ let pendingPots = [];
 let selectedWinnersByPot = {};
 let pendingDealPrompt = null;
 let settlementPreview = null;
+let nextHandApprovals = {};
 let tableDraft = null;
 let tableManagerOpen = false;
 let tableDraftBaseHandId = null;
@@ -129,6 +130,7 @@ let room = {
     selectedWinnersByPot: {},
     pendingDealPrompt: null,
     settlementPreview: null,
+    nextHandApprovals: {},
     handId: 0,
     handStatus: "setup",
     stateVersion: 0,
@@ -184,6 +186,29 @@ function needsRemoteSync() {
   return isRoomMode() && Boolean(room.roomId);
 }
 
+function getHostClientId(roomData = room) {
+  const fallbackClientId = roomData === room ? clientId : roomData?.operator || "";
+  return getRoomHostId(roomData, fallbackClientId) || fallbackClientId;
+}
+
+function canClientManageRoomData(actorClientId, roomData = room) {
+  const normalizedActorId = normalizePlayerOwnerId(actorClientId);
+  if (!normalizedActorId) return false;
+  const mode = normalizeRoomMode(roomData?.mode, roomData?.roomId || room.roomId);
+  if (mode === ROOM_MODES.local) return true;
+  return getHostClientId(roomData) === normalizedActorId;
+}
+
+function canClientControlPlayerInRoom(actorClientId, player, roomData = room) {
+  const normalizedActorId = normalizePlayerOwnerId(actorClientId);
+  if (!normalizedActorId) return false;
+  const mode = normalizeRoomMode(roomData?.mode, roomData?.roomId || room.roomId);
+  if (mode === ROOM_MODES.local) return true;
+  const ownerClientId = normalizePlayerOwnerId(player?.ownerClientId);
+  if (ownerClientId) return ownerClientId === normalizedActorId;
+  return canClientManageRoomData(normalizedActorId, roomData);
+}
+
 function getCurrentDevicePlayerIndex(list = players) {
   return list.findIndex(player => normalizePlayerOwnerId(player.ownerClientId) === clientId);
 }
@@ -195,6 +220,30 @@ function getCurrentDevicePlayer(list = players) {
 
 function isCurrentDevicePlayer(player) {
   return normalizePlayerOwnerId(player?.ownerClientId) === clientId;
+}
+
+function getPlayerControllerId(player, roomData = room) {
+  return normalizePlayerOwnerId(player?.ownerClientId) || getHostClientId(roomData);
+}
+
+function canCurrentClientControlPlayer(player) {
+  return canClientControlPlayerInRoom(clientId, player, room);
+}
+
+function canCurrentClientManageRoom() {
+  return canClientManageRoomData(clientId, room);
+}
+
+function canCurrentClientModifyClaims() {
+  return isRoomMode() && (handStatus === "setup" || handStatus === "settled");
+}
+
+function getDealerPlayer() {
+  return players.find(player => player.dealer) || null;
+}
+
+function canCurrentClientConfirmDeal() {
+  return isLocalMode() || canCurrentClientControlPlayer(getDealerPlayer());
 }
 
 function hasDuplicatePlayerName(player, list = players) {
@@ -652,7 +701,8 @@ async function updateFirebaseState(options = {}) {
   const {
     expectedHandId = null,
     allowedStatuses = null,
-    expectedStateVersion = null
+    expectedStateVersion = null,
+    remoteGuard = null
   } = options;
   const guardedWrite = expectedHandId !== null ||
     expectedStateVersion !== null ||
@@ -676,6 +726,7 @@ async function updateFirebaseState(options = {}) {
     selectedWinnersByPot: serializeSelectedWinnersByPot(),
     pendingDealPrompt,
     settlementPreview,
+    nextHandApprovals,
     handId,
     handStatus,
     stateVersion: nextStateVersion,
@@ -706,6 +757,7 @@ async function updateFirebaseState(options = {}) {
         if (expectedHandId !== null && currentHandId !== expectedHandId) return undefined;
         if (expectedStateVersion !== null && currentStateVersion !== expectedStateVersion) return undefined;
         if (Array.isArray(allowedStatuses) && !allowedStatuses.includes(currentStatus)) return undefined;
+        if (typeof remoteGuard === "function" && !remoteGuard(currentRoom, currentGameState)) return undefined;
 
         return {
           ...currentRoom,
@@ -783,6 +835,10 @@ function normalizeIncomingPlayer(player, index) {
     acted: Boolean(player?.acted),
     position: String(player?.position || "")
   };
+}
+
+function normalizeIncomingPlayers(list) {
+  return Array.isArray(list) ? list.map(normalizeIncomingPlayer) : [];
 }
 
 function normalizeIncomingPots(pots) {
@@ -897,6 +953,7 @@ function normalizeSettlementPreview(preview) {
     id: String(preview.id || `settlement_${handId}`),
     total: toNonNegativeNumber(preview.total, pots.reduce((sum, previewPot) => sum + previewPot.amount, 0)),
     winnersByPot: normalizeSelectedWinnersByPot(preview.winnersByPot),
+    approvals: normalizeApprovalMap(preview.approvals),
     pots
   };
 }
@@ -916,6 +973,7 @@ function applyRoomData(data) {
   selectedWinnersByPot = normalizeSelectedWinnersByPot(gameState.selectedWinnersByPot);
   pendingDealPrompt = normalizeIncomingDealPrompt(gameState.pendingDealPrompt);
   settlementPreview = normalizeSettlementPreview(gameState.settlementPreview);
+  nextHandApprovals = normalizeApprovalMap(gameState.nextHandApprovals);
   handId = toNonNegativeNumber(gameState.handId, handId);
   handStatus = String(gameState.handStatus || inferHandStatus(gameState));
   stateVersion = toNonNegativeNumber(gameState.stateVersion, stateVersion);
@@ -1175,12 +1233,17 @@ function applyLocalPlayerClaim(playerId, shouldClaim) {
   const player = players.find(item => item.id === playerId);
   if (!player) return false;
   if (shouldClaim) player.ownerClientId = clientId;
+  if (handStatus === "settled") nextHandApprovals = {};
   room.players = players;
   return true;
 }
 
 async function togglePlayerClaim(playerId) {
   if (!isRoomMode()) return;
+  if (!canCurrentClientModifyClaims()) {
+    showAppAlert("玩家绑定只能在准备阶段或两手牌之间调整。");
+    return;
+  }
   const player = players.find(item => item.id === playerId);
   if (!player) return;
   if (isClaimedByOtherDevice(player)) {
@@ -1201,6 +1264,8 @@ async function togglePlayerClaim(playerId) {
   try {
     const result = await runTransaction(getRoomRef(), (currentRoom) => {
       if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
+      const currentStatus = String(currentRoom.gameState?.handStatus || inferHandStatus(currentRoom.gameState || {}));
+      if (!["setup", "settled"].includes(currentStatus)) return undefined;
       const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
       const target = remotePlayers.find(item => item.id === playerId);
       if (!target) return undefined;
@@ -1214,14 +1279,25 @@ async function togglePlayerClaim(playerId) {
         }
       });
       target.ownerClientId = shouldClaim ? clientId : "";
+      const nextGameState = currentRoom.gameState || {};
+      const resetNextHandApprovals = currentStatus === "settled";
 
-      return {
+      const nextRoom = {
         ...currentRoom,
         mode: normalizeRoomMode(currentRoom.mode, room.roomId),
         hostClientId: getRoomHostId(currentRoom, room.hostClientId || clientId),
         members: touchMember(currentRoom.members || room.members, clientId),
         players: remotePlayers
       };
+      if (resetNextHandApprovals) {
+        nextRoom.gameState = {
+          ...nextGameState,
+          nextHandApprovals: {},
+          stateVersion: toNonNegativeNumber(nextGameState.stateVersion, 0) + 1,
+          updatedBy: clientId
+        };
+      }
+      return nextRoom;
     }, { applyLocally: false });
 
     if (!result.committed) {
@@ -1253,6 +1329,7 @@ function scheduleLobbySync() {
 
 async function syncLobbyState() {
   if (!isRoomMode() || !room.roomId || gameStarted || handStatus !== "setup") return true;
+  if (!canCurrentClientManageRoom()) return false;
   clearTimeout(lobbySyncTimer);
   normalizeSetupPlayers();
   const nextStateVersion = stateVersion + 1;
@@ -1270,6 +1347,7 @@ async function syncLobbyState() {
     selectedWinnersByPot: {},
     pendingDealPrompt: null,
     settlementPreview: null,
+    nextHandApprovals: {},
     handId,
     handStatus: "setup",
     stateVersion: nextStateVersion,
@@ -1289,6 +1367,7 @@ async function syncLobbyState() {
       if (currentInProgress && currentStatus !== "setup") return undefined;
 
       const existingRoom = currentRoom || {};
+      if (currentRoom && !canClientManageRoomData(clientId, existingRoom)) return undefined;
       return {
         ...existingRoom,
         mode: ROOM_MODES.room,
@@ -1323,9 +1402,13 @@ async function syncLobbyState() {
 }
 
 function updateSetupActionState() {
-  startGameBtn.disabled = players.length < 2;
-  addPlayerBtn.disabled = players.length >= MAX_PLAYERS;
+  const canManage = canCurrentClientManageRoom();
+  startGameBtn.disabled = !canManage || players.length < 2;
+  addPlayerBtn.disabled = !canManage || players.length >= MAX_PLAYERS;
   addPlayerBtn.textContent = players.length >= MAX_PLAYERS ? `最多 ${MAX_PLAYERS} 人` : "添加玩家";
+  if (!canManage && isRoomMode()) {
+    addPlayerBtn.textContent = "等待房主添加";
+  }
   renderIdentityControls();
 }
 
@@ -1345,6 +1428,7 @@ function renderSetupPlayerInputs() {
     nameInput.placeholder = `输入玩家 ${index + 1} 昵称`;
     nameInput.value = player.name || "";
     nameInput.classList.add("player-name-input");
+    nameInput.disabled = !canCurrentClientManageRoom();
     nameInput.addEventListener("input", () => {
       player.name = nameInput.value;
     });
@@ -1359,6 +1443,7 @@ function renderSetupPlayerInputs() {
     chipsInput.placeholder = "初始筹码";
     chipsInput.value = player.chips;
     chipsInput.classList.add("player-chips-input");
+    chipsInput.disabled = !canCurrentClientManageRoom();
     chipsInput.addEventListener("input", () => {
       player.chips = toPositiveInteger(chipsInput.value, 0);
     });
@@ -1371,17 +1456,21 @@ function renderSetupPlayerInputs() {
     const claimBtn = isRoomMode()
       ? createButton(getSetupClaimLabel(player), () => {
         togglePlayerClaim(player.id);
-      }, isClaimedByOtherDevice(player), "claim-player-button")
+      }, !canCurrentClientModifyClaims() || isClaimedByOtherDevice(player), "claim-player-button")
       : null;
     if (claimBtn && isCurrentDevicePlayer(player)) claimBtn.classList.add("claimed");
 
     const delBtn = createButton("删除", () => {
+      if (!canCurrentClientManageRoom()) {
+        showAppAlert("只有房主可以删除玩家。");
+        return;
+      }
       players = players.filter(item => item.id !== player.id);
       normalizeSetupPlayers();
       renderSetupPlayerInputs();
       updateSetupActionState();
       scheduleLobbySync();
-    }, false, "delete-player-button danger");
+    }, !canCurrentClientManageRoom(), "delete-player-button danger");
 
     playerDiv.append(nameInput, chipsInput);
     if (claimBtn) playerDiv.appendChild(claimBtn);
@@ -1392,6 +1481,10 @@ function renderSetupPlayerInputs() {
 }
 
 addPlayerBtn.addEventListener("click", () => {
+  if (!canCurrentClientManageRoom()) {
+    showAppAlert("只有房主可以添加玩家。");
+    return;
+  }
   if (players.length >= MAX_PLAYERS) {
     showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
     updateSetupActionState();
@@ -1414,6 +1507,10 @@ renderIdentityControls();
 // ----------------------
 startGameBtn.addEventListener("click", async () => {
   if (mutationInProgress) return;
+  if (!canCurrentClientManageRoom()) {
+    showAppAlert("只有房主可以开始牌局。");
+    return;
+  }
   setMutationInProgress(true);
 
   try {
@@ -1421,7 +1518,11 @@ startGameBtn.addEventListener("click", async () => {
     if (isRoomMode()) {
       if (roomId) {
         joinRoom(roomId);
-        await refreshFromRemote();
+        const remoteExists = await refreshFromRemote();
+        if (remoteExists && !canCurrentClientManageRoom()) {
+          showAppAlert("只有房主可以开始牌局。");
+          return;
+        }
         const remoteGameState = await getRemoteGameState();
         const remoteStatus = remoteGameState
           ? String(remoteGameState.handStatus || inferHandStatus(remoteGameState))
@@ -1478,6 +1579,7 @@ startGameBtn.addEventListener("click", async () => {
     selectedWinnersByPot = {};
     pendingDealPrompt = null;
     settlementPreview = null;
+    nextHandApprovals = {};
     pendingPots = [];
     awaitingShowdown = false;
     handId += 1;
@@ -1602,6 +1704,7 @@ function startRound() {
   selectedWinnersByPot = {};
   pendingDealPrompt = null;
   settlementPreview = null;
+  nextHandApprovals = {};
   hideShowdownPanel();
   hideDealPromptPanel();
   hideSettlementPreviewPanel();
@@ -1695,6 +1798,10 @@ async function playerAction(action, index, amount = 0) {
   }
 
   const player = players[index];
+  if (!canCurrentClientControlPlayer(player)) {
+    showAppAlert("你不能操作这个玩家。");
+    return;
+  }
   if (!canAct(player)) {
     showAppAlert("该玩家当前不能行动");
     return;
@@ -1822,7 +1929,12 @@ async function playerAction(action, index, amount = 0) {
   const saved = await updateFirebaseState({
     expectedHandId,
     allowedStatuses: ["playing"],
-    expectedStateVersion
+    expectedStateVersion,
+    remoteGuard: (currentRoom) => {
+      const remotePlayers = normalizeIncomingPlayers(currentRoom.players);
+      const remotePlayer = remotePlayers[index];
+      return Boolean(remotePlayer && canClientControlPlayerInRoom(clientId, remotePlayer, currentRoom));
+    }
   });
   setMutationInProgress(false);
   if (!saved) {
@@ -1912,6 +2024,10 @@ async function confirmDealPrompt() {
     showAppAlert("当前没有等待确认的发牌提示");
     return;
   }
+  if (!canCurrentClientConfirmDeal()) {
+    showAppAlert("只有本局 Dealer 可以确认发牌；未绑定 Dealer 由房主代管。");
+    return;
+  }
 
   setMutationInProgress(true);
   batchingStateUpdate = true;
@@ -1924,7 +2040,11 @@ async function confirmDealPrompt() {
   const saved = await updateFirebaseState({
     expectedHandId,
     allowedStatuses: ["waitingDeal"],
-    expectedStateVersion
+    expectedStateVersion,
+    remoteGuard: (currentRoom) => {
+      const remoteDealer = normalizeIncomingPlayers(currentRoom.players).find(player => player.dealer);
+      return canClientControlPlayerInRoom(clientId, remoteDealer, currentRoom);
+    }
   });
   setMutationInProgress(false);
   if (!saved) {
@@ -1947,6 +2067,7 @@ function awardRemainingPot(winner) {
   selectedWinnersByPot = {};
   pendingDealPrompt = null;
   settlementPreview = null;
+  nextHandApprovals = {};
   const bustedNames = markZeroChipPlayersBusted();
   gameOver = true;
   handStatus = "settled";
@@ -2049,6 +2170,7 @@ function beginShowdown() {
   selectedWinnersByPot = {};
   pendingDealPrompt = null;
   settlementPreview = null;
+  nextHandApprovals = {};
 
   pendingPots.forEach((sidePot, index) => {
     if (sidePot.contenders.length === 1) {
@@ -2158,6 +2280,7 @@ function createSettlementPreview(settlementPlan) {
     id: `settlement_${handId}_${Date.now()}`,
     total: settlementPlan.reduce((sum, item) => sum + item.sidePot.amount, 0),
     winnersByPot: Object.fromEntries(settlementPlan.map(item => [item.potIndex, item.winnerIds])),
+    approvals: {},
     pots: settlementPlan.map(item => ({
       index: item.potIndex,
       amount: item.sidePot.amount,
@@ -2283,6 +2406,96 @@ async function cancelSettlementPreview() {
 }
 
 async function confirmSettlementPreview() {
+  if (isRoomMode()) {
+    await approveSettlementPreview();
+    return;
+  }
+  await finalizeSettlementPreview();
+}
+
+async function approveSettlementPreview() {
+  const preview = settlementPreview;
+  if (isSharedPromptActionLocked() || handStatus !== "settlementPreview" || !preview) {
+    showAppAlert("当前没有可确认的结算预览");
+    return;
+  }
+
+  const requiredApprovers = getSettlementApproverIds();
+  const progress = getApprovalProgress(preview.approvals, requiredApprovers);
+  if (!requiredApprovers.includes(clientId)) {
+    showAppAlert("你不是本手需要确认的玩家。");
+    return;
+  }
+  if (progress.complete) {
+    await finalizeSettlementPreview();
+    return;
+  }
+  if (progress.approved[clientId]) {
+    showAppAlert("你已经确认过，正在等待其他玩家。");
+    return;
+  }
+
+  setMutationInProgress(true);
+  let completeAfterCommit = false;
+  try {
+    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      if (!currentRoom || !currentRoom.gameState || !Array.isArray(currentRoom.players)) return undefined;
+      const currentGameState = currentRoom.gameState;
+      const currentStatus = String(currentGameState.handStatus || inferHandStatus(currentGameState));
+      if (currentStatus !== "settlementPreview" || !currentGameState.settlementPreview) return undefined;
+
+      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
+      const remotePreview = normalizeSettlementPreview(currentGameState.settlementPreview);
+      if (!remotePreview) return undefined;
+      const remoteRequiredApprovers = getSettlementApproverIds(remotePlayers, currentRoom);
+      if (!remoteRequiredApprovers.includes(clientId)) return undefined;
+
+      remotePreview.approvals = {
+        ...normalizeApprovalMap(remotePreview.approvals),
+        [clientId]: true
+      };
+      const remoteProgress = getApprovalProgress(remotePreview.approvals, remoteRequiredApprovers);
+      completeAfterCommit = remoteProgress.complete;
+      const nextStateVersion = toNonNegativeNumber(currentGameState.stateVersion, 0) + 1;
+      const logs = Array.isArray(currentGameState.logs) ? currentGameState.logs.map(String) : [];
+      logs.push(`${getApprovalPlayerLabelForClient(clientId, remotePlayers, currentRoom)} 已确认结算（${remoteProgress.approvedCount}/${remoteProgress.requiredCount}）`);
+
+      return {
+        ...currentRoom,
+        members: touchMember(currentRoom.members || room.members, clientId),
+        gameState: {
+          ...currentGameState,
+          settlementPreview: remotePreview,
+          logs,
+          stateVersion: nextStateVersion,
+          updatedBy: clientId
+        }
+      };
+    }, { applyLocally: false });
+
+    if (!result.committed) {
+      const refreshed = await refreshFromRemote();
+      if (!refreshed) syncReady = false;
+      showAppAlert("结算确认没有成功，请等待同步后重试。");
+      return;
+    }
+
+    syncReady = true;
+    setSyncStatus("已同步", "ok");
+    await refreshFromRemote();
+    if (completeAfterCommit) {
+      setMutationInProgress(false);
+      await finalizeSettlementPreview();
+      return;
+    }
+  } catch (_) {
+    showAppAlert("结算确认同步失败，请稍后再试。");
+  } finally {
+    setMutationInProgress(false);
+  }
+}
+
+async function finalizeSettlementPreview() {
   const preview = settlementPreview;
   const expectedHandId = handId;
   const expectedStateVersion = stateVersion;
@@ -2290,6 +2503,14 @@ async function confirmSettlementPreview() {
   if (isSharedPromptActionLocked() || handStatus !== "settlementPreview" || !preview) {
     showAppAlert("当前没有可确认的结算预览");
     return;
+  }
+  if (isRoomMode()) {
+    const requiredApprovers = getSettlementApproverIds();
+    const progress = getApprovalProgress(preview.approvals, requiredApprovers);
+    if (!progress.complete) {
+      showAppAlert(getApprovalStatusText(preview.approvals, requiredApprovers));
+      return;
+    }
   }
 
   setMutationInProgress(true);
@@ -2306,6 +2527,7 @@ async function confirmSettlementPreview() {
   selectedWinnersByPot = {};
   pendingDealPrompt = null;
   settlementPreview = null;
+  nextHandApprovals = {};
   const bustedNames = markZeroChipPlayersBusted();
   gameOver = true;
   handStatus = "settled";
@@ -2322,7 +2544,14 @@ async function confirmSettlementPreview() {
   const saved = await updateFirebaseState({
     expectedHandId,
     allowedStatuses: ["settlementPreview"],
-    expectedStateVersion
+    expectedStateVersion,
+    remoteGuard: (currentRoom, currentGameState) => {
+      if (!isRoomMode()) return true;
+      const remotePlayers = normalizeIncomingPlayers(currentRoom.players);
+      const remotePreview = normalizeSettlementPreview(currentGameState.settlementPreview);
+      const remoteRequiredApprovers = getSettlementApproverIds(remotePlayers, currentRoom);
+      return getApprovalProgress(remotePreview?.approvals, remoteRequiredApprovers).complete;
+    }
   });
   setMutationInProgress(false);
   if (saved) {
@@ -2500,6 +2729,10 @@ function getTableDraftSummary() {
 }
 
 function openTableManager() {
+  if (!canCurrentClientManageRoom()) {
+    showAppAlert("只有房主可以管理牌桌。");
+    return;
+  }
   if (handStatus !== "settled") {
     showAppAlert("牌桌管理只在本手结算完成后开放，避免影响正在进行的牌局。");
     return;
@@ -2717,6 +2950,10 @@ function setDraftStatus(index, status) {
 }
 
 async function saveTableDraft({ startNextHand = false } = {}) {
+  if (!canCurrentClientManageRoom()) {
+    showAppAlert("只有房主可以保存牌桌管理设置。");
+    return;
+  }
   if (!tableDraft || handStatus !== "settled") {
     showAppAlert("当前不能保存牌桌管理设置");
     return;
@@ -2748,6 +2985,7 @@ async function saveTableDraft({ startNextHand = false } = {}) {
 
   players = nextPlayers;
   room.players = players;
+  nextHandApprovals = {};
   players.forEach(player => {
     player.position = getSeatStatusLabel(player.seatStatus);
   });
@@ -2758,7 +2996,8 @@ async function saveTableDraft({ startNextHand = false } = {}) {
   const saved = await updateFirebaseState({
     expectedHandId,
     allowedStatuses: ["settled"],
-    expectedStateVersion
+    expectedStateVersion,
+    remoteGuard: (currentRoom) => canClientManageRoomData(clientId, currentRoom)
   });
   setMutationInProgress(false);
 
@@ -2769,13 +3008,97 @@ async function saveTableDraft({ startNextHand = false } = {}) {
 
   closeTableManager();
   if (startNextHand) {
-    await resetHand(expectedHandId);
+    await approveNextHandStart(expectedHandId);
   }
 }
 
 // ----------------------
 // 下一局
 // ----------------------
+async function approveNextHandStart(expectedHandId = handId) {
+  if (isLocalMode()) {
+    await resetHand(expectedHandId);
+    return;
+  }
+  if (isInteractionLocked()) return;
+  if (!gameOver || handStatus !== "settled") {
+    showAppAlert("当前手牌还没有完成结算，不能确认下一局");
+    return;
+  }
+
+  const requiredApprovers = getNextHandApproverIds();
+  const progress = getApprovalProgress(nextHandApprovals, requiredApprovers);
+  if (!requiredApprovers.includes(clientId)) {
+    showAppAlert("你不是下一局需要确认的玩家。");
+    return;
+  }
+  if (progress.complete) {
+    await resetHand(expectedHandId);
+    return;
+  }
+  if (progress.approved[clientId]) {
+    showAppAlert("你已经确认过，正在等待其他玩家。");
+    return;
+  }
+
+  setMutationInProgress(true);
+  let completeAfterCommit = false;
+  try {
+    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      if (!currentRoom || !currentRoom.gameState || !Array.isArray(currentRoom.players)) return undefined;
+      const currentGameState = currentRoom.gameState;
+      const currentStatus = String(currentGameState.handStatus || inferHandStatus(currentGameState));
+      if (currentStatus !== "settled") return undefined;
+
+      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
+      const remoteRequiredApprovers = getNextHandApproverIds(remotePlayers, currentRoom);
+      if (remoteRequiredApprovers.length < 1 || !remoteRequiredApprovers.includes(clientId)) return undefined;
+
+      const approvals = {
+        ...normalizeApprovalMap(currentGameState.nextHandApprovals),
+        [clientId]: true
+      };
+      const remoteProgress = getApprovalProgress(approvals, remoteRequiredApprovers);
+      completeAfterCommit = remoteProgress.complete;
+      const nextStateVersion = toNonNegativeNumber(currentGameState.stateVersion, 0) + 1;
+      const logs = Array.isArray(currentGameState.logs) ? currentGameState.logs.map(String) : [];
+      logs.push(`${getApprovalPlayerLabelForClient(clientId, remotePlayers, currentRoom)} 已确认下一局（${remoteProgress.approvedCount}/${remoteProgress.requiredCount}）`);
+
+      return {
+        ...currentRoom,
+        members: touchMember(currentRoom.members || room.members, clientId),
+        gameState: {
+          ...currentGameState,
+          nextHandApprovals: approvals,
+          logs,
+          stateVersion: nextStateVersion,
+          updatedBy: clientId
+        }
+      };
+    }, { applyLocally: false });
+
+    if (!result.committed) {
+      const refreshed = await refreshFromRemote();
+      if (!refreshed) syncReady = false;
+      showAppAlert("下一局确认没有成功，请等待同步后重试。");
+      return;
+    }
+
+    syncReady = true;
+    setSyncStatus("已同步", "ok");
+    await refreshFromRemote();
+    if (completeAfterCommit) {
+      setMutationInProgress(false);
+      await resetHand(expectedHandId);
+      return;
+    }
+  } catch (_) {
+    showAppAlert("下一局确认同步失败，请稍后再试。");
+  } finally {
+    setMutationInProgress(false);
+  }
+}
+
 async function resetHand(expectedHandId = handId) {
   const expectedStateVersion = stateVersion;
   if (mutationInProgress) return;
@@ -2787,6 +3110,14 @@ async function resetHand(expectedHandId = handId) {
     showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局，请先打开牌桌管理补码或回桌。");
     renderNextHandButton();
     return;
+  }
+  if (isRoomMode()) {
+    const requiredApprovers = getNextHandApproverIds();
+    const progress = getApprovalProgress(nextHandApprovals, requiredApprovers);
+    if (!progress.complete) {
+      showAppAlert(getApprovalStatusText(nextHandApprovals, requiredApprovers));
+      return;
+    }
   }
 
   setMutationInProgress(true);
@@ -2808,6 +3139,7 @@ async function resetHand(expectedHandId = handId) {
   selectedWinnersByPot = {};
   pendingDealPrompt = null;
   settlementPreview = null;
+  nextHandApprovals = {};
   awaitingShowdown = false;
   gameOver = false;
   handId = expectedHandId + 1;
@@ -2839,7 +3171,14 @@ async function resetHand(expectedHandId = handId) {
   const saved = await updateFirebaseState({
     expectedHandId,
     allowedStatuses: ["settled"],
-    expectedStateVersion
+    expectedStateVersion,
+    remoteGuard: (currentRoom, currentGameState) => {
+      if (!isRoomMode()) return true;
+      const remotePlayers = normalizeIncomingPlayers(currentRoom.players);
+      const remoteRequiredApprovers = getNextHandApproverIds(remotePlayers, currentRoom);
+      const remoteApprovals = normalizeApprovalMap(currentGameState.nextHandApprovals);
+      return getApprovalProgress(remoteApprovals, remoteRequiredApprovers).complete;
+    }
   });
   setMutationInProgress(false);
   if (!saved) {
@@ -3040,15 +3379,17 @@ function shouldShowCurrentActionPanel() {
 function createActionControls(player, index, actionDisabled, className = "") {
   const actions = document.createElement("div");
   actions.className = className ? `actions ${className}` : "actions";
+  const permissionDisabled = !canCurrentClientControlPlayer(player);
+  const disabled = actionDisabled || permissionDisabled;
 
-  actions.appendChild(createButton("Check", () => playerAction("check", index), actionDisabled || player.bet < currentBet, "action-btn action-check"));
-  actions.appendChild(createButton(getCallButtonLabel(player), () => playerAction("call", index), actionDisabled || player.bet >= currentBet, "action-btn action-call"));
+  actions.appendChild(createButton("Check", () => playerAction("check", index), disabled || player.bet < currentBet, "action-btn action-check"));
+  actions.appendChild(createButton(getCallButtonLabel(player), () => playerAction("call", index), disabled || player.bet >= currentBet, "action-btn action-call"));
 
-  const raiseWidget = createRaisePanel(player, index, actionDisabled);
+  const raiseWidget = createRaisePanel(player, index, disabled);
   actions.appendChild(createButton("Raise", () => {
     raiseWidget.open();
-  }, actionDisabled || !canPlayerRaise(player), "action-btn action-raise"));
-  actions.appendChild(createButton("Fold", () => playerAction("fold", index), actionDisabled, "action-btn action-fold danger"));
+  }, disabled || !canPlayerRaise(player), "action-btn action-raise"));
+  actions.appendChild(createButton("Fold", () => playerAction("fold", index), disabled, "action-btn action-fold danger"));
   return actions;
 }
 
@@ -3155,10 +3496,16 @@ function renderShowdownDialogBody(body, closeDialog) {
 
 function openSettlementPreviewDialog() {
   if (handStatus !== "settlementPreview" || !settlementPreview) return;
+  const requiredApprovers = getSettlementApproverIds();
+  const progress = getApprovalProgress(settlementPreview.approvals, requiredApprovers);
+  const canApprove = !isRoomMode() || requiredApprovers.includes(clientId);
+  const alreadyApproved = Boolean(progress.approved[clientId]);
 
   openTableActionDialog({
     title: "确认结算",
-    description: "请检查本手筹码分配。",
+    description: isRoomMode()
+      ? getApprovalStatusText(settlementPreview.approvals, requiredApprovers)
+      : "请检查本手筹码分配。",
     className: "settlement-action-dialog",
     buildContent(body, closeDialog) {
       const list = document.createElement("div");
@@ -3193,10 +3540,11 @@ function openSettlementPreviewDialog() {
         closeDialog();
         cancelSettlementPreview();
       }, isSharedPromptActionLocked(), "prompt-secondary"));
-      actions.appendChild(createButton("确认结算", () => {
+      const confirmLabel = isRoomMode() && alreadyApproved && !progress.complete ? "已确认" : "确认结算";
+      actions.appendChild(createButton(confirmLabel, () => {
         closeDialog();
         confirmSettlementPreview();
-      }, isSharedPromptActionLocked(), "prompt-primary"));
+      }, isSharedPromptActionLocked() || !canApprove || (alreadyApproved && !progress.complete), "prompt-primary"));
       body.appendChild(actions);
     }
   });
@@ -3221,9 +3569,10 @@ function createTableCenterOperations() {
 
   if (handStatus === "waitingDeal" && pendingDealPrompt) {
     operations.appendChild(createCenterOperationHeader(pendingDealPrompt.title, [
-      pendingDealPrompt.cardText
+      pendingDealPrompt.cardText,
+      canCurrentClientConfirmDeal() ? "你可确认发牌" : "等待 Dealer 确认"
     ]));
-    operations.appendChild(createButton("已发牌，继续", confirmDealPrompt, isSharedPromptActionLocked(), "prompt-primary"));
+    operations.appendChild(createButton("已发牌，继续", confirmDealPrompt, isSharedPromptActionLocked() || !canCurrentClientConfirmDeal(), "prompt-primary"));
     return operations;
   }
 
@@ -3236,8 +3585,10 @@ function createTableCenterOperations() {
   }
 
   if (handStatus === "settlementPreview") {
+    const requiredApprovers = getSettlementApproverIds();
     operations.appendChild(createCenterOperationHeader("等待结算确认", [
-      `总额 ${settlementPreview?.total || pot}`
+      `总额 ${settlementPreview?.total || pot}`,
+      getApprovalStatusText(settlementPreview?.approvals, requiredApprovers)
     ]));
     operations.appendChild(createButton("查看并确认", openSettlementPreviewDialog, isSharedPromptActionLocked(), "prompt-primary"));
     return operations;
@@ -3246,15 +3597,21 @@ function createTableCenterOperations() {
   if (handStatus === "settled") {
     const eligibleCount = getEligiblePlayerIndices().length;
     const buttonHandId = handId;
+    const nextHandApprovers = getNextHandApproverIds();
+    const nextHandProgress = getApprovalProgress(nextHandApprovals, nextHandApprovers);
+    const canApproveNextHand = isLocalMode() || nextHandApprovers.includes(clientId);
+    const alreadyApprovedNextHand = Boolean(nextHandProgress.approved[clientId]);
     operations.appendChild(createCenterOperationHeader("本手已结算", [
-      `下一局可参与 ${eligibleCount} 人`
+      `下一局可参与 ${eligibleCount} 人`,
+      isRoomMode() ? getApprovalStatusText(nextHandApprovals, nextHandApprovers) : "本地可直接开始"
     ]));
     const group = document.createElement("div");
     group.className = "table-center-action-buttons table-center-next-buttons";
-    group.appendChild(createButton("牌桌管理", openTableManager, isInteractionLocked(), "table-manager-button"));
-    group.appendChild(createButton("开始下一局", () => {
-      resetHand(buttonHandId);
-    }, isInteractionLocked() || eligibleCount < 2, "next-hand-button"));
+    group.appendChild(createButton("牌桌管理", openTableManager, isInteractionLocked() || !canCurrentClientManageRoom(), "table-manager-button"));
+    const nextHandLabel = isRoomMode() && alreadyApprovedNextHand && !nextHandProgress.complete ? "已确认" : "确认下一局";
+    group.appendChild(createButton(isLocalMode() ? "开始下一局" : nextHandLabel, () => {
+      approveNextHandStart(buttonHandId);
+    }, isInteractionLocked() || eligibleCount < 2 || !canApproveNextHand || (alreadyApprovedNextHand && !nextHandProgress.complete), "next-hand-button"));
     operations.appendChild(group);
     return operations;
   }
@@ -3418,6 +3775,67 @@ function getCompactPlayerStatus(player) {
   return "等待";
 }
 
+function normalizeApprovalMap(value = {}) {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([approverId, approved]) => normalizePlayerOwnerId(approverId) && Boolean(approved))
+    .map(([approverId]) => [normalizePlayerOwnerId(approverId), true]));
+}
+
+function getApprovalPlayerLabelForClient(approverId, list = players, roomData = room) {
+  const controlledPlayers = list
+    .map((player, index) => ({ player, index }))
+    .filter(({ player }) => getPlayerControllerId(player, roomData) === approverId);
+  if (controlledPlayers.length > 0) {
+    return controlledPlayers
+      .map(({ player, index }) => getPlayerCompactIdentityLabel(player, index, list))
+      .join("、");
+  }
+  if (approverId === getHostClientId(roomData)) return "房主";
+  if (approverId === clientId) return "我";
+  return `设备 ${getClientShortId(approverId)}`;
+}
+
+function getUniqueApproverIdsForPlayers(list, roomData = room) {
+  return [...new Set(list.map(player => getPlayerControllerId(player, roomData)).filter(Boolean))];
+}
+
+function getSettlementApprovalPlayers(list = players) {
+  return list.filter(player => {
+    return player.seatStatus === "seated" || player.totalBet > 0 || player.folded || player.allIn;
+  });
+}
+
+function getSettlementApproverIds(list = players, roomData = room) {
+  return getUniqueApproverIdsForPlayers(getSettlementApprovalPlayers(list), roomData);
+}
+
+function getNextHandApproverIds(list = players, roomData = room) {
+  return getUniqueApproverIdsForPlayers(list.filter(isEligibleForNextHand), roomData);
+}
+
+function getApprovalProgress(approvals, requiredIds) {
+  const normalizedApprovals = normalizeApprovalMap(approvals);
+  const approvedCount = requiredIds.filter(approverId => normalizedApprovals[approverId]).length;
+  return {
+    approvedCount,
+    requiredCount: requiredIds.length,
+    complete: requiredIds.length > 0 && approvedCount >= requiredIds.length,
+    approved: normalizedApprovals
+  };
+}
+
+function getApprovalStatusText(approvals, requiredIds, list = players) {
+  const progress = getApprovalProgress(approvals, requiredIds);
+  if (requiredIds.length === 0) return "无需确认";
+  const pending = requiredIds
+    .filter(approverId => !progress.approved[approverId])
+    .map(approverId => getApprovalPlayerLabelForClient(approverId, list));
+  return pending.length > 0
+    ? `已确认 ${progress.approvedCount}/${progress.requiredCount} · 等待 ${pending.join("、")}`
+    : `已确认 ${progress.approvedCount}/${progress.requiredCount}`;
+}
+
 function closeSeatDetailPopovers() {
   document.querySelectorAll(".seat-detail-popover").forEach(popover => popover.remove());
   document.querySelectorAll(".player-box.is-detail-open").forEach(box => {
@@ -3457,7 +3875,7 @@ function createSeatDetailPopover(player, index) {
     const claimButton = createButton(getSetupClaimLabel(player), () => {
       togglePlayerClaim(player.id);
       closeSeatDetailPopovers();
-    }, isClaimedByOtherDevice(player), "seat-claim-button");
+    }, !canCurrentClientModifyClaims() || isClaimedByOtherDevice(player), "seat-claim-button");
     if (isCurrentDevicePlayer(player)) claimButton.classList.add("claimed");
     popover.appendChild(claimButton);
   }
