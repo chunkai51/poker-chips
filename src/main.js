@@ -553,8 +553,10 @@ function renderTableViewToolbar() {
 
   const controls = document.createElement("div");
   controls.className = "table-view-controls";
+  const hasClaimedPlayer = Boolean(currentPlayer);
+  const resetDisabled = !hasClaimedPlayer || normalizeRotationOffset(players.length) === 0;
   controls.appendChild(createButton("↺", () => rotateTableView(-1), players.length < 2, "table-view-button"));
-  controls.appendChild(createButton("以我为底", resetTableViewRotation, tableViewRotationOffset === 0, "table-view-button"));
+  controls.appendChild(createButton("以我为底", resetTableViewRotation, resetDisabled, "table-view-button"));
   controls.appendChild(createButton("↻", () => rotateTableView(1), players.length < 2, "table-view-button"));
   tableViewToolbar.appendChild(controls);
 }
@@ -3395,22 +3397,15 @@ function getVisualSeatCoordinates(playerIndex, count) {
   if (count <= 1) return layout[0];
 
   const currentDevicePlayerIndex = getCurrentDevicePlayerIndex();
+  const manualOffset = normalizeRotationOffset(count);
   if (isRoomMode() && currentDevicePlayerIndex >= 0) {
     const anchorIndex = getSeatAnchorIndex(layout);
-    if (playerIndex === currentDevicePlayerIndex) return layout[anchorIndex];
-
-    const otherSeatIndices = [];
-    for (let offset = 1; offset < count; offset += 1) {
-      otherSeatIndices.push((anchorIndex + offset) % count);
-    }
-
-    const rotation = normalizeRotationOffset(otherSeatIndices.length);
-    const relativePlayerOffset = (playerIndex - currentDevicePlayerIndex + count) % count;
-    const otherIndex = (relativePlayerOffset - 1 + rotation + otherSeatIndices.length) % otherSeatIndices.length;
-    return layout[otherSeatIndices[otherIndex]];
+    const baseOffset = anchorIndex - currentDevicePlayerIndex;
+    const visualIndex = (playerIndex + baseOffset + manualOffset + count) % count;
+    return layout[visualIndex];
   }
 
-  const visualIndex = normalizeRotationOffset(count) + playerIndex;
+  const visualIndex = manualOffset + playerIndex;
   return layout[visualIndex % count];
 }
 

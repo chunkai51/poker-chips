@@ -348,7 +348,7 @@ Implemented:
 - Multiplayer player claiming through `ownerClientId`
 - Current-device identity display
 - Local-only table view rotation in room mode
-- Claimed-player perspective: the current device's player is fixed to the bottom-center table seat while other seats are remapped around it
+- Claimed-player perspective: rotation offset `0` places the current device's player at the bottom-center table seat; manual rotation rotates the whole table locally, and “以我为底” resets the offset
 - Player creation/removal before game start
 - Maximum 10 players in setup and post-settlement table management
 - Initial chips and blind configuration
@@ -429,7 +429,7 @@ Browser validation checklist:
 - Starting a game in room mode creates or joins a room.
 - Player cards fit without horizontal overflow at about 390px width.
 - Active player is visually obvious.
-- In room mode, a claimed player appears at the bottom-center seat on that device.
+- In room mode, a claimed player appears at the bottom-center seat on that device when the view offset is reset.
 - Room-mode rotation buttons change only the current browser's layout and do not change another browser's layout.
 - Desktop and mobile show action buttons in the standalone current-action panel above the oval table.
 - Seat labels stay evenly distributed around the oval for 2-10 players.
