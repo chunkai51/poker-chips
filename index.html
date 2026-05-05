@@ -28,6 +28,19 @@
     <section id="setup" class="setup-panel" aria-labelledby="setup-title">
       <p class="eyebrow">Texas Hold'em Table</p>
       <h1 id="setup-title">德州扑克筹码管理工具</h1>
+      <div id="mode-panel" class="mode-panel" aria-label="游戏模式和房间身份">
+        <div class="mode-switch" role="group" aria-label="选择游戏模式">
+          <button id="local-mode" class="mode-option" type="button">本地模式</button>
+          <button id="room-mode" class="mode-option" type="button">多人房间</button>
+        </div>
+        <div class="mode-body">
+          <div id="device-identity" class="device-identity" aria-live="polite"></div>
+          <div id="room-entry" class="room-entry">
+            <button id="create-room" class="button button-secondary" type="button">创建房间</button>
+            <button id="join-room" class="button button-ghost" type="button">加入房间</button>
+          </div>
+        </div>
+      </div>
       <div id="player-names" class="player-inputs">
         <label for="initial-chips">初始筹码</label>
         <input type="number" inputmode="numeric" pattern="[0-9]*" id="initial-chips" min="100" value="1000" />
@@ -49,6 +62,7 @@
         <p id="current-round" class="round-pill">当前轮次: 翻牌前</p>
         <p id="pot-amount" class="pot-display">奖池: 0</p>
       </div>
+      <div id="table-view-toolbar" class="table-view-toolbar" hidden></div>
       <div id="deal-prompt-panel" class="deal-prompt-panel table-prompt-panel" hidden></div>
       <div id="hand-actions" class="hand-actions" hidden></div>
       <div id="showdown-panel" class="showdown-panel" hidden></div>

@@ -54,8 +54,15 @@ const initialChipsInput = document.getElementById("initial-chips");
 const bigBlindInput = document.getElementById("big-blind");
 const roomIdInput = document.getElementById("room-id");
 const manualSyncBtn = document.getElementById("manual-sync");
+const localModeBtn = document.getElementById("local-mode");
+const roomModeBtn = document.getElementById("room-mode");
+const createRoomBtn = document.getElementById("create-room");
+const joinRoomBtn = document.getElementById("join-room");
+const roomEntry = document.getElementById("room-entry");
+const deviceIdentityEl = document.getElementById("device-identity");
 const gameLog = document.getElementById("game-log");
 const handActions = document.getElementById("hand-actions");
+const tableViewToolbar = document.getElementById("table-view-toolbar");
 const logSummary = document.getElementById("log-summary");
 const showdownPanel = document.getElementById("showdown-panel");
 const dealPromptPanel = document.getElementById("deal-prompt-panel");
@@ -91,8 +98,11 @@ let mutationInProgress = false;
 let syncReady = false;
 let syncWriteInProgress = false;
 let batchingStateUpdate = false;
+let lobbySyncTimer = null;
+let tableViewRotationOffset = 0;
 
 const MAX_PLAYERS = 10;
+const TABLE_VIEW_ROTATION_KEY_PREFIX = "pokerChipsTableViewRotation:";
 const clientId = getClientId();
 
 // ----------------------
@@ -150,12 +160,58 @@ function getPlayerName(player) {
   return player && player.name ? player.name : "未命名玩家";
 }
 
+function getClientShortId(value = clientId) {
+  return String(value || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 6) || "local";
+}
+
 function getPlayerById(id) {
   return players.find(player => player.id === id);
 }
 
 function getActivePlayers() {
   return players.filter(player => !player.folded);
+}
+
+function isLocalMode() {
+  return room.mode === ROOM_MODES.local;
+}
+
+function isRoomMode() {
+  return room.mode === ROOM_MODES.room;
+}
+
+function needsRemoteSync() {
+  return isRoomMode() && Boolean(room.roomId);
+}
+
+function getCurrentDevicePlayerIndex(list = players) {
+  return list.findIndex(player => normalizePlayerOwnerId(player.ownerClientId) === clientId);
+}
+
+function getCurrentDevicePlayer(list = players) {
+  const index = getCurrentDevicePlayerIndex(list);
+  return index >= 0 ? list[index] : null;
+}
+
+function isCurrentDevicePlayer(player) {
+  return normalizePlayerOwnerId(player?.ownerClientId) === clientId;
+}
+
+function hasDuplicatePlayerName(player, list = players) {
+  const name = getPlayerName(player).trim().toLocaleLowerCase();
+  return list.filter(item => getPlayerName(item).trim().toLocaleLowerCase() === name).length > 1;
+}
+
+function getPlayerIdentityLabel(player, index = players.indexOf(player), list = players) {
+  const name = getPlayerName(player);
+  const seatNumber = index >= 0 ? index + 1 : "?";
+  return hasDuplicatePlayerName(player, list) ? `${name} · 座位 ${seatNumber}` : name;
+}
+
+function getPlayerCompactIdentityLabel(player, index = players.indexOf(player), list = players) {
+  const name = getPlayerName(player);
+  const seatNumber = index >= 0 ? index + 1 : "?";
+  return hasDuplicatePlayerName(player, list) ? `${name} · S${seatNumber}` : name;
 }
 
 function getEligiblePlayerIndices(list = players) {
@@ -353,16 +409,168 @@ function setSyncStatus(message, status = "") {
   if (status) syncStatusEl.classList.add(status);
 }
 
+function getTableViewRotationStorageKey() {
+  return `${TABLE_VIEW_ROTATION_KEY_PREFIX}${room.roomId || "local"}`;
+}
+
+function loadTableViewRotation() {
+  try {
+    tableViewRotationOffset = parseInt(localStorage.getItem(getTableViewRotationStorageKey()) || "0", 10) || 0;
+  } catch (_) {
+    tableViewRotationOffset = 0;
+  }
+}
+
+function saveTableViewRotation() {
+  try {
+    localStorage.setItem(getTableViewRotationStorageKey(), String(tableViewRotationOffset));
+  } catch (_) {
+    // Local view rotation is optional; storage failures should not affect the hand.
+  }
+}
+
+function rotateTableView(delta) {
+  tableViewRotationOffset += delta;
+  saveTableViewRotation();
+  updatePlayerBoxes();
+  renderTableViewToolbar();
+}
+
+function resetTableViewRotation() {
+  tableViewRotationOffset = 0;
+  saveTableViewRotation();
+  updatePlayerBoxes();
+  renderTableViewToolbar();
+}
+
+function stopRoomListener() {
+  if (unsubscribeRoom) {
+    unsubscribeRoom();
+    unsubscribeRoom = null;
+  }
+  listenedRoomId = "";
+}
+
+function enterLocalMode() {
+  if (gameStarted && !isLocalMode()) {
+    showAppAlert("牌局进行中不能切换到本地模式。");
+    return;
+  }
+  stopRoomListener();
+  room.roomId = "";
+  room.mode = ROOM_MODES.local;
+  room.operator = clientId;
+  room.hostClientId = clientId;
+  room.members = createMembersMap(clientId);
+  roomIdInput.value = "";
+  syncReady = true;
+  loadTableViewRotation();
+  setSyncStatus("本地模式");
+  renderIdentityControls();
+  renderSetupPlayerInputs();
+  updatePlayerBoxes();
+}
+
+function enterRoomMode() {
+  if (gameStarted && !isRoomMode()) {
+    showAppAlert("牌局进行中不能切换房间模式。");
+    return;
+  }
+  room.mode = ROOM_MODES.room;
+  syncReady = Boolean(room.roomId && syncReady);
+  loadTableViewRotation();
+  setSyncStatus(room.roomId ? "等待同步" : "多人房间未连接");
+  renderIdentityControls();
+  renderSetupPlayerInputs();
+  updatePlayerBoxes();
+}
+
+function getIdentitySummaryText() {
+  const currentPlayer = getCurrentDevicePlayer();
+  const currentIndex = currentPlayer ? players.indexOf(currentPlayer) : -1;
+  if (currentPlayer) {
+    return `当前设备：${getPlayerIdentityLabel(currentPlayer, currentIndex)} · ${isRoomMode() ? `ID ${getClientShortId()}` : "本地控制"}`;
+  }
+  return isRoomMode()
+    ? `当前设备未认领玩家 · ID ${getClientShortId()}`
+    : "本地模式：这台设备可以管理整桌";
+}
+
+function renderIdentityControls() {
+  if (localModeBtn) {
+    localModeBtn.classList.toggle("active", isLocalMode());
+    localModeBtn.disabled = gameStarted && !isLocalMode();
+  }
+  if (roomModeBtn) {
+    roomModeBtn.classList.toggle("active", isRoomMode());
+    roomModeBtn.disabled = gameStarted && !isRoomMode();
+  }
+  if (roomEntry) roomEntry.hidden = !isRoomMode();
+  if (createRoomBtn) createRoomBtn.disabled = gameStarted || syncWriteInProgress;
+  if (joinRoomBtn) joinRoomBtn.disabled = gameStarted || syncWriteInProgress;
+  if (!deviceIdentityEl) return;
+
+  deviceIdentityEl.replaceChildren();
+  const title = document.createElement("strong");
+  title.textContent = isRoomMode() ? "多人房间" : "单设备本地";
+  const detail = document.createElement("span");
+  const roomText = isRoomMode()
+    ? room.roomId
+      ? `房间 ${room.roomId} · ${Object.keys(room.members || {}).length || 1} 台设备`
+      : "先创建或加入房间"
+    : "不写入远程房间";
+  detail.textContent = `${getIdentitySummaryText()} · ${roomText}`;
+  deviceIdentityEl.append(title, detail);
+}
+
+function renderTableViewToolbar() {
+  if (!tableViewToolbar) return;
+  tableViewToolbar.replaceChildren();
+  if (!gameStarted) {
+    tableViewToolbar.hidden = true;
+    return;
+  }
+
+  tableViewToolbar.hidden = false;
+  const summary = document.createElement("div");
+  summary.className = "table-view-summary";
+  const currentPlayer = getCurrentDevicePlayer();
+  const currentIndex = currentPlayer ? players.indexOf(currentPlayer) : -1;
+  const title = document.createElement("strong");
+  title.textContent = currentPlayer
+    ? `我的视角：${getPlayerIdentityLabel(currentPlayer, currentIndex)}`
+    : isRoomMode()
+      ? "旁观视角"
+      : "本地整桌视角";
+  const detail = document.createElement("span");
+  detail.textContent = isRoomMode()
+    ? "视角旋转只保存在这台设备"
+    : "本地模式不绑定玩家身份";
+  summary.append(title, detail);
+  tableViewToolbar.appendChild(summary);
+
+  if (!isRoomMode()) return;
+
+  const controls = document.createElement("div");
+  controls.className = "table-view-controls";
+  controls.appendChild(createButton("↺", () => rotateTableView(-1), players.length < 2, "table-view-button"));
+  controls.appendChild(createButton("以我为底", resetTableViewRotation, tableViewRotationOffset === 0, "table-view-button"));
+  controls.appendChild(createButton("↻", () => rotateTableView(1), players.length < 2, "table-view-button"));
+  tableViewToolbar.appendChild(controls);
+}
+
 function isInteractionLocked() {
-  return mutationInProgress || syncWriteInProgress || !syncReady;
+  return mutationInProgress || syncWriteInProgress || (needsRemoteSync() && !syncReady);
 }
 
 function isSharedPromptActionLocked() {
-  return mutationInProgress || syncWriteInProgress || !syncReady;
+  return mutationInProgress || syncWriteInProgress || (needsRemoteSync() && !syncReady);
 }
 
 function refreshInteractiveControls() {
+  renderIdentityControls();
   updatePlayerBoxes();
+  renderTableViewToolbar();
   renderDealPromptPanel();
   renderSettlementPreviewPanel();
   if (tableManagerOpen) renderTableManager();
@@ -720,9 +928,11 @@ function applyRoomData(data) {
     : players;
   room.players = players;
 
+  renderIdentityControls();
   renderGameLog(room.gameState.logs);
   updateGameInfo();
   updatePlayerBoxes();
+  renderTableViewToolbar();
   renderDealPromptPanel();
   renderSettlementPreviewPanel();
 
@@ -753,6 +963,7 @@ function applyRoomData(data) {
   } else if (!gameStarted) {
     setupContainer.style.display = "block";
     gameContainer.style.display = "none";
+    renderSetupPlayerInputs();
   }
 }
 
@@ -793,10 +1004,13 @@ function createRoom() {
   room.mode = ROOM_MODES.room;
   room.operator = clientId;
   room.hostClientId = clientId;
-  room.members = createMembersMap(clientId, room.members);
+  room.members = createMembersMap(clientId);
+  syncReady = true;
+  loadTableViewRotation();
   handId = 0;
   handStatus = "setup";
   listenFirebaseUpdates();
+  renderIdentityControls();
 }
 
 function generateRoomId() {
@@ -828,10 +1042,13 @@ function joinRoom(roomId) {
     room.operator = clientId;
     room.hostClientId = clientId;
     room.members = createMembersMap(clientId);
+    syncReady = false;
   }
   room.members = touchMember(room.members, clientId);
   roomIdInput.value = normalizedRoomId;
+  loadTableViewRotation();
   listenFirebaseUpdates();
+  renderIdentityControls();
 }
 
 function syncRoomFromInput() {
@@ -840,10 +1057,46 @@ function syncRoomFromInput() {
   joinRoom(id);
 }
 
-roomIdInput.addEventListener("blur", syncRoomFromInput);
+roomIdInput.addEventListener("blur", () => {
+  if (roomIdInput.value.trim()) {
+    room.mode = ROOM_MODES.room;
+    syncRoomFromInput();
+  }
+});
 
 if (manualSyncBtn) {
   manualSyncBtn.addEventListener("click", () => {
+    const id = normalizeRoomId(roomIdInput.value);
+    if (!id) {
+      showAppAlert("请输入房间ID");
+      return;
+    }
+    room.mode = ROOM_MODES.room;
+    joinRoom(id);
+  });
+}
+
+if (localModeBtn) {
+  localModeBtn.addEventListener("click", enterLocalMode);
+}
+
+if (roomModeBtn) {
+  roomModeBtn.addEventListener("click", enterRoomMode);
+}
+
+if (createRoomBtn) {
+  createRoomBtn.addEventListener("click", async () => {
+    if (gameStarted) return;
+    room.roomId = "";
+    createRoom();
+    roomIdInput.value = room.roomId;
+    setSyncStatus("房间已创建", "ok");
+    await syncLobbyState();
+  });
+}
+
+if (joinRoomBtn) {
+  joinRoomBtn.addEventListener("click", () => {
     const id = normalizeRoomId(roomIdInput.value);
     if (!id) {
       showAppAlert("请输入房间ID");
@@ -856,36 +1109,33 @@ if (manualSyncBtn) {
 // ----------------------
 // 添加玩家逻辑
 // ----------------------
-function updateSetupActionState() {
-  startGameBtn.disabled = players.length < 2;
-  addPlayerBtn.disabled = players.length >= MAX_PLAYERS;
-  addPlayerBtn.textContent = players.length >= MAX_PLAYERS ? `最多 ${MAX_PLAYERS} 人` : "添加玩家";
+function createPlayerId() {
+  if (crypto.randomUUID) return `player_${crypto.randomUUID().slice(0, 8)}`;
+  return `player_${Date.now().toString(36)}_${Math.floor(Math.random() * 100000).toString(36)}`;
 }
 
-addPlayerBtn.addEventListener("click", () => {
-  if (players.length >= MAX_PLAYERS) {
-    showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
-    updateSetupActionState();
-    return;
-  }
+function normalizeSetupPlayers() {
+  players = players.map((player, index) => ({
+    id: String(player.id || createPlayerId()),
+    name: String(player.name || "").trim(),
+    seatIndex: index,
+    seatStatus: normalizeSeatStatus(player.seatStatus || "seated", toNonNegativeNumber(player.chips, 0), false),
+    chips: toPositiveInteger(player.chips, toPositiveInteger(initialChipsInput.value, 1000)),
+    folded: false,
+    dealer: Boolean(player.dealer),
+    ownerClientId: normalizePlayerOwnerId(player.ownerClientId),
+    bet: 0,
+    totalBet: 0,
+    allIn: false,
+    acted: false,
+    position: ""
+  }));
+  room.players = players;
+}
 
-  const playerDiv = document.createElement("div");
-  playerDiv.classList.add("player-div");
-
-  const nameInput = document.createElement("input");
-  nameInput.type = "text";
-  nameInput.placeholder = `输入玩家 ${players.length + 1} 昵称`;
-  nameInput.classList.add("player-name-input");
-
-  const chipsInput = document.createElement("input");
-  chipsInput.type = "text";
-  chipsInput.inputMode = "numeric";
-  chipsInput.placeholder = "初始筹码";
-  chipsInput.value = initialChipsInput.value;
-  chipsInput.classList.add("player-chips-input");
-
-  const player = {
-    id: "player" + players.length,
+function createSetupPlayer(overrides = {}) {
+  return {
+    id: createPlayerId(),
     name: "",
     seatIndex: players.length,
     seatStatus: "seated",
@@ -897,24 +1147,265 @@ addPlayerBtn.addEventListener("click", () => {
     totalBet: 0,
     allIn: false,
     acted: false,
-    position: ""
+    position: "",
+    ...overrides
+  };
+}
+
+function isClaimedByOtherDevice(player) {
+  const ownerClientId = normalizePlayerOwnerId(player?.ownerClientId);
+  return Boolean(ownerClientId && ownerClientId !== clientId);
+}
+
+function getSetupClaimLabel(player) {
+  if (!isRoomMode()) return "本地";
+  if (isCurrentDevicePlayer(player)) return "我的座位";
+  if (isClaimedByOtherDevice(player)) return "已认领";
+  return "认领";
+}
+
+function applyLocalPlayerClaim(playerId, shouldClaim) {
+  players.forEach(player => {
+    if (normalizePlayerOwnerId(player.ownerClientId) === clientId) {
+      player.ownerClientId = "";
+    }
+  });
+  const player = players.find(item => item.id === playerId);
+  if (!player) return false;
+  if (shouldClaim) player.ownerClientId = clientId;
+  room.players = players;
+  return true;
+}
+
+async function togglePlayerClaim(playerId) {
+  if (!isRoomMode()) return;
+  const player = players.find(item => item.id === playerId);
+  if (!player) return;
+  if (isClaimedByOtherDevice(player)) {
+    showAppAlert("这个玩家已经被其他设备认领。");
+    return;
+  }
+
+  const shouldClaim = !isCurrentDevicePlayer(player);
+  if (!room.roomId) {
+    applyLocalPlayerClaim(playerId, shouldClaim);
+    renderSetupPlayerInputs();
+    updatePlayerBoxes();
+    renderTableViewToolbar();
+    return;
+  }
+
+  setMutationInProgress(true);
+  try {
+    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
+      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
+      const target = remotePlayers.find(item => item.id === playerId);
+      if (!target) return undefined;
+
+      const targetOwnerId = normalizePlayerOwnerId(target.ownerClientId);
+      if (shouldClaim && targetOwnerId && targetOwnerId !== clientId) return undefined;
+
+      remotePlayers.forEach(item => {
+        if (normalizePlayerOwnerId(item.ownerClientId) === clientId) {
+          item.ownerClientId = "";
+        }
+      });
+      target.ownerClientId = shouldClaim ? clientId : "";
+
+      return {
+        ...currentRoom,
+        mode: normalizeRoomMode(currentRoom.mode, room.roomId),
+        hostClientId: getRoomHostId(currentRoom, room.hostClientId || clientId),
+        members: touchMember(currentRoom.members || room.members, clientId),
+        players: remotePlayers
+      };
+    }, { applyLocally: false });
+
+    if (!result.committed) {
+      showAppAlert("认领没有成功，可能已经被其他设备抢先认领。");
+      const refreshed = await refreshFromRemote();
+      if (!refreshed) syncReady = false;
+      return;
+    }
+
+    applyLocalPlayerClaim(playerId, shouldClaim);
+    setSyncStatus("已同步", "ok");
+  } catch (_) {
+    showAppAlert("认领同步失败，请稍后再试。");
+  } finally {
+    setMutationInProgress(false);
+    renderSetupPlayerInputs();
+    updatePlayerBoxes();
+    renderTableViewToolbar();
+  }
+}
+
+function scheduleLobbySync() {
+  if (!isRoomMode() || !room.roomId || gameStarted || handStatus !== "setup") return;
+  clearTimeout(lobbySyncTimer);
+  lobbySyncTimer = setTimeout(() => {
+    syncLobbyState();
+  }, 320);
+}
+
+async function syncLobbyState() {
+  if (!isRoomMode() || !room.roomId || gameStarted || handStatus !== "setup") return true;
+  clearTimeout(lobbySyncTimer);
+  normalizeSetupPlayers();
+  const nextStateVersion = stateVersion + 1;
+  const nextGameState = {
+    currentRound: 0,
+    pot: 0,
+    currentBet: 0,
+    lastRaiseSize: bigBlind,
+    currentPlayerIndex: -1,
+    logs: room.gameState.logs,
+    inProgress: false,
+    gameOver: false,
+    awaitingShowdown: false,
+    pendingPots: [],
+    selectedWinnersByPot: {},
+    pendingDealPrompt: null,
+    settlementPreview: null,
+    handId,
+    handStatus: "setup",
+    stateVersion: nextStateVersion,
+    updatedBy: clientId
   };
 
-  const delBtn = createButton("删除", () => {
-    playerDiv.remove();
-    players = players.filter(item => item !== player);
-    updateSetupActionState();
-  }, false, "delete-player-button danger");
+  syncWriteInProgress = true;
+  setSyncStatus("同步中...");
+  renderIdentityControls();
+  try {
+    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      const currentGameState = currentRoom?.gameState;
+      const currentStatus = currentGameState
+        ? String(currentGameState.handStatus || inferHandStatus(currentGameState))
+        : "setup";
+      const currentInProgress = Boolean(currentGameState?.inProgress);
+      if (currentInProgress && currentStatus !== "setup") return undefined;
 
-  playerDiv.appendChild(nameInput);
-  playerDiv.appendChild(chipsInput);
-  playerDiv.appendChild(delBtn);
-  playerNameInputsContainer.appendChild(playerDiv);
+      const existingRoom = currentRoom || {};
+      return {
+        ...existingRoom,
+        mode: ROOM_MODES.room,
+        operator: existingRoom.operator || room.operator || clientId,
+        hostClientId: getRoomHostId(existingRoom, room.hostClientId || clientId),
+        members: touchMember(existingRoom.members || room.members, clientId),
+        gameState: nextGameState,
+        players
+      };
+    }, { applyLocally: false });
 
-  players.push(player);
+    if (!result.committed) {
+      setSyncStatus("房间已进入牌局，等待同步", "error");
+      const refreshed = await refreshFromRemote();
+      if (!refreshed) syncReady = false;
+      return false;
+    }
+
+    stateVersion = nextStateVersion;
+    room.gameState = nextGameState;
+    room.members = touchMember(room.members, clientId);
+    syncReady = true;
+    setSyncStatus("已同步", "ok");
+    return true;
+  } catch (_) {
+    setSyncStatus("同步失败", "error");
+    return false;
+  } finally {
+    syncWriteInProgress = false;
+    renderIdentityControls();
+  }
+}
+
+function updateSetupActionState() {
+  startGameBtn.disabled = players.length < 2;
+  addPlayerBtn.disabled = players.length >= MAX_PLAYERS;
+  addPlayerBtn.textContent = players.length >= MAX_PLAYERS ? `最多 ${MAX_PLAYERS} 人` : "添加玩家";
+  renderIdentityControls();
+}
+
+function renderSetupPlayerInputs() {
+  if (!playerNameInputsContainer || gameStarted) return;
+  playerNameInputsContainer.querySelectorAll(".player-div").forEach(row => row.remove());
+  normalizeSetupPlayers();
+
+  players.forEach((player, index) => {
+    const playerDiv = document.createElement("div");
+    playerDiv.classList.add("player-div");
+    if (isRoomMode()) playerDiv.classList.add("room-claim-enabled");
+    playerDiv.dataset.playerId = player.id;
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.placeholder = `输入玩家 ${index + 1} 昵称`;
+    nameInput.value = player.name || "";
+    nameInput.classList.add("player-name-input");
+    nameInput.addEventListener("input", () => {
+      player.name = nameInput.value;
+    });
+    nameInput.addEventListener("change", () => {
+      player.name = nameInput.value.trim();
+      scheduleLobbySync();
+    });
+
+    const chipsInput = document.createElement("input");
+    chipsInput.type = "text";
+    chipsInput.inputMode = "numeric";
+    chipsInput.placeholder = "初始筹码";
+    chipsInput.value = player.chips;
+    chipsInput.classList.add("player-chips-input");
+    chipsInput.addEventListener("input", () => {
+      player.chips = toPositiveInteger(chipsInput.value, 0);
+    });
+    chipsInput.addEventListener("change", () => {
+      player.chips = toPositiveInteger(chipsInput.value, toPositiveInteger(initialChipsInput.value, 1000));
+      chipsInput.value = player.chips;
+      scheduleLobbySync();
+    });
+
+    const claimBtn = isRoomMode()
+      ? createButton(getSetupClaimLabel(player), () => {
+        togglePlayerClaim(player.id);
+      }, isClaimedByOtherDevice(player), "claim-player-button")
+      : null;
+    if (claimBtn && isCurrentDevicePlayer(player)) claimBtn.classList.add("claimed");
+
+    const delBtn = createButton("删除", () => {
+      players = players.filter(item => item.id !== player.id);
+      normalizeSetupPlayers();
+      renderSetupPlayerInputs();
+      updateSetupActionState();
+      scheduleLobbySync();
+    }, false, "delete-player-button danger");
+
+    playerDiv.append(nameInput, chipsInput);
+    if (claimBtn) playerDiv.appendChild(claimBtn);
+    playerDiv.appendChild(delBtn);
+    playerNameInputsContainer.appendChild(playerDiv);
+  });
   updateSetupActionState();
+}
+
+addPlayerBtn.addEventListener("click", () => {
+  if (players.length >= MAX_PLAYERS) {
+    showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
+    updateSetupActionState();
+    return;
+  }
+
+  players.push(createSetupPlayer());
+  renderSetupPlayerInputs();
+  updateSetupActionState();
+  scheduleLobbySync();
 });
+renderSetupPlayerInputs();
 updateSetupActionState();
+syncReady = true;
+setSyncStatus("本地模式");
+renderIdentityControls();
 
 // ----------------------
 // 开始游戏逻辑
@@ -925,43 +1416,56 @@ startGameBtn.addEventListener("click", async () => {
 
   try {
     const roomId = normalizeRoomId(roomIdInput.value);
-    if (roomId) {
-      joinRoom(roomId);
-      const remoteGameState = await getRemoteGameState();
-      const remoteStatus = remoteGameState
-        ? String(remoteGameState.handStatus || inferHandStatus(remoteGameState))
-        : "setup";
-      if (remoteGameState && remoteStatus !== "setup") {
-        showAppAlert("该房间已有牌局状态，请等待同步完成，不要从本地设置页重新开始");
-        return;
+    if (isRoomMode()) {
+      if (roomId) {
+        joinRoom(roomId);
+        await refreshFromRemote();
+        const remoteGameState = await getRemoteGameState();
+        const remoteStatus = remoteGameState
+          ? String(remoteGameState.handStatus || inferHandStatus(remoteGameState))
+          : "setup";
+        if (remoteGameState && remoteStatus !== "setup") {
+          showAppAlert("该房间已有牌局状态，请等待同步完成，不要从本地设置页重新开始");
+          return;
+        }
+      } else {
+        createRoom();
+        roomIdInput.value = room.roomId;
+        await syncLobbyState();
       }
     } else {
-      createRoom();
-      roomIdInput.value = room.roomId;
+      stopRoomListener();
+      room.roomId = "";
+      room.mode = ROOM_MODES.local;
+      room.operator = clientId;
+      room.hostClientId = clientId;
+      room.members = createMembersMap(clientId);
+      roomIdInput.value = "";
+      syncReady = true;
+      setSyncStatus("本地模式");
     }
 
-    const nameInputs = document.querySelectorAll(".player-name-input");
-    const chipsInputs = document.querySelectorAll(".player-chips-input");
-    if (nameInputs.length < 2) {
+    normalizeSetupPlayers();
+    if (players.length < 2) {
       showAppAlert("至少需要两个玩家开始游戏");
       return;
     }
-    if (nameInputs.length > MAX_PLAYERS) {
+    if (players.length > MAX_PLAYERS) {
       showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
       return;
     }
 
     bigBlind = toPositiveInteger(bigBlindInput.value, 20);
     smallBlind = Math.floor(bigBlind / 2);
-    players = Array.from(nameInputs).map((input, index) => ({
-      id: "player" + index,
-      name: input.value.trim() || `玩家${index + 1}`,
+    players = players.map((player, index) => ({
+      id: String(player.id || createPlayerId()),
+      name: String(player.name || "").trim() || `玩家${index + 1}`,
       seatIndex: index,
       seatStatus: "seated",
-      chips: toPositiveInteger(chipsInputs[index].value, 1000),
+      chips: toPositiveInteger(player.chips, 1000),
       folded: false,
       dealer: index === 0,
-      ownerClientId: "",
+      ownerClientId: normalizePlayerOwnerId(player.ownerClientId),
       bet: 0,
       totalBet: 0,
       allIn: false,
@@ -1168,7 +1672,7 @@ function startRound() {
     return;
   }
 
-  updateGameLog(`轮到 ${getPlayerName(players[currentPlayerIndex])} 行动`);
+  updateGameLog(`轮到 ${getPlayerIdentityLabel(players[currentPlayerIndex])} 行动`);
   updateFirebaseState();
 }
 
@@ -1195,7 +1699,7 @@ async function playerAction(action, index, amount = 0) {
   }
 
   if (action === "fold") {
-    const confirmed = await showAppConfirm(`${getPlayerName(player)} 确认弃牌？`, {
+    const confirmed = await showAppConfirm(`${getPlayerIdentityLabel(player)} 确认弃牌？`, {
       title: "确认 Fold",
       confirmLabel: "确认弃牌",
       danger: true
@@ -1308,7 +1812,7 @@ async function playerAction(action, index, amount = 0) {
       return;
   }
 
-  updateGameLog(`${getPlayerName(player)} 选择了 ${logAction}，奖池：${pot}`);
+  updateGameLog(`${getPlayerIdentityLabel(player)} 选择了 ${logAction}，奖池：${pot}`);
   nextPlayer();
   updateGameInfo();
   updatePlayerBoxes();
@@ -1380,7 +1884,7 @@ function nextPlayer() {
   }
 
   currentPlayerIndex = nextIndex;
-  updateGameLog(`轮到 ${getPlayerName(players[currentPlayerIndex])} 行动`);
+  updateGameLog(`轮到 ${getPlayerIdentityLabel(players[currentPlayerIndex])} 行动`);
   updatePlayerBoxes();
   updateFirebaseState();
 }
@@ -1447,7 +1951,7 @@ function awardRemainingPot(winner) {
 
   updateGameInfo();
   updatePlayerBoxes();
-  updateGameLog(`${winner ? getPlayerName(winner) : "无人"} 赢得奖池 ${wonAmount}`);
+  updateGameLog(`${winner ? getPlayerIdentityLabel(winner) : "无人"} 赢得奖池 ${wonAmount}`);
   if (bustedNames.length > 0) {
     updateGameLog(`${bustedNames.join("、")} 筹码归零，已设为待补码，下一手将跳过。`);
   }
@@ -1667,7 +2171,7 @@ function getSettlementReportLines(preview) {
     lines.push(`奖池 ${previewPot.index + 1}（${previewPot.amount}）:`);
     previewPot.payouts.forEach(payout => {
       const winner = getPlayerById(payout.playerId);
-      lines.push(`${getPlayerName(winner)} 获得 ${payout.amount} 筹码`);
+      lines.push(`${getPlayerIdentityLabel(winner)} 获得 ${payout.amount} 筹码`);
     });
   });
   return lines;
@@ -1690,7 +2194,7 @@ function markZeroChipPlayersBusted() {
     if (player.chips <= 0 && player.seatStatus === "seated") {
       player.chips = 0;
       player.seatStatus = "busted";
-      bustedNames.push(getPlayerName(player));
+      bustedNames.push(getPlayerIdentityLabel(player));
     }
   });
   return bustedNames;
@@ -1904,11 +2408,9 @@ function createTableDraft() {
 
 function getNextPlayerIdFromDraft() {
   const usedIds = new Set(tableDraft.map(player => player.id));
-  let index = players.length + tableDraft.length;
-  let id = `player${index}`;
+  let id = createPlayerId();
   while (usedIds.has(id)) {
-    index += 1;
-    id = `player${index}`;
+    id = createPlayerId();
   }
   return id;
 }
@@ -1982,9 +2484,9 @@ function getTableDraftSummary() {
   const layout = getHandLayout(dealerIndex, normalized);
   const detail = [
     `下一手可参与 ${eligibleIndices.length} 人`,
-    `Button ${getPlayerName(normalized[layout.dealerIndex])}`,
-    `小盲 ${getPlayerName(normalized[layout.smallBlindIndex])}`,
-    `大盲 ${getPlayerName(normalized[layout.bigBlindIndex])}`
+    `Button ${getPlayerIdentityLabel(normalized[layout.dealerIndex], layout.dealerIndex, normalized)}`,
+    `小盲 ${getPlayerIdentityLabel(normalized[layout.smallBlindIndex], layout.smallBlindIndex, normalized)}`,
+    `大盲 ${getPlayerIdentityLabel(normalized[layout.bigBlindIndex], layout.bigBlindIndex, normalized)}`
   ];
 
   const pending = [];
@@ -2412,7 +2914,7 @@ function createRaisePanel(player, index, actionDisabled) {
   return {
     open() {
       openTableActionDialog({
-        title: `${getPlayerName(player)} 加注`,
+        title: `${getPlayerIdentityLabel(player)} 加注`,
         description: `需跟 ${callAmount}，最小加注 ${minimumTarget}，当前奖池 ${pot}。`,
         className: "raise-action-dialog",
         buildContent(body, closeDialog) {
@@ -2602,7 +3104,7 @@ function renderShowdownDialogBody(body, closeDialog) {
     const contenderNames = sidePot.contenders
       .map(id => getPlayerById(id))
       .filter(Boolean)
-      .map(getPlayerName)
+      .map(player => getPlayerIdentityLabel(player))
       .join("、");
     card.appendChild(createParagraph(`可争夺玩家: ${contenderNames || "无"}`));
 
@@ -2621,7 +3123,7 @@ function renderShowdownDialogBody(body, closeDialog) {
       if (!player) return;
 
       const selected = selectedWinnersByPot[potIndex].has(playerId);
-      const option = createButton(getPlayerName(player), () => {
+      const option = createButton(getPlayerIdentityLabel(player), () => {
         const selectedSet = selectedWinnersByPot[potIndex] || new Set();
         if (selectedSet.has(playerId)) {
           selectedSet.delete(playerId);
@@ -2672,7 +3174,7 @@ function openSettlementPreviewDialog() {
           const winner = getPlayerById(payout.playerId);
           const row = document.createElement("p");
           row.className = "settlement-preview-row";
-          row.appendChild(document.createTextNode(getPlayerName(winner)));
+          row.appendChild(document.createTextNode(getPlayerIdentityLabel(winner)));
           const amount = document.createElement("span");
           amount.textContent = `+${payout.amount}`;
           row.appendChild(amount);
@@ -2706,7 +3208,7 @@ function createTableCenterOperations() {
     const index = currentPlayerIndex;
     const player = players[index];
     const actionDisabled = isInteractionLocked();
-    operations.appendChild(createCenterOperationHeader(`${getPlayerName(player)} 行动`, [
+    operations.appendChild(createCenterOperationHeader(`${getPlayerIdentityLabel(player)} 行动`, [
       `筹码 ${player.chips}`,
       `需跟 ${getCallAmount(player)}`,
       `本轮下注 ${player.bet}`
@@ -2794,9 +3296,9 @@ const TABLE_SEAT_LAYOUTS = {
     createSeatPoint(50, 86, "seat-bottom", 50, 93)
   ],
   3: [
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(82, 70, "seat-right", 76, 76),
-    createSeatPoint(18, 70, "seat-left", 24, 76)
+    createSeatPoint(24, 28, "seat-left", 27, 22),
+    createSeatPoint(76, 28, "seat-right", 73, 22),
+    createSeatPoint(50, 86, "seat-bottom", 50, 93)
   ],
   4: [
     createSeatPoint(50, 14, "seat-top", 50, 7),
@@ -2805,11 +3307,11 @@ const TABLE_SEAT_LAYOUTS = {
     createSeatPoint(12, 50, "seat-left", 21, 70)
   ],
   5: [
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(86, 34, "seat-right", 79, 28),
-    createSeatPoint(76, 82, "seat-bottom", 73, 82.5),
-    createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
-    createSeatPoint(14, 34, "seat-left", 21, 28)
+    createSeatPoint(24, 22, "seat-top", 27, 17.5),
+    createSeatPoint(76, 22, "seat-top", 73, 17.5),
+    createSeatPoint(84, 62, "seat-right", 79, 65),
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(16, 62, "seat-left", 21, 65)
   ],
   6: [
     createSeatPoint(50, 14, "seat-top", 50, 7),
@@ -2868,6 +3370,50 @@ function getSeatCoordinates(index, count) {
   return layout[index] || layout[index % layout.length];
 }
 
+function getSeatAnchorIndex(layout) {
+  let bestIndex = 0;
+  let bestScore = -Infinity;
+  layout.forEach((seat, index) => {
+    const desktopScore = seat.top - Math.abs(seat.left - 50) * 0.45;
+    const mobileScore = seat.mobileTop - Math.abs(seat.mobileLeft - 50) * 0.45;
+    const score = desktopScore + mobileScore;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function normalizeRotationOffset(length) {
+  if (length <= 0) return 0;
+  return ((tableViewRotationOffset % length) + length) % length;
+}
+
+function getVisualSeatCoordinates(playerIndex, count) {
+  const layout = TABLE_SEAT_LAYOUTS[Math.min(Math.max(count, 1), MAX_PLAYERS)] || TABLE_SEAT_LAYOUTS[1];
+  if (count <= 1) return layout[0];
+
+  const currentDevicePlayerIndex = getCurrentDevicePlayerIndex();
+  if (isRoomMode() && currentDevicePlayerIndex >= 0) {
+    const anchorIndex = getSeatAnchorIndex(layout);
+    if (playerIndex === currentDevicePlayerIndex) return layout[anchorIndex];
+
+    const otherSeatIndices = [];
+    for (let offset = 1; offset < count; offset += 1) {
+      otherSeatIndices.push((anchorIndex + offset) % count);
+    }
+
+    const rotation = normalizeRotationOffset(otherSeatIndices.length);
+    const relativePlayerOffset = (playerIndex - currentDevicePlayerIndex + count) % count;
+    const otherIndex = (relativePlayerOffset - 1 + rotation + otherSeatIndices.length) % otherSeatIndices.length;
+    return layout[otherSeatIndices[otherIndex]];
+  }
+
+  const visualIndex = normalizeRotationOffset(count) + playerIndex;
+  return layout[visualIndex % count];
+}
+
 function getCompactPlayerStatus(player) {
   if (player.seatStatus !== "seated") return getSeatStatusLabel(player.seatStatus);
   if (player.folded) return "弃牌";
@@ -2892,7 +3438,7 @@ function createSeatDetailPopover(player, index) {
   popover.addEventListener("click", event => event.stopPropagation());
 
   const title = document.createElement("strong");
-  title.textContent = getPlayerName(player);
+  title.textContent = getPlayerIdentityLabel(player, index);
   popover.appendChild(title);
 
   [
@@ -2911,6 +3457,15 @@ function createSeatDetailPopover(player, index) {
     row.append(labelEl, valueEl);
     popover.appendChild(row);
   });
+
+  if (isRoomMode()) {
+    const claimButton = createButton(getSetupClaimLabel(player), () => {
+      togglePlayerClaim(player.id);
+      closeSeatDetailPopovers();
+    }, isClaimedByOtherDevice(player), "seat-claim-button");
+    if (isCurrentDevicePlayer(player)) claimButton.classList.add("claimed");
+    popover.appendChild(claimButton);
+  }
 
   return popover;
 }
@@ -2988,11 +3543,12 @@ function updatePlayerBoxes() {
   boxes.appendChild(createTableCenterPanel());
 
   players.forEach((player, index) => {
-    const seat = getSeatCoordinates(index, players.length);
+    const seat = getVisualSeatCoordinates(index, players.length);
 
     const box = document.createElement("div");
     box.classList.add("player-box");
     box.classList.add(seat.side);
+    if (isCurrentDevicePlayer(player)) box.classList.add("is-mine");
     if (player.folded) box.classList.add("folded");
     if (player.allIn) box.classList.add("all-in");
     if (player.seatStatus !== "seated") box.classList.add("seat-inactive");
@@ -3001,7 +3557,7 @@ function updatePlayerBoxes() {
     box.style.setProperty("--seat-top", `${seat.top}%`);
     box.style.setProperty("--seat-left-mobile", `${seat.mobileLeft}%`);
     box.style.setProperty("--seat-top-mobile", `${seat.mobileTop}%`);
-    box.setAttribute("aria-label", `${getPlayerName(player)}，筹码 ${player.chips}，本轮下注 ${player.bet}，${getPlayerStatus(player)}`);
+    box.setAttribute("aria-label", `${getPlayerIdentityLabel(player, index)}，筹码 ${player.chips}，本轮下注 ${player.bet}，${getPlayerStatus(player)}`);
     box.setAttribute("role", "button");
     box.setAttribute("aria-expanded", "false");
     box.tabIndex = 0;
@@ -3018,7 +3574,7 @@ function updatePlayerBoxes() {
     main.className = "player-seat-main";
     const name = document.createElement("h3");
     name.className = "player-name";
-    name.textContent = getPlayerName(player);
+    name.textContent = getPlayerCompactIdentityLabel(player, index);
     main.appendChild(name);
 
     const chipValue = document.createElement("p");

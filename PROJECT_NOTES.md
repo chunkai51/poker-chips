@@ -55,8 +55,14 @@ Important: many elements are selected by `id` in `src/main.js`. Preserve these I
 - `big-blind`
 - `room-id`
 - `manual-sync`
+- `local-mode`
+- `room-mode`
+- `create-room`
+- `join-room`
+- `device-identity`
 - `game-log`
 - `hand-actions`
+- `table-view-toolbar`
 - `log-summary`
 - `showdown-panel`
 - `sync-status`
@@ -242,6 +248,7 @@ Room identity fields:
 - `operator`: legacy room creator/operator field, kept for compatibility.
 - `hostClientId`: normalized room host id. Existing rooms fall back to `operator`.
 - `members`: map keyed by `clientId`, currently used as presence/identity scaffolding.
+- Table view rotation is intentionally local-only. The offset is stored in `localStorage` under `pokerChipsTableViewRotation:{roomId}` and is never written to Firebase.
 
 Player objects now include seat-management fields:
 
@@ -256,7 +263,9 @@ Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players 
 
 1. Add players in the setup panel.
 2. Start game:
-   - Generate or join room.
+   - Choose local mode or room mode.
+   - In room mode, create a room or join by room id.
+   - In room mode, devices can claim an unclaimed player seat before the hand starts. This currently affects identity display and local seat orientation, not permissions.
    - Read player names/chips.
    - Initialize hand state.
    - Call `startRound()`.
@@ -334,6 +343,12 @@ Implemented:
 - App icon and favicon
 - Chip Riffle popover with real-order chip animation, single/dual-color skins, CSS chip symbols, and sampled chip sound effects
 - Collapsible player manual on setup and game screens with usage guide, Texas Hold'em rules, and hand rankings
+- Setup mode switch for single-device local mode vs multiplayer room mode
+- Room creation/join controls in the setup panel, backed by the existing top-bar room id field
+- Multiplayer player claiming through `ownerClientId`
+- Current-device identity display
+- Local-only table view rotation in room mode
+- Claimed-player perspective: the current device's player is fixed to the bottom-center table seat while other seats are remapped around it
 - Player creation/removal before game start
 - Maximum 10 players in setup and post-settlement table management
 - Initial chips and blind configuration
@@ -377,7 +392,6 @@ Not implemented:
 - Authentication
 - Database security rules in this repository
 - Strict per-player operation permissions
-- Join-room UI that lets each device claim or create a player identity
 - All-player confirmation flow for settlement and next-hand start
 
 ## Development Notes
@@ -406,10 +420,17 @@ git diff --check
 Browser validation checklist:
 
 - Setup screen renders on desktop and mobile.
+- Setup mode switch can move between local mode and room mode before a hand starts.
+- Creating a room writes a setup room and shows the generated room id.
+- Joining a room loads setup players when the remote room is still in setup.
+- Claiming a player marks only one player as this device's seat; claiming another releases the previous one.
 - Adding two players enables “开始游戏”.
-- Starting a game creates or joins a room.
+- Starting a game in local mode does not create a remote room and actions are not blocked by sync state.
+- Starting a game in room mode creates or joins a room.
 - Player cards fit without horizontal overflow at about 390px width.
 - Active player is visually obvious.
+- In room mode, a claimed player appears at the bottom-center seat on that device.
+- Room-mode rotation buttons change only the current browser's layout and do not change another browser's layout.
 - Desktop and mobile show action buttons in the standalone current-action panel above the oval table.
 - Seat labels stay evenly distributed around the oval for 2-10 players.
 - Adding players is capped at 10 in setup and table management.
@@ -448,9 +469,9 @@ Browser validation checklist:
 
 ## Suggested Next Steps
 
-1. Build the player identity UI: local mode, room mode, join room, claim/create player, and display the current device's player.
-2. Enforce permissions in phases: own-player actions first, dealer-only deal confirmation, host-only table management after settlement.
-3. Add all-player confirmation state for settlement preview and next-hand start.
+1. Enforce permissions in phases: own-player actions first, dealer-only deal confirmation, host-only table management after settlement.
+2. Add all-player confirmation state for settlement preview and next-hand start.
+3. Add a clearer player-join flow for late joiners and reconnects, including “create new player” requests in an existing room.
 4. Add unit tests for `src/game-rules.js` and `src/identity.js`, especially all-in, side-pot, split-pot, and heads-up rotation cases.
 5. Add Firebase rules documentation before treating identity fields as security boundaries.
 6. Consider room lifecycle controls: leave room, reset room, archive hand log.
