@@ -1102,6 +1102,60 @@ h3 {
   color: #171006;
 }
 
+.app-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 420;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 8, 6, 0.58);
+  padding: 16px;
+  backdrop-filter: blur(8px);
+}
+
+.app-dialog {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 12px;
+  border: 1px solid rgba(242, 217, 141, 0.28);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 248, 232, 0.08), rgba(255, 248, 232, 0.022)),
+    rgba(4, 18, 14, 0.97);
+  box-shadow: 0 28px 78px rgba(0, 0, 0, 0.58);
+  color: var(--ivory-100);
+  padding: 18px;
+}
+
+.app-dialog h3 {
+  color: var(--ivory-50);
+  font-size: 1.18rem;
+  line-height: 1.18;
+}
+
+.app-dialog-message {
+  color: rgba(244, 234, 210, 0.72);
+  font-size: 0.94rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.app-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.app-dialog-button {
+  min-width: 96px;
+}
+
+.app-dialog-cancel {
+  border-color: rgba(244, 234, 210, 0.2);
+  background: rgba(255, 248, 232, 0.08);
+}
+
 .hand-actions {
   display: flex;
   justify-content: flex-end;
@@ -2449,6 +2503,28 @@ h3 {
   .table-action-dialog-backdrop {
     align-items: end;
     padding: 0;
+  }
+
+  .app-dialog-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .app-dialog {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 14px 14px 0 0;
+    padding: 16px;
+  }
+
+  .app-dialog-actions {
+    flex-direction: column-reverse;
+  }
+
+  .app-dialog-button {
+    width: 100%;
   }
 
   .table-action-dialog {

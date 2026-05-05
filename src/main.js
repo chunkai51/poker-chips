@@ -310,6 +310,108 @@ function createButton(label, onClick, disabled = false, className = "") {
   return button;
 }
 
+function closeAppDialog(result = false) {
+  const backdrop = document.querySelector(".app-dialog-backdrop");
+  if (!backdrop) return;
+
+  const resolver = backdrop._resolveDialog;
+  const previousFocus = backdrop._previousFocus;
+  backdrop.remove();
+  if (previousFocus && typeof previousFocus.focus === "function") {
+    try {
+      previousFocus.focus({ preventScroll: true });
+    } catch (_) {
+      previousFocus.focus();
+    }
+  }
+  if (resolver) resolver(result);
+}
+
+function showAppDialog({
+  title = "提示",
+  message = "",
+  confirmLabel = "知道了",
+  cancelLabel = "",
+  danger = false
+} = {}) {
+  closeAppDialog(false);
+
+  return new Promise(resolve => {
+    const previousFocus = document.activeElement;
+    const backdrop = document.createElement("div");
+    backdrop.className = "app-dialog-backdrop";
+    backdrop._resolveDialog = resolve;
+    backdrop._previousFocus = previousFocus;
+
+    const dialog = document.createElement("section");
+    dialog.className = "app-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.addEventListener("click", event => event.stopPropagation());
+
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    dialog.appendChild(heading);
+
+    if (message) {
+      const content = createParagraph(message);
+      content.className = "app-dialog-message";
+      dialog.appendChild(content);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "app-dialog-actions";
+
+    if (cancelLabel) {
+      actions.appendChild(createButton(cancelLabel, () => {
+        closeAppDialog(false);
+      }, false, "app-dialog-button app-dialog-cancel"));
+    }
+
+    const confirmButton = createButton(confirmLabel, () => {
+      closeAppDialog(true);
+    }, false, danger ? "app-dialog-button app-dialog-confirm danger" : "app-dialog-button app-dialog-confirm");
+    actions.appendChild(confirmButton);
+    dialog.appendChild(actions);
+
+    backdrop.appendChild(dialog);
+    backdrop.addEventListener("click", () => {
+      closeAppDialog(false);
+    });
+    backdrop.addEventListener("keydown", event => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeAppDialog(false);
+      }
+    });
+    document.body.appendChild(backdrop);
+    requestAnimationFrame(() => confirmButton.focus());
+  });
+}
+
+function showAppAlert(message, title = "提示") {
+  return showAppDialog({
+    title,
+    message,
+    confirmLabel: "知道了"
+  });
+}
+
+function showAppConfirm(message, {
+  title = "请确认",
+  confirmLabel = "确认",
+  cancelLabel = "取消",
+  danger = false
+} = {}) {
+  return showAppDialog({
+    title,
+    message,
+    confirmLabel,
+    cancelLabel,
+    danger
+  });
+}
+
 function clearGameLog() {
   gameLog.replaceChildren();
   room.gameState.logs = [];
@@ -793,7 +895,7 @@ if (manualSyncBtn) {
   manualSyncBtn.addEventListener("click", () => {
     const id = normalizeRoomId(roomIdInput.value);
     if (!id) {
-      alert("请输入房间ID");
+      showAppAlert("请输入房间ID");
       return;
     }
     joinRoom(id);
@@ -811,7 +913,7 @@ function updateSetupActionState() {
 
 addPlayerBtn.addEventListener("click", () => {
   if (players.length >= MAX_PLAYERS) {
-    alert(`最多支持 ${MAX_PLAYERS} 名玩家`);
+    showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
     updateSetupActionState();
     return;
   }
@@ -878,7 +980,7 @@ startGameBtn.addEventListener("click", async () => {
         ? String(remoteGameState.handStatus || inferHandStatus(remoteGameState))
         : "setup";
       if (remoteGameState && remoteStatus !== "setup") {
-        alert("该房间已有牌局状态，请等待同步完成，不要从本地设置页重新开始");
+        showAppAlert("该房间已有牌局状态，请等待同步完成，不要从本地设置页重新开始");
         return;
       }
     } else {
@@ -889,11 +991,11 @@ startGameBtn.addEventListener("click", async () => {
     const nameInputs = document.querySelectorAll(".player-name-input");
     const chipsInputs = document.querySelectorAll(".player-chips-input");
     if (nameInputs.length < 2) {
-      alert("至少需要两个玩家开始游戏");
+      showAppAlert("至少需要两个玩家开始游戏");
       return;
     }
     if (nameInputs.length > MAX_PLAYERS) {
-      alert(`最多支持 ${MAX_PLAYERS} 名玩家`);
+      showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
       return;
     }
 
@@ -1174,22 +1276,26 @@ async function playerAction(action, index, amount = 0) {
   const expectedStateVersion = stateVersion;
 
   if (mutationInProgress || gameOver || awaitingShowdown || handStatus !== "playing") {
-    alert("当前手牌已结束或正在等待结算");
+    showAppAlert("当前手牌已结束或正在等待结算");
     return;
   }
   if (index !== currentPlayerIndex) {
-    alert("当前不是你的回合！");
+    showAppAlert("当前不是你的回合！");
     return;
   }
 
   const player = players[index];
   if (!canAct(player)) {
-    alert("该玩家当前不能行动");
+    showAppAlert("该玩家当前不能行动");
     return;
   }
 
   if (action === "fold") {
-    const confirmed = window.confirm(`${getPlayerName(player)} 确认弃牌？`);
+    const confirmed = await showAppConfirm(`${getPlayerName(player)} 确认弃牌？`, {
+      title: "确认 Fold",
+      confirmLabel: "确认弃牌",
+      danger: true
+    });
     if (!confirmed) return;
   }
 
@@ -1197,7 +1303,7 @@ async function playerAction(action, index, amount = 0) {
   const remoteGameState = await getRemoteGameState();
   if (!remoteGameState && room.roomId) {
     setMutationInProgress(false);
-    alert("还没有完成同步，不能操作");
+    showAppAlert("还没有完成同步，不能操作");
     return;
   }
   if (remoteGameState) {
@@ -1215,7 +1321,7 @@ async function playerAction(action, index, amount = 0) {
       remoteCurrentPlayerIndex !== index
     ) {
       setMutationInProgress(false);
-      alert("牌局状态已在其他设备更新，请等待同步后再操作");
+      showAppAlert("牌局状态已在其他设备更新，请等待同步后再操作");
       return;
     }
   }
@@ -1226,7 +1332,7 @@ async function playerAction(action, index, amount = 0) {
   switch (action) {
     case "check":
       if (player.bet < currentBet) {
-        alert("已有下注，不能选择 Check！");
+        showAppAlert("已有下注，不能选择 Check！");
         batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
@@ -1238,7 +1344,7 @@ async function playerAction(action, index, amount = 0) {
     case "call": {
       const callAmount = Math.max(0, currentBet - player.bet);
       if (callAmount === 0) {
-        alert("当前无需跟注，可以选择 Check");
+        showAppAlert("当前无需跟注，可以选择 Check");
         batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
@@ -1253,7 +1359,7 @@ async function playerAction(action, index, amount = 0) {
       const targetBet = toPositiveInteger(amount, 0);
       const validation = getRaiseValidation(player, targetBet);
       if (!validation.valid) {
-        alert(validation.message);
+        showAppAlert(validation.message);
         batchingStateUpdate = false;
         setMutationInProgress(false);
         return;
@@ -1292,7 +1398,7 @@ async function playerAction(action, index, amount = 0) {
       break;
 
     default:
-      alert("无效操作！");
+      showAppAlert("无效操作！");
       batchingStateUpdate = false;
       setMutationInProgress(false);
       return;
@@ -1310,7 +1416,7 @@ async function playerAction(action, index, amount = 0) {
   });
   setMutationInProgress(false);
   if (!saved) {
-    alert("操作没有同步成功，已恢复到最新远端状态");
+    showAppAlert("操作没有同步成功，已恢复到最新远端状态");
   }
 }
 
@@ -1393,7 +1499,7 @@ async function confirmDealPrompt() {
   const expectedStateVersion = stateVersion;
 
   if (isSharedPromptActionLocked() || handStatus !== "waitingDeal" || !prompt) {
-    alert("当前没有等待确认的发牌提示");
+    showAppAlert("当前没有等待确认的发牌提示");
     return;
   }
 
@@ -1412,7 +1518,7 @@ async function confirmDealPrompt() {
   });
   setMutationInProgress(false);
   if (!saved) {
-    alert("发牌确认没有同步成功，已恢复到最新远端状态");
+    showAppAlert("发牌确认没有同步成功，已恢复到最新远端状态");
   }
 }
 
@@ -1622,7 +1728,7 @@ function buildSettlementPlan() {
     const winnerIds = contenders.length === 1 ? contenders : selected;
 
     if (winnerIds.length === 0) {
-      alert(`请为奖池 ${index + 1} 至少选择一位赢家`);
+      showAppAlert(`请为奖池 ${index + 1} 至少选择一位赢家`);
       return null;
     }
 
@@ -1690,7 +1796,7 @@ async function confirmShowdown() {
   const expectedHandId = handId;
   const expectedStateVersion = stateVersion;
   if (isInteractionLocked() || handStatus !== "showdown") {
-    alert("当前手牌已不在摊牌结算阶段");
+    showAppAlert("当前手牌已不在摊牌结算阶段");
     return;
   }
 
@@ -1701,7 +1807,7 @@ async function confirmShowdown() {
   const canSettle = await isRemoteHandStill(expectedHandId, ["showdown"]);
   if (!canSettle) {
     setMutationInProgress(false);
-    alert("其他设备已经更新结算状态，请等待同步最新状态");
+    showAppAlert("其他设备已经更新结算状态，请等待同步最新状态");
     return;
   }
 
@@ -1726,7 +1832,7 @@ async function confirmShowdown() {
   });
   setMutationInProgress(false);
   if (!saved) {
-    alert("结算预览没有同步成功，已恢复到最新远端状态");
+    showAppAlert("结算预览没有同步成功，已恢复到最新远端状态");
   }
 }
 
@@ -1736,7 +1842,7 @@ async function cancelSettlementPreview() {
   const expectedStateVersion = stateVersion;
 
   if (isSharedPromptActionLocked() || handStatus !== "settlementPreview" || !preview) {
-    alert("当前没有可取消的结算预览");
+    showAppAlert("当前没有可取消的结算预览");
     return;
   }
 
@@ -1762,7 +1868,7 @@ async function cancelSettlementPreview() {
   });
   setMutationInProgress(false);
   if (!saved) {
-    alert("取消结算预览没有同步成功，已恢复到最新远端状态");
+    showAppAlert("取消结算预览没有同步成功，已恢复到最新远端状态");
   }
 }
 
@@ -1772,7 +1878,7 @@ async function confirmSettlementPreview() {
   const expectedStateVersion = stateVersion;
 
   if (isSharedPromptActionLocked() || handStatus !== "settlementPreview" || !preview) {
-    alert("当前没有可确认的结算预览");
+    showAppAlert("当前没有可确认的结算预览");
     return;
   }
 
@@ -1812,7 +1918,7 @@ async function confirmSettlementPreview() {
   if (saved) {
     showNextHandButton();
   } else {
-    alert("结算没有同步成功，已恢复到最新远端状态");
+    showAppAlert("结算没有同步成功，已恢复到最新远端状态");
   }
 }
 
@@ -1985,7 +2091,7 @@ function getTableDraftSummary() {
 
 function openTableManager() {
   if (handStatus !== "settled") {
-    alert("牌桌管理只在本手结算完成后开放，避免影响正在进行的牌局。");
+    showAppAlert("牌桌管理只在本手结算完成后开放，避免影响正在进行的牌局。");
     return;
   }
 
@@ -2046,7 +2152,7 @@ function renderTableManager() {
 
   const addButton = createButton("添加玩家", () => {
     if (tableDraft.length >= MAX_PLAYERS) {
-      alert(`最多支持 ${MAX_PLAYERS} 名玩家`);
+      showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
       renderTableManager();
       return;
     }
@@ -2201,19 +2307,19 @@ function setDraftStatus(index, status) {
 
 async function saveTableDraft({ startNextHand = false } = {}) {
   if (!tableDraft || handStatus !== "settled") {
-    alert("当前不能保存牌桌管理设置");
+    showAppAlert("当前不能保存牌桌管理设置");
     return;
   }
 
   const nextPlayers = normalizeTableDraftPlayers();
   if (nextPlayers.length > MAX_PLAYERS) {
-    alert(`最多支持 ${MAX_PLAYERS} 名玩家`);
+    showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
     renderTableManager();
     return;
   }
 
   if (startNextHand && getEligiblePlayerIndices(nextPlayers).length < 2) {
-    alert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
+    showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
     renderTableManager();
     return;
   }
@@ -2221,7 +2327,7 @@ async function saveTableDraft({ startNextHand = false } = {}) {
   const expectedHandId = tableDraftBaseHandId;
   const expectedStateVersion = tableDraftBaseStateVersion;
   if (expectedHandId !== handId || expectedStateVersion !== stateVersion) {
-    alert("牌桌已被其他设备更新，请关闭后重新打开牌桌管理。");
+    showAppAlert("牌桌已被其他设备更新，请关闭后重新打开牌桌管理。");
     closeTableManager();
     return;
   }
@@ -2246,7 +2352,7 @@ async function saveTableDraft({ startNextHand = false } = {}) {
   setMutationInProgress(false);
 
   if (!saved) {
-    alert("牌桌管理没有保存成功，已恢复到最新远端状态");
+    showAppAlert("牌桌管理没有保存成功，已恢复到最新远端状态");
     return;
   }
 
@@ -2263,11 +2369,11 @@ async function resetHand(expectedHandId = handId) {
   const expectedStateVersion = stateVersion;
   if (mutationInProgress) return;
   if (!gameOver || handStatus !== "settled") {
-    alert("当前手牌还没有完成结算，不能开始下一局");
+    showAppAlert("当前手牌还没有完成结算，不能开始下一局");
     return;
   }
   if (getEligiblePlayerIndices().length < 2) {
-    alert("至少需要 2 名已入座且有筹码的玩家才能开始下一局，请先打开牌桌管理补码或回桌。");
+    showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局，请先打开牌桌管理补码或回桌。");
     renderNextHandButton();
     return;
   }
@@ -2277,7 +2383,7 @@ async function resetHand(expectedHandId = handId) {
   if (!canReset) {
     setMutationInProgress(false);
     clearHandActions();
-    alert("其他设备已经开始了下一局，请等待同步最新状态");
+    showAppAlert("其他设备已经开始了下一局，请等待同步最新状态");
     return;
   }
 
@@ -2307,7 +2413,7 @@ async function resetHand(expectedHandId = handId) {
   if (!rotateDealer()) {
     batchingStateUpdate = false;
     setMutationInProgress(false);
-    alert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
+    showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
     renderNextHandButton();
     return;
   }
@@ -2326,7 +2432,7 @@ async function resetHand(expectedHandId = handId) {
   });
   setMutationInProgress(false);
   if (!saved) {
-    alert("下一局没有同步成功，已恢复到最新远端状态");
+    showAppAlert("下一局没有同步成功，已恢复到最新远端状态");
   }
 }
 
