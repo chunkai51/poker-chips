@@ -1,5 +1,36 @@
 // src/main.js
 import { db, get, onValue, ref, runTransaction, update } from "./firebase.js";
+import {
+  ROOM_MODES,
+  createMembersMap,
+  getClientId,
+  getRoomHostId,
+  normalizeMembers,
+  normalizePlayerOwnerId,
+  normalizeRoomMode,
+  touchMember
+} from "./identity.js";
+import {
+  SEAT_STATUS_LABELS,
+  canAct,
+  canPlayerRaise as canPlayerRaiseWithState,
+  getCallAmount as calculateCallAmount,
+  getChipStep as calculateChipStep,
+  getDefaultRaiseTarget as calculateDefaultRaiseTarget,
+  getEligibleOrderFrom as buildEligibleOrderFrom,
+  getEligiblePlayerIndices as collectEligiblePlayerIndices,
+  getHandLayout as buildHandLayout,
+  getMaximumRaiseTarget as calculateMaximumRaiseTarget,
+  getMinimumRaiseTarget as calculateMinimumRaiseTarget,
+  getNextEligibleIndexAfter,
+  getNextEligibleIndexFrom,
+  getPotSizedRaiseTarget as calculatePotSizedRaiseTarget,
+  getRaiseUnavailableMessage as getRaiseUnavailableMessageForState,
+  getRaiseValidation as validateRaiseTarget,
+  getSeatStatusLabel,
+  isEligibleForNextHand,
+  normalizeSeatStatus
+} from "./game-rules.js";
 import { initGuidePanels } from "./guide.js";
 import { initChipRiffle } from "./riffle.js";
 
@@ -61,22 +92,18 @@ let syncReady = false;
 let syncWriteInProgress = false;
 let batchingStateUpdate = false;
 
-const CLIENT_ID_KEY = "pokerChipsClientId";
 const MAX_PLAYERS = 10;
 const clientId = getClientId();
-const SEAT_STATUS_LABELS = {
-  seated: "已入座",
-  sittingOut: "坐出",
-  busted: "待补码",
-  left: "离桌"
-};
 
 // ----------------------
 // 房间系统数据结构
 // ----------------------
 let room = {
   roomId: "",
+  mode: ROOM_MODES.local,
   operator: clientId,
+  hostClientId: clientId,
+  members: createMembersMap(clientId),
   players: [],
   gameState: {
     currentRound: 0,
@@ -102,21 +129,6 @@ let room = {
 // ----------------------
 // 通用工具函数
 // ----------------------
-function getClientId() {
-  try {
-    const existing = localStorage.getItem(CLIENT_ID_KEY);
-    if (existing) return existing;
-
-    const nextId = crypto.randomUUID
-      ? crypto.randomUUID()
-      : `client_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-    localStorage.setItem(CLIENT_ID_KEY, nextId);
-    return nextId;
-  } catch (_) {
-    return `client_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-  }
-}
-
 function normalizeRoomId(value) {
   return String(value || "")
     .trim()
@@ -146,51 +158,12 @@ function getActivePlayers() {
   return players.filter(player => !player.folded);
 }
 
-function normalizeSeatStatus(value, chips = 0, allIn = false) {
-  const status = String(value || "");
-  if (Object.prototype.hasOwnProperty.call(SEAT_STATUS_LABELS, status)) {
-    if (chips <= 0 && !allIn && (status === "seated" || status === "sittingOut" || status === "busted")) return "busted";
-    if (status === "busted" && chips > 0) return "seated";
-    return status;
-  }
-  if (chips <= 0 && !allIn) return "busted";
-  return "seated";
-}
-
-function getSeatStatusLabel(status) {
-  return SEAT_STATUS_LABELS[status] || SEAT_STATUS_LABELS.seated;
-}
-
-function isEligibleForNextHand(player) {
-  return Boolean(player && player.seatStatus === "seated" && player.chips > 0);
-}
-
 function getEligiblePlayerIndices(list = players) {
-  return list
-    .map((player, index) => (isEligibleForNextHand(player) ? index : -1))
-    .filter(index => index >= 0);
-}
-
-function getNextEligibleIndexAfter(index, eligibleIndices = getEligiblePlayerIndices()) {
-  if (eligibleIndices.length === 0) return -1;
-  const normalizedIndex = Number.isInteger(index) ? index : -1;
-  const direct = eligibleIndices.find(candidate => candidate > normalizedIndex);
-  return direct ?? eligibleIndices[0];
-}
-
-function getNextEligibleIndexFrom(index, eligibleIndices = getEligiblePlayerIndices()) {
-  if (eligibleIndices.length === 0) return -1;
-  if (eligibleIndices.includes(index)) return index;
-  return getNextEligibleIndexAfter(index, eligibleIndices);
-}
-
-function canAct(player) {
-  return Boolean(player && player.seatStatus === "seated" && !player.folded && !player.allIn && player.chips > 0);
+  return collectEligiblePlayerIndices(list);
 }
 
 function getCallAmount(player) {
-  if (!player || player.folded || player.allIn) return 0;
-  return Math.max(0, currentBet - player.bet);
+  return calculateCallAmount(player, currentBet);
 }
 
 function getCallButtonLabel(player) {
@@ -200,98 +173,47 @@ function getCallButtonLabel(player) {
   return `Call ${callAmount}`;
 }
 
+function getRaiseState() {
+  return {
+    currentBet,
+    lastRaiseSize,
+    bigBlind,
+    smallBlind,
+    pot,
+    chipStep: getChipStep()
+  };
+}
+
 function getRaiseUnavailableMessage(player) {
-  if (!player) return "当前不能加注";
-  if (getMaximumRaiseTarget(player) <= currentBet) {
-    return "剩余筹码不足以加注，可以跟注 All In";
-  }
-  if (currentBet > 0 && player.acted && player.bet < currentBet) {
-    return "短码 All In 未重新开放加注，只能跟注或弃牌";
-  }
-  return "";
+  return getRaiseUnavailableMessageForState(player, getRaiseState());
 }
 
 function canPlayerRaise(player) {
-  return Boolean(player && canAct(player) && !getRaiseUnavailableMessage(player));
+  return canPlayerRaiseWithState(player, getRaiseState());
 }
 
 function getChipStep() {
-  return Math.max(1, Math.floor(smallBlind || bigBlind / 2) || 1);
-}
-
-function roundUpToChipStep(value) {
-  const step = getChipStep();
-  return Math.ceil(toNonNegativeNumber(value, 0) / step) * step;
+  return calculateChipStep(smallBlind, bigBlind);
 }
 
 function getMaximumRaiseTarget(player) {
-  if (!player) return 0;
-  return player.bet + player.chips;
+  return calculateMaximumRaiseTarget(player);
 }
 
 function getMinimumRaiseTarget(player) {
-  if (!player) return Math.max(bigBlind, 1);
-  const minimumRaiseSize = Math.max(lastRaiseSize, bigBlind, 1);
-  const ruleTarget = currentBet > 0
-    ? currentBet + minimumRaiseSize
-    : player.bet + Math.max(bigBlind, 1);
-  return roundUpToChipStep(ruleTarget);
+  return calculateMinimumRaiseTarget(player, getRaiseState());
 }
 
 function getDefaultRaiseTarget(player) {
-  const maximumTarget = getMaximumRaiseTarget(player);
-  if (maximumTarget <= 0) return 0;
-  return Math.min(getMinimumRaiseTarget(player), maximumTarget);
+  return calculateDefaultRaiseTarget(player, getRaiseState());
 }
 
 function getPotSizedRaiseTarget(player, fraction) {
-  if (!player) return 0;
-  const callAmount = getCallAmount(player);
-  const extraBet = (pot + callAmount) * fraction;
-  const target = player.bet + callAmount + extraBet;
-  return Math.min(roundUpToChipStep(target), getMaximumRaiseTarget(player));
+  return calculatePotSizedRaiseTarget(player, fraction, getRaiseState());
 }
 
 function getRaiseValidation(player, rawTarget) {
-  const targetBet = toPositiveInteger(rawTarget, 0);
-  const maximumTarget = getMaximumRaiseTarget(player);
-  const minimumTarget = getMinimumRaiseTarget(player);
-  const callAmount = getCallAmount(player);
-  const commitAmount = Math.max(0, targetBet - (player?.bet || 0));
-  const isAllIn = Boolean(player && commitAmount === player.chips && player.chips > 0);
-
-  if (!player || targetBet <= 0) {
-    return { valid: false, message: "请输入加注目标", targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
-  }
-  const unavailableMessage = getRaiseUnavailableMessage(player);
-  if (unavailableMessage) {
-    return { valid: false, message: unavailableMessage, targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
-  }
-  if (targetBet > maximumTarget) {
-    return { valid: false, message: `最多加到 ${maximumTarget}`, targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
-  }
-  if (commitAmount <= 0) {
-    return { valid: false, message: "加注目标必须高于当前投入", targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
-  }
-  if (currentBet > 0 && targetBet <= currentBet) {
-    return { valid: false, message: `要加注必须高于当前最高下注 ${currentBet}`, targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
-  }
-  if (commitAmount <= callAmount) {
-    return { valid: false, message: callAmount > 0 ? `本次投入需超过跟注额 ${callAmount}` : "请选择有效下注额", targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
-  }
-  if (targetBet < minimumTarget && !isAllIn) {
-    return { valid: false, message: `最小加注需要加到 ${minimumTarget}`, targetBet, commitAmount, minimumTarget, maximumTarget, isAllIn };
-  }
-
-  return {
-    valid: true,
-    message: targetBet < minimumTarget && isAllIn ? "All In 未达到完整最小加注，不会更新最小加注幅度" : "",
-    targetBet,
-    commitAmount,
-    minimumTarget,
-    maximumTarget,
-    isAllIn
-  };
+  return validateRaiseTarget(player, rawTarget, getRaiseState());
 }
 
 function createParagraph(text) {
@@ -526,6 +448,10 @@ async function updateFirebaseState(options = {}) {
     expectedStateVersion !== null ||
     Array.isArray(allowedStatuses);
   const nextStateVersion = stateVersion + 1;
+  room.mode = normalizeRoomMode(room.mode, room.roomId);
+  room.hostClientId = getRoomHostId(room, clientId);
+  room.members = touchMember(room.members, clientId);
+
   const nextGameState = {
     currentRound,
     pot,
@@ -546,7 +472,10 @@ async function updateFirebaseState(options = {}) {
     updatedBy: clientId
   };
   const nextRoomData = {
+    mode: room.mode,
     operator: room.operator,
+    hostClientId: room.hostClientId,
+    members: room.members,
     gameState: nextGameState,
     players
   };
@@ -571,7 +500,13 @@ async function updateFirebaseState(options = {}) {
         return {
           ...currentRoom,
           ...nextRoomData,
-          operator: currentRoom.operator || nextRoomData.operator
+          mode: normalizeRoomMode(currentRoom.mode || nextRoomData.mode, room.roomId),
+          operator: currentRoom.operator || nextRoomData.operator,
+          hostClientId: getRoomHostId(currentRoom, nextRoomData.hostClientId),
+          members: {
+            ...normalizeMembers(currentRoom.members),
+            ...normalizeMembers(nextRoomData.members)
+          }
         };
       }, { applyLocally: false });
 
@@ -631,6 +566,7 @@ function normalizeIncomingPlayer(player, index) {
     chips,
     folded: Boolean(player?.folded),
     dealer: Boolean(player?.dealer),
+    ownerClientId: normalizePlayerOwnerId(player?.ownerClientId),
     bet: toNonNegativeNumber(player?.bet, 0),
     totalBet: toNonNegativeNumber(player?.totalBet, 0),
     allIn,
@@ -773,12 +709,16 @@ function applyRoomData(data) {
   handId = toNonNegativeNumber(gameState.handId, handId);
   handStatus = String(gameState.handStatus || inferHandStatus(gameState));
   stateVersion = toNonNegativeNumber(gameState.stateVersion, stateVersion);
+  room.mode = normalizeRoomMode(data.mode, room.roomId);
   room.operator = String(data.operator || room.operator || clientId);
+  room.hostClientId = getRoomHostId(data, room.operator || clientId);
+  room.members = touchMember(data.members, clientId);
   room.gameState.logs = Array.isArray(gameState.logs) ? gameState.logs.map(String) : [];
   room.gameState.inProgress = Boolean(gameState.inProgress);
   players = Array.isArray(data.players)
     ? data.players.map(normalizeIncomingPlayer)
     : players;
+  room.players = players;
 
   renderGameLog(room.gameState.logs);
   updateGameInfo();
@@ -850,7 +790,10 @@ function createRoom() {
   if (!room.roomId) {
     room.roomId = generateRoomId();
   }
+  room.mode = ROOM_MODES.room;
   room.operator = clientId;
+  room.hostClientId = clientId;
+  room.members = createMembersMap(clientId, room.members);
   handId = 0;
   handStatus = "setup";
   listenFirebaseUpdates();
@@ -878,7 +821,15 @@ function joinRoom(roomId) {
   const normalizedRoomId = normalizeRoomId(roomId);
   if (!normalizedRoomId) return;
 
+  const switchingRoom = room.roomId !== normalizedRoomId;
   room.roomId = normalizedRoomId;
+  room.mode = ROOM_MODES.room;
+  if (switchingRoom) {
+    room.operator = clientId;
+    room.hostClientId = clientId;
+    room.members = createMembersMap(clientId);
+  }
+  room.members = touchMember(room.members, clientId);
   roomIdInput.value = normalizedRoomId;
   listenFirebaseUpdates();
 }
@@ -941,6 +892,7 @@ addPlayerBtn.addEventListener("click", () => {
     chips: toPositiveInteger(initialChipsInput.value, 1000),
     folded: false,
     dealer: false,
+    ownerClientId: "",
     bet: 0,
     totalBet: 0,
     allIn: false,
@@ -1009,6 +961,7 @@ startGameBtn.addEventListener("click", async () => {
       chips: toPositiveInteger(chipsInputs[index].value, 1000),
       folded: false,
       dealer: index === 0,
+      ownerClientId: "",
       bet: 0,
       totalBet: 0,
       allIn: false,
@@ -1063,60 +1016,11 @@ function commitChips(player, requestedAmount) {
 }
 
 function getEligibleOrderFrom(startIndex, eligibleIndices = getEligiblePlayerIndices()) {
-  if (eligibleIndices.length === 0) return [];
-
-  const firstIndex = getNextEligibleIndexFrom(startIndex, eligibleIndices);
-  const ordered = [firstIndex];
-  while (ordered.length < eligibleIndices.length) {
-    ordered.push(getNextEligibleIndexAfter(ordered[ordered.length - 1], eligibleIndices));
-  }
-  return ordered;
+  return buildEligibleOrderFrom(startIndex, eligibleIndices);
 }
 
 function getHandLayout(dealerIndex, list = players) {
-  const eligibleIndices = getEligiblePlayerIndices(list);
-  const order = getEligibleOrderFrom(dealerIndex, eligibleIndices);
-  if (order.length === 0) {
-    return {
-      order,
-      dealerIndex: -1,
-      smallBlindIndex: -1,
-      bigBlindIndex: -1,
-      preflopFirstIndex: -1,
-      postflopFirstIndex: -1
-    };
-  }
-
-  if (order.length === 1) {
-    return {
-      order,
-      dealerIndex: order[0],
-      smallBlindIndex: -1,
-      bigBlindIndex: -1,
-      preflopFirstIndex: -1,
-      postflopFirstIndex: -1
-    };
-  }
-
-  if (order.length === 2) {
-    return {
-      order,
-      dealerIndex: order[0],
-      smallBlindIndex: order[0],
-      bigBlindIndex: order[1],
-      preflopFirstIndex: order[0],
-      postflopFirstIndex: order[1]
-    };
-  }
-
-  return {
-    order,
-    dealerIndex: order[0],
-    smallBlindIndex: order[1],
-    bigBlindIndex: order[2],
-    preflopFirstIndex: order[3 % order.length],
-    postflopFirstIndex: order[1]
-  };
+  return buildHandLayout(dealerIndex, list);
 }
 
 function setDealer(index) {
@@ -1993,6 +1897,7 @@ function createTableDraft() {
     seatIndex: index,
     seatStatus: normalizeSeatStatus(player.seatStatus, player.chips, false),
     chips: toNonNegativeNumber(player.chips, 0),
+    ownerClientId: normalizePlayerOwnerId(player.ownerClientId),
     dealer: Boolean(player.dealer)
   }));
 }
@@ -2028,6 +1933,7 @@ function normalizeDraftPlayer(draftPlayer, index) {
     chips,
     folded: !isEligibleForNextHand({ seatStatus, chips }),
     dealer: Boolean(draftPlayer?.dealer),
+    ownerClientId: normalizePlayerOwnerId(draftPlayer?.ownerClientId),
     bet: 0,
     totalBet: 0,
     allIn: false,
@@ -2164,6 +2070,7 @@ function renderTableManager() {
       seatIndex: tableDraft.length,
       seatStatus: "seated",
       chips: toPositiveInteger(initialChipsInput.value, 1000),
+      ownerClientId: "",
       dealer: false
     });
     renderTableManager();

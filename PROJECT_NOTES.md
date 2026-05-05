@@ -21,6 +21,8 @@ index.html
   -> loads styles.css
   -> loads src/main.js as a module
        -> imports Firebase helpers from src/firebase.js
+       -> imports client/room identity helpers from src/identity.js
+       -> imports pure table and betting rules from src/game-rules.js
        -> imports collapsible player manual rendering from src/guide.js
        -> imports chip riffle popover behavior from src/riffle.js
             -> imports sampled chip audio from src/riffle-sound.js
@@ -98,9 +100,36 @@ Initializes Firebase and exports the small API surface used by the app:
 
 The Firebase config is client-side config. It is not treated like a private secret in normal Firebase web apps, but real deployments still need Realtime Database Security Rules.
 
+### `src/identity.js`
+
+Owns the compatibility identity layer for the multiplayer-by-player roadmap:
+
+- Persistent local `clientId` in `localStorage`
+- Room modes: `local` and `room`
+- Room host id normalization
+- Room member map normalization and last-seen updates
+- Optional `ownerClientId` normalization for player objects
+- Permission helper stubs such as `canClientControlPlayer()` and `isRoomHost()`
+
+Important: this layer is currently scaffolding. Unbound players (`ownerClientId === ""`) remain controllable by legacy/shared-room clients so existing rooms and single-device usage keep working. Strict permission enforcement should be added in a later phase after the join/claim-player UI exists.
+
+### `src/game-rules.js`
+
+Owns pure, DOM-free poker table rules:
+
+- Seat status labels and normalization
+- Eligibility for the next hand
+- Next eligible seat lookup
+- Button / small blind / big blind / first-action layout, including heads-up handling
+- Action eligibility
+- Call amount
+- Raise minimums, max target, pot-sized presets, and validation
+
+Keep this module side-effect-free. It should be the first place to add unit tests for betting, all-in, side-pot-adjacent, and seat-rotation behavior.
+
 ### `src/main.js`
 
-Contains most of the app:
+Still orchestrates most of the app:
 
 - Module-level game state
 - Player setup
@@ -112,7 +141,7 @@ Contains most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-There is no separate state store, reducer, rule engine, or test harness yet.
+It now delegates identity normalization to `src/identity.js` and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 
@@ -180,7 +209,10 @@ Room data is mirrored into:
 ```js
 room = {
   roomId,
+  mode,
   operator,
+  hostClientId,
+  members,
   players,
   gameState: {
     currentRound,
@@ -204,11 +236,19 @@ room = {
 }
 ```
 
+Room identity fields:
+
+- `mode`: `local` or `room`. Local mode keeps single-device/shared-control behavior.
+- `operator`: legacy room creator/operator field, kept for compatibility.
+- `hostClientId`: normalized room host id. Existing rooms fall back to `operator`.
+- `members`: map keyed by `clientId`, currently used as presence/identity scaffolding.
+
 Player objects now include seat-management fields:
 
 - `seatIndex`: normalized seat order index. The array order is still the source of truth for seat order.
 - `seatStatus`: one of `seated`, `sittingOut`, `busted`, `left`.
 - `dealer`: marks the previous/current Button seat. Next-hand rotation skips non-eligible seats.
+- `ownerClientId`: optional future player-device binding. Empty string means legacy/unbound player.
 
 Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players can have `chips === 0` during an all-in hand; they are not marked `busted` until settlement finishes.
 
@@ -315,6 +355,9 @@ Implemented:
 - Side-pot construction and multi-winner distribution
 - Next-hand reset and dealer rotation
 - Firebase room sync with optimistic conflict checks
+- Custom in-app alert/confirm dialog UI instead of native browser dialogs
+- Extracted pure game/table rules in `src/game-rules.js`
+- Compatibility identity layer in `src/identity.js` with `clientId`, `mode`, `hostClientId`, `members`, and player `ownerClientId`
 
 Needs more validation:
 
@@ -333,6 +376,9 @@ Not implemented:
 - Lint/format tooling
 - Authentication
 - Database security rules in this repository
+- Strict per-player operation permissions
+- Join-room UI that lets each device claim or create a player identity
+- All-player confirmation flow for settlement and next-hand start
 
 ## Development Notes
 
@@ -353,8 +399,7 @@ http://localhost:8000/
 Syntax checks:
 
 ```bash
-node --check src/main.js
-node --check src/firebase.js
+for f in src/*.js; do node --check "$f" || exit 1; done
 git diff --check
 ```
 
@@ -388,12 +433,14 @@ Browser validation checklist:
 ## Safe Change Guidelines
 
 - Preserve DOM IDs used by `src/main.js`.
-- Keep game-rule changes small and manually test several betting flows.
+- Keep game-rule changes small, prefer pure helpers in `src/game-rules.js`, and manually test several betting flows.
 - If changing player object shape, update:
   - local creation
   - `normalizeIncomingPlayer()`
+  - `createTableDraft()` / `normalizeDraftPlayer()`
   - Firebase write/read paths
   - `updatePlayerBoxes()`
+- If changing room identity shape, update `src/identity.js`, `room` defaults, `applyRoomData()`, `updateFirebaseState()`, and docs together.
 - If changing side-pot behavior, add manual test notes or automated tests first.
 - If changing Firebase sync, keep guarded writes around action/settlement/reset flows.
 - Avoid adding a framework unless the user asks for a larger refactor.
@@ -401,8 +448,9 @@ Browser validation checklist:
 
 ## Suggested Next Steps
 
-1. Extract pure game rules from `src/main.js` into a testable module.
-2. Add unit tests for all-in, side-pot, and split-pot cases.
-3. Add a small manual QA script for common two-player and three-player flows.
-4. Add Firebase rules documentation.
-5. Consider room lifecycle controls: leave room, reset room, archive hand log.
+1. Build the player identity UI: local mode, room mode, join room, claim/create player, and display the current device's player.
+2. Enforce permissions in phases: own-player actions first, dealer-only deal confirmation, host-only table management after settlement.
+3. Add all-player confirmation state for settlement preview and next-hand start.
+4. Add unit tests for `src/game-rules.js` and `src/identity.js`, especially all-in, side-pot, split-pot, and heads-up rotation cases.
+5. Add Firebase rules documentation before treating identity fields as security boundaries.
+6. Consider room lifecycle controls: leave room, reset room, archive hand log.

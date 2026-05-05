@@ -24,6 +24,7 @@
 - 筹码归零的玩家会标记为待补码，下一手自动跳过
 - 初步支持边池计算和结算
 - 支持结算后开始下一局并轮转 Dealer
+- 已加入兼容身份层，为后续“不同设备以玩家身份加入房间”和房主牌桌管理打基础
 - 响应式界面，适配桌面和手机浏览器
 - 玩家区使用椭圆形牌桌布局，按玩家数量均匀分布座位；桌面为横向椭圆，手机为纵向椭圆
 - 深绿牌桌主题和扑克筹码图标
@@ -85,7 +86,9 @@ http://localhost:8000/
 │   └── poker-chip-icon.png
 ├── src/
 │   ├── firebase.js
+│   ├── game-rules.js
 │   ├── guide.js
+│   ├── identity.js
 │   ├── main.js
 │   ├── riffle.js
 │   └── riffle-sound.js
@@ -98,8 +101,10 @@ http://localhost:8000/
 
 - `index.html`: 页面结构和主要 DOM 容器。
 - `styles.css`: 全站视觉主题、响应式布局、游戏控件样式和 Chip Riffle 外观皮肤。
-- `src/main.js`: 牌局状态、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
+- `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
 - `src/firebase.js`: Firebase SDK 初始化与 Realtime Database API 导出。
+- `src/game-rules.js`: 座位资格、Button/盲注/行动顺序、跟注和加注规则等纯逻辑。
+- `src/identity.js`: 本机客户端 ID、房间模式、房主、成员列表和玩家归属字段的兼容身份层。
 - `src/guide.js`: 初始页和游戏页折叠玩家手册的内容与渲染。
 - `src/riffle.js`: 页眉 Chip Riffle 浮窗、换肤按钮、真实顺序洗筹动画和交互状态。
 - `src/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
@@ -123,10 +128,7 @@ Chip Riffle 音效使用真实筹码采样，不再使用程序化合成作为�
 常用检查：
 
 ```bash
-node --check src/main.js
-node --check src/firebase.js
-node --check src/riffle.js
-node --check src/riffle-sound.js
+for f in src/*.js; do node --check "$f" || exit 1; done
 git diff --check
 ```
 
@@ -151,7 +153,8 @@ python3 -m http.server 8000
 
 - All In、边池和复杂多人结算逻辑已有实现，但仍需要更多真实牌局场景验证。
 - 当前没有自动化测试套件。
-- 状态主要集中在 `src/main.js` 的模块级变量中，后续复杂化时可以考虑拆分为状态层、规则层和 UI 层。
+- 核心规则和身份工具已从 `src/main.js` 中拆出；UI、Firebase 写入编排和大部分状态仍集中在 `src/main.js`。
+- 身份层目前保持兼容模式：房间会记录房主、成员和玩家归属字段，但未绑定玩家仍按旧的公共操作方式运行；“只能操作自己的玩家”“所有玩家确认下一局”等权限会在后续阶段实现。
 - 房间同步依赖 Firebase CDN 和 Realtime Database；离线或网络受限时可能无法正常同步。
 - 本工具只负责筹码和下注流程，不判断牌型大小。
 
@@ -160,8 +163,10 @@ python3 -m http.server 8000
 欢迎提交 Issue 或 Pull Request。比较适合优先改进的方向：
 
 - 为下注和边池逻辑补充单元测试
-- 拆分核心游戏规则，降低 `src/main.js` 复杂度
+- 为 `src/game-rules.js` 和 `src/identity.js` 补充单元测试
+- 继续拆分 Firebase 写入编排和 DOM 渲染，降低 `src/main.js` 复杂度
 - 改进 Firebase 安全规则和房间生命周期
+- 开启按玩家身份加入房间、玩家操作权限和房主牌桌管理权限
 - 增加导出牌局日志或恢复历史牌局能力
 - 优化小屏幕上的密集操作体验
 
