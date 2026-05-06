@@ -3646,102 +3646,89 @@ function createSeatPoint(left, top, side, mobileLeft = left, mobileTop = top) {
   return { left, top, side, mobileLeft, mobileTop };
 }
 
+// Visual seat slots, ordered from the bottom-center seat clockwise around the table.
+// Slot 0 is always the "my player at bottom" anchor; adjust these arrays directly
+// when tuning the table layout.
 const TABLE_SEAT_LAYOUTS = {
   1: [
-    createSeatPoint(50, 14, "seat-top", 50, 7)
+    createSeatPoint(50, 86, "seat-bottom", 50, 93)
   ],
   2: [
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(50, 86, "seat-bottom", 50, 93)
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(50, 14, "seat-top", 50, 7)
   ],
   3: [
-    createSeatPoint(24, 28, "seat-left", 27, 22),
-    createSeatPoint(76, 28, "seat-right", 73, 22),
-    createSeatPoint(50, 86, "seat-bottom", 50, 93)
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(24, 28, "seat-left", 23, 22),
+    createSeatPoint(76, 28, "seat-right", 77, 22)
   ],
   4: [
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(88, 50, "seat-right", 79, 30),
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(12, 50, "seat-left", 21, 70)
+    createSeatPoint(12, 50, "seat-left", 21, 70),
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(88, 50, "seat-right", 79, 30)
   ],
   5: [
-    createSeatPoint(24, 22, "seat-top", 27, 17.5),
-    createSeatPoint(76, 22, "seat-top", 73, 17.5),
-    createSeatPoint(84, 62, "seat-right", 79, 65),
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(16, 62, "seat-left", 21, 65)
+    createSeatPoint(16, 62, "seat-left", 20, 75),
+    createSeatPoint(24, 22, "seat-top", 23, 17.5),
+    createSeatPoint(76, 22, "seat-top", 77, 17.5),
+    createSeatPoint(84, 62, "seat-right", 80, 75)
   ],
   6: [
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(80, 22, "seat-top", 74, 17.5),
-    createSeatPoint(80, 78, "seat-bottom", 74, 82.5),
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(20, 78, "seat-bottom", 26, 82.5),
-    createSeatPoint(20, 22, "seat-top", 26, 17.5)
+    createSeatPoint(20, 78, "seat-bottom", 23, 75),
+    createSeatPoint(20, 22, "seat-top", 23, 25),
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(80, 22, "seat-top", 77, 25),
+    createSeatPoint(80, 78, "seat-bottom", 77, 75)
   ],
   7: [
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(80, 21, "seat-top", 74, 17.5),
-    createSeatPoint(88, 58, "seat-right", 79, 66),
-    createSeatPoint(72, 84, "seat-bottom", 73, 82.5),
     createSeatPoint(50, 88, "seat-bottom", 50, 93),
-    createSeatPoint(28, 84, "seat-bottom", 27, 82.5),
-    createSeatPoint(12, 58, "seat-left", 21, 66)
+    createSeatPoint(28, 84, "seat-bottom", 23, 75),
+    createSeatPoint(12, 42, "seat-left", 18, 25),
+    createSeatPoint(35, 14, "seat-top", 25, 10),
+    createSeatPoint(65, 14, "seat-top", 75, 10),
+    createSeatPoint(88, 42, "seat-right", 82, 25),
+    createSeatPoint(72, 84, "seat-bottom", 77, 75)
   ],
   8: [
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(22, 80, "seat-bottom", 23, 75),
+    createSeatPoint(12, 50, "seat-left", 21, 30),
+    createSeatPoint(22, 20, "seat-top", 27, 17.5),
     createSeatPoint(50, 14, "seat-top", 50, 7),
     createSeatPoint(78, 20, "seat-top", 73, 17.5),
-    createSeatPoint(88, 50, "seat-right", 79, 31),
-    createSeatPoint(78, 80, "seat-bottom", 73, 82.5),
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(22, 80, "seat-bottom", 27, 82.5),
-    createSeatPoint(12, 50, "seat-left", 21, 69),
-    createSeatPoint(22, 20, "seat-top", 27, 17.5)
+    createSeatPoint(88, 50, "seat-right", 79, 30),
+    createSeatPoint(78, 80, "seat-bottom", 77, 75)
   ],
   9: [
+    createSeatPoint(50, 86, "seat-bottom", 50, 93),
+    createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
+    createSeatPoint(12, 54, "seat-left", 21, 70),
+    createSeatPoint(22, 20, "seat-top", 27, 17.5),
     createSeatPoint(50, 14, "seat-top", 50, 7),
     createSeatPoint(78, 20, "seat-top", 73, 17.5),
     createSeatPoint(88, 38, "seat-right", 79, 30),
     createSeatPoint(88, 68, "seat-right", 79, 70),
-    createSeatPoint(76, 82, "seat-bottom", 73, 82.5),
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
-    createSeatPoint(12, 54, "seat-left", 21, 70),
-    createSeatPoint(22, 20, "seat-top", 27, 17.5)
+    createSeatPoint(76, 82, "seat-bottom", 73, 82.5)
   ],
   10: [
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(76, 18, "seat-top", 73, 17.5),
-    createSeatPoint(88, 34, "seat-right", 79, 30),
-    createSeatPoint(88, 66, "seat-right", 79, 70),
-    createSeatPoint(76, 82, "seat-bottom", 73, 82.5),
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
     createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
     createSeatPoint(12, 66, "seat-left", 21, 70),
     createSeatPoint(12, 34, "seat-left", 21, 30),
-    createSeatPoint(24, 18, "seat-top", 27, 17.5)
+    createSeatPoint(24, 18, "seat-top", 27, 17.5),
+    createSeatPoint(50, 14, "seat-top", 50, 7),
+    createSeatPoint(76, 18, "seat-top", 73, 17.5),
+    createSeatPoint(88, 34, "seat-right", 79, 30),
+    createSeatPoint(88, 66, "seat-right", 79, 70),
+    createSeatPoint(76, 82, "seat-bottom", 73, 82.5)
   ]
 };
 
-function getSeatCoordinates(index, count) {
-  const layout = TABLE_SEAT_LAYOUTS[Math.min(Math.max(count, 1), MAX_PLAYERS)] || TABLE_SEAT_LAYOUTS[1];
-  return layout[index] || layout[index % layout.length];
-}
-
-function getSeatAnchorIndex(layout) {
-  let bestIndex = 0;
-  let bestScore = -Infinity;
-  layout.forEach((seat, index) => {
-    const desktopScore = seat.top - Math.abs(seat.left - 50) * 0.45;
-    const mobileScore = seat.mobileTop - Math.abs(seat.mobileLeft - 50) * 0.45;
-    const score = desktopScore + mobileScore;
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
-  });
-  return bestIndex;
+function getSeatLayout(count) {
+  return TABLE_SEAT_LAYOUTS[Math.min(Math.max(count, 1), MAX_PLAYERS)] || TABLE_SEAT_LAYOUTS[1];
 }
 
 function normalizeRotationOffset(length) {
@@ -3750,20 +3737,16 @@ function normalizeRotationOffset(length) {
 }
 
 function getVisualSeatCoordinates(playerIndex, count) {
-  const layout = TABLE_SEAT_LAYOUTS[Math.min(Math.max(count, 1), MAX_PLAYERS)] || TABLE_SEAT_LAYOUTS[1];
+  const layout = getSeatLayout(count);
   if (count <= 1) return layout[0];
 
   const currentDevicePlayerIndex = getCurrentDevicePlayerIndex();
   const manualOffset = normalizeRotationOffset(count);
-  if (isRoomMode() && currentDevicePlayerIndex >= 0) {
-    const anchorIndex = getSeatAnchorIndex(layout);
-    const baseOffset = anchorIndex - currentDevicePlayerIndex;
-    const visualIndex = (playerIndex + baseOffset + manualOffset + count) % count;
-    return layout[visualIndex];
-  }
-
-  const visualIndex = manualOffset + playerIndex;
-  return layout[visualIndex % count];
+  const anchorPlayerIndex = isRoomMode() && currentDevicePlayerIndex >= 0
+    ? currentDevicePlayerIndex
+    : 0;
+  const visualIndex = (playerIndex - anchorPlayerIndex + manualOffset + count) % count;
+  return layout[visualIndex];
 }
 
 function getCompactPlayerStatus(player) {
