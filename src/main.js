@@ -3696,9 +3696,9 @@ const TABLE_SEAT_LAYOUTS = {
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
     createSeatPoint(22, 80, "seat-bottom", 23, 75),
     createSeatPoint(12, 50, "seat-left", 21, 30),
-    createSeatPoint(22, 20, "seat-top", 27, 17.5),
+    createSeatPoint(22, 20, "seat-top", 25, 17.5),
     createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(78, 20, "seat-top", 73, 17.5),
+    createSeatPoint(78, 20, "seat-top", 75, 17.5),
     createSeatPoint(88, 50, "seat-right", 79, 30),
     createSeatPoint(78, 80, "seat-bottom", 77, 75)
   ],
