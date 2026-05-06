@@ -17,9 +17,6 @@
       <span class="brand-name">Poker Chips</span>
     </div>
     <div class="room-controls">
-      <label for="room-id">房间ID</label>
-      <input type="text" id="room-id" placeholder="请输入房间号" />
-      <button id="manual-sync" class="button button-ghost">同步</button>
       <span id="sync-status" class="sync-status">本地模式</span>
     </div>
   </header>
@@ -36,8 +33,11 @@
         <div class="mode-body">
           <div id="device-identity" class="device-identity" aria-live="polite"></div>
           <div id="room-entry" class="room-entry">
+            <label for="room-id">房间 ID</label>
+            <input type="text" id="room-id" placeholder="留空创建随机房间，输入后加入或创建指定房间" />
             <button id="create-room" class="button button-secondary" type="button">创建房间</button>
             <button id="join-room" class="button button-ghost" type="button">加入房间</button>
+            <button id="manual-sync" class="button button-ghost" type="button">重新连接</button>
           </div>
         </div>
       </div>

@@ -201,9 +201,9 @@ h3 {
 }
 
 .room-controls {
-  display: grid;
-  grid-template-columns: auto minmax(150px, 220px) auto auto;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -368,8 +368,8 @@ h3 {
 
 .mode-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 12px;
 }
 
@@ -391,9 +391,29 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.identity-manage-button {
+  width: fit-content;
+  min-height: 30px;
+  margin-top: 6px;
+  border-color: rgba(242, 217, 141, 0.24);
+  background: rgba(255, 248, 232, 0.08);
+  color: var(--ivory-100);
+  font-size: 0.76rem;
+  padding: 5px 10px;
+}
+
 .room-entry {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 8px;
+  align-items: end;
+}
+
+.room-entry label {
+  grid-column: 1 / -1;
+  color: rgba(244, 234, 210, 0.66);
+  font-size: 0.76rem;
+  font-weight: 800;
 }
 
 .room-entry[hidden] {
@@ -1512,7 +1532,7 @@ h3 {
 
 .table-manager-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   width: min(820px, 100%);
   height: auto;
   max-height: min(780px, calc(100vh - 36px));
@@ -1570,6 +1590,48 @@ h3 {
   padding: 12px 18px;
 }
 
+.identity-manager-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, auto);
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid rgba(244, 234, 210, 0.1);
+  background: rgba(255, 248, 232, 0.04);
+  padding: 14px 18px;
+}
+
+.identity-manager-summary {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.identity-manager-summary strong {
+  color: var(--ivory-50);
+  font-size: 0.94rem;
+}
+
+.identity-manager-summary span,
+.table-identity-status {
+  color: rgba(244, 234, 210, 0.66);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.identity-manager-actions,
+.table-identity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.identity-code-input {
+  min-height: 30px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  padding: 5px 10px;
+}
+
 .table-manager-rows {
   display: grid;
   min-height: 0;
@@ -1583,7 +1645,7 @@ h3 {
 
 .table-manager-row {
   display: grid;
-  grid-template-columns: 96px minmax(120px, 1fr) minmax(210px, 1.2fr) minmax(170px, 0.95fr);
+  grid-template-columns: 88px minmax(110px, 0.8fr) minmax(190px, 1fr) minmax(150px, 0.8fr) minmax(210px, 1fr);
   gap: 10px;
   align-items: center;
   border: 1px solid rgba(244, 234, 210, 0.12);
@@ -1598,7 +1660,8 @@ h3 {
 
 .table-seat-cell,
 .table-chip-cell,
-.table-status-cell {
+.table-status-cell,
+.table-identity-cell {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -1612,6 +1675,7 @@ h3 {
 .table-seat-actions,
 .table-chip-actions,
 .table-status-actions,
+.table-identity-actions,
 .table-manager-save-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2607,7 +2671,12 @@ h3 {
 
   .room-entry {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .room-entry label,
+  #room-id {
+    grid-column: 1 / -1;
   }
 
   .player-inputs,
@@ -2693,7 +2762,7 @@ h3 {
 
   .table-view-controls {
     display: grid;
-    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    grid-template-columns: 42px minmax(0, 1fr) 42px minmax(56px, 0.8fr);
   }
 
   .table-prompt-panel {
@@ -2767,6 +2836,21 @@ h3 {
 
   .table-manager-summary {
     padding: 11px 14px;
+  }
+
+  .identity-manager-panel {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px 14px;
+  }
+
+  .identity-manager-actions,
+  .table-identity-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .identity-code-input {
+    width: 100%;
   }
 
   .table-manager-rows {

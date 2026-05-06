@@ -2,6 +2,7 @@
 // Client and room identity helpers for the multiplayer collaboration roadmap.
 
 export const CLIENT_ID_KEY = "pokerChipsClientId";
+const ACCESS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const ROOM_MODES = {
   local: "local",
   room: "room"
@@ -36,12 +37,54 @@ export function normalizeClientId(value) {
   return String(value || "").trim();
 }
 
+export function normalizeAccessCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+export function createAccessCode(length = 6, cryptoApi = globalThis.crypto) {
+  const bytes = new Uint8Array(length);
+  if (cryptoApi?.getRandomValues) {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    bytes.forEach((_, index) => {
+      bytes[index] = Math.floor(Math.random() * 256);
+    });
+  }
+  return Array.from(bytes, byte => ACCESS_CODE_ALPHABET[byte % ACCESS_CODE_ALPHABET.length]).join("");
+}
+
+export function hashAccessCode(code, salt = "") {
+  const normalizedCode = normalizeAccessCode(code);
+  if (!normalizedCode) return "";
+  const input = `${String(salt || "")}:${normalizedCode}`;
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `v1_${(hash >>> 0).toString(36)}`;
+}
+
+export function verifyAccessCode(code, hash, salt = "") {
+  return Boolean(hash && hashAccessCode(code, salt) === String(hash));
+}
+
+export function normalizeAdminPlayerIds(value = []) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(String).filter(Boolean))];
+}
+
 export function createRoomMember(clientId, overrides = {}) {
   const normalizedClientId = normalizeClientId(overrides.clientId || clientId);
   const now = Date.now();
   return {
     displayName: "",
     role: "participant",
+    claimedPlayerId: "",
+    adminVerified: false,
     joinedAt: now,
     lastSeenAt: now,
     ...overrides,
