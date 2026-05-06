@@ -2707,26 +2707,26 @@ h3 {
   }
 
   .table-manager-backdrop {
-    align-items: end;
-    padding: 0;
+    place-items: center;
+    padding: 14px;
   }
 
   .table-action-dialog-backdrop {
-    align-items: end;
-    padding: 0;
+    place-items: center;
+    padding: 14px;
   }
 
   .app-dialog-backdrop {
-    align-items: end;
-    padding: 0;
+    place-items: center;
+    padding: 14px;
   }
 
   .app-dialog {
-    width: 100%;
-    border-right: 0;
-    border-bottom: 0;
-    border-left: 0;
-    border-radius: 14px 14px 0 0;
+    width: min(420px, 100%);
+    max-height: calc(100vh - 28px);
+    overflow-y: auto;
+    border: 1px solid rgba(242, 217, 141, 0.28);
+    border-radius: 14px;
     padding: 16px;
   }
 
@@ -2739,12 +2739,10 @@ h3 {
   }
 
   .table-action-dialog {
-    width: 100%;
-    max-height: min(88vh, 760px);
-    border-right: 0;
-    border-bottom: 0;
-    border-left: 0;
-    border-radius: 14px 14px 0 0;
+    width: min(620px, 100%);
+    max-height: calc(100vh - 28px);
+    border: 1px solid rgba(242, 217, 141, 0.28);
+    border-radius: 14px;
   }
 
   .table-action-dialog-header {
@@ -2756,12 +2754,11 @@ h3 {
   }
 
   .table-manager-panel {
-    width: 100%;
-    height: min(88vh, 760px);
-    max-height: min(88vh, 760px);
-    border-right: 0;
-    border-bottom: 0;
-    border-left: 0;
+    width: min(820px, 100%);
+    height: min(82vh, 760px);
+    max-height: calc(100vh - 28px);
+    border: 1px solid rgba(242, 217, 141, 0.24);
+    border-radius: var(--radius);
   }
 
   .table-manager-header {
