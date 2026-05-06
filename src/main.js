@@ -3664,9 +3664,9 @@ const TABLE_SEAT_LAYOUTS = {
   ],
   4: [
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(12, 50, "seat-left", 21, 70),
+    createSeatPoint(12, 50, "seat-left", 21, 72),
     createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(88, 50, "seat-right", 79, 30)
+    createSeatPoint(88, 50, "seat-right", 79, 28)
   ],
   5: [
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
@@ -3695,34 +3695,34 @@ const TABLE_SEAT_LAYOUTS = {
   8: [
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
     createSeatPoint(22, 80, "seat-bottom", 23, 75),
-    createSeatPoint(12, 50, "seat-left", 21, 30),
+    createSeatPoint(12, 50, "seat-left", 21, 28),
     createSeatPoint(22, 20, "seat-top", 25, 17.5),
     createSeatPoint(50, 14, "seat-top", 50, 7),
     createSeatPoint(78, 20, "seat-top", 75, 17.5),
-    createSeatPoint(88, 50, "seat-right", 79, 30),
+    createSeatPoint(88, 50, "seat-right", 79, 28),
     createSeatPoint(78, 80, "seat-bottom", 77, 75)
   ],
   9: [
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
     createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
-    createSeatPoint(12, 54, "seat-left", 21, 70),
+    createSeatPoint(12, 54, "seat-left", 21, 72),
     createSeatPoint(22, 20, "seat-top", 27, 17.5),
     createSeatPoint(50, 14, "seat-top", 50, 7),
     createSeatPoint(78, 20, "seat-top", 73, 17.5),
-    createSeatPoint(88, 38, "seat-right", 79, 30),
-    createSeatPoint(88, 68, "seat-right", 79, 70),
+    createSeatPoint(88, 38, "seat-right", 79, 28),
+    createSeatPoint(88, 68, "seat-right", 79, 72),
     createSeatPoint(76, 82, "seat-bottom", 73, 82.5)
   ],
   10: [
     createSeatPoint(50, 86, "seat-bottom", 50, 93),
     createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
-    createSeatPoint(12, 66, "seat-left", 21, 70),
-    createSeatPoint(12, 34, "seat-left", 21, 30),
+    createSeatPoint(12, 66, "seat-left", 21, 72),
+    createSeatPoint(12, 34, "seat-left", 21, 28),
     createSeatPoint(24, 18, "seat-top", 27, 17.5),
     createSeatPoint(50, 14, "seat-top", 50, 7),
     createSeatPoint(76, 18, "seat-top", 73, 17.5),
-    createSeatPoint(88, 34, "seat-right", 79, 30),
-    createSeatPoint(88, 66, "seat-right", 79, 70),
+    createSeatPoint(88, 34, "seat-right", 79, 28),
+    createSeatPoint(88, 66, "seat-right", 79, 72),
     createSeatPoint(76, 82, "seat-bottom", 73, 82.5)
   ]
 };
