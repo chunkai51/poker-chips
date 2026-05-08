@@ -1,0 +1,13 @@
+{
+  "name": "poker-chips-functions",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.2"
+  }
+}

@@ -1,5 +1,15 @@
 // src/main.js
-import { db, get, onValue, ref, runTransaction, update } from "./firebase.js";
+import {
+  auth,
+  db,
+  get,
+  onAuthStateChanged,
+  onValue,
+  ref,
+  runTransaction,
+  signInAnonymously,
+  update
+} from "./firebase.js";
 import {
   ROOM_MODES,
   createAccessCode,
@@ -58,7 +68,8 @@ const addPlayerBtn = document.getElementById("add-player");
 const initialChipsInput = document.getElementById("initial-chips");
 const bigBlindInput = document.getElementById("big-blind");
 const roomIdInput = document.getElementById("room-id");
-const manualSyncBtn = document.getElementById("manual-sync");
+const playerAliasInput = document.getElementById("player-alias");
+const copyInviteBtn = document.getElementById("copy-invite");
 const localModeBtn = document.getElementById("local-mode");
 const roomModeBtn = document.getElementById("room-mode");
 const createRoomBtn = document.getElementById("create-room");
@@ -111,7 +122,10 @@ const MAX_PLAYERS = 10;
 const TABLE_VIEW_ROTATION_KEY_PREFIX = "pokerChipsTableViewRotation:";
 const ROOM_ADMIN_CODE_KEY_PREFIX = "pokerChipsAdminCode:";
 const PLAYER_CODE_KEY_PREFIX = "pokerChipsPlayerCode:";
-const clientId = getClientId();
+const ROOM_DISPLAY_NAME_KEY = "pokerChipsDisplayName";
+let clientId = getClientId();
+let authReady = false;
+let authUnavailable = false;
 
 // ----------------------
 // 房间系统数据结构
@@ -121,8 +135,10 @@ let room = {
   mode: ROOM_MODES.local,
   operator: clientId,
   hostClientId: clientId,
+  inviteToken: "",
   adminKeyHash: "",
   adminPlayerIds: [],
+  joinRequests: {},
   members: createMembersMap(clientId),
   players: [],
   gameState: {
@@ -173,6 +189,114 @@ function getPlayerName(player) {
 
 function getClientShortId(value = clientId) {
   return String(value || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 6) || "local";
+}
+
+function normalizeInviteToken(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 96);
+}
+
+function createInviteToken(length = 22) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = new Uint8Array(length);
+  if (crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    bytes.forEach((_, index) => {
+      bytes[index] = Math.floor(Math.random() * 256);
+    });
+  }
+  return Array.from(bytes, byte => alphabet[byte % alphabet.length]).join("");
+}
+
+function getDisplayNameStorageKey(roomId = room.roomId) {
+  return `${ROOM_DISPLAY_NAME_KEY}:${roomId || "global"}`;
+}
+
+function getPreferredDisplayName(roomId = room.roomId) {
+  try {
+    return String(localStorage.getItem(getDisplayNameStorageKey(roomId)) ||
+      localStorage.getItem(ROOM_DISPLAY_NAME_KEY) ||
+      "").trim().slice(0, 24);
+  } catch (_) {
+    return "";
+  }
+}
+
+function rememberPreferredDisplayName(name, roomId = room.roomId) {
+  const safeName = String(name || "").trim().slice(0, 24);
+  if (!safeName) return;
+  try {
+    localStorage.setItem(ROOM_DISPLAY_NAME_KEY, safeName);
+    if (roomId) localStorage.setItem(getDisplayNameStorageKey(roomId), safeName);
+  } catch (_) {
+    // Display names are convenience-only.
+  }
+}
+
+function getInviteUrl(roomId = room.roomId, inviteToken = room.inviteToken) {
+  if (!roomId) return "";
+  const url = new URL(window.location.href);
+  url.searchParams.set("room", roomId);
+  if (inviteToken) url.searchParams.set("invite", inviteToken);
+  return url.toString();
+}
+
+function getRoomLinkParams() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    roomId: normalizeRoomId(params.get("room") || params.get("roomId") || ""),
+    inviteToken: normalizeInviteToken(params.get("invite") || "")
+  };
+}
+
+function normalizeJoinRequests(value = {}) {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, request]) => {
+      const requestClientId = normalizePlayerOwnerId(request?.clientId || key);
+      if (!requestClientId) return null;
+      const playerId = String(request?.playerId || "");
+      const displayName = String(request?.displayName || "").trim().slice(0, 24);
+      return [requestClientId, {
+        clientId: requestClientId,
+        playerId,
+        displayName,
+        type: request?.type === "reclaim" ? "reclaim" : "join",
+        inviteToken: normalizeInviteToken(request?.inviteToken || ""),
+        requestedAt: toNonNegativeNumber(request?.requestedAt, Date.now())
+      }];
+    })
+    .filter(Boolean));
+}
+
+function getJoinRequestForClient(actorClientId = clientId) {
+  return normalizeJoinRequests(room.joinRequests)[normalizePlayerOwnerId(actorClientId)] || null;
+}
+
+function getJoinRequestsForPlayer(playerId) {
+  return Object.values(normalizeJoinRequests(room.joinRequests))
+    .filter(request => request.playerId === playerId);
+}
+
+function getPendingJoinRequestCount() {
+  return Object.keys(normalizeJoinRequests(room.joinRequests)).length;
+}
+
+function touchMemberWithProfile(existingMembers = room.members, actorClientId = clientId, overrides = {}) {
+  const members = touchMember(existingMembers, actorClientId);
+  const currentMember = members[actorClientId] || {};
+  const displayName = String(overrides.displayName || currentMember.displayName || getPreferredDisplayName()).trim().slice(0, 24);
+  members[actorClientId] = {
+    ...currentMember,
+    ...overrides,
+    clientId: actorClientId,
+    displayName,
+    lastSeenAt: Date.now()
+  };
+  return members;
 }
 
 function getAdminCodeStorageKey(roomId = room.roomId) {
@@ -268,6 +392,70 @@ function needsRemoteSync() {
   return isRoomMode() && Boolean(room.roomId);
 }
 
+function rekeyRoomMember(previousClientId, nextClientId) {
+  if (!previousClientId || !nextClientId || previousClientId === nextClientId) return;
+  const members = normalizeMembers(room.members);
+  const previousMember = members[previousClientId] || {};
+  delete members[previousClientId];
+  members[nextClientId] = {
+    ...previousMember,
+    clientId: nextClientId,
+    lastSeenAt: Date.now()
+  };
+  room.members = members;
+  players.forEach(player => {
+    if (normalizePlayerOwnerId(player.ownerClientId) === previousClientId) {
+      player.ownerClientId = nextClientId;
+    }
+  });
+  if (room.operator === previousClientId) room.operator = nextClientId;
+  if (room.hostClientId === previousClientId) room.hostClientId = nextClientId;
+}
+
+function applyAuthenticatedClientId(nextClientId) {
+  const normalizedClientId = normalizePlayerOwnerId(nextClientId);
+  if (!normalizedClientId || normalizedClientId === clientId) return;
+  const previousClientId = clientId;
+  clientId = normalizedClientId;
+  rekeyRoomMember(previousClientId, clientId);
+  room.members = touchMemberWithProfile(room.members, clientId);
+  if (isLocalMode()) {
+    room.operator = clientId;
+    room.hostClientId = clientId;
+  }
+  refreshInteractiveControls();
+  if (isRoomMode() && room.roomId) {
+    updateRoomMemberPresence();
+  }
+}
+
+function startAnonymousIdentity() {
+  if (!auth) {
+    authReady = true;
+    authUnavailable = true;
+    return;
+  }
+  onAuthStateChanged(auth, (user) => {
+    authReady = true;
+    if (user?.uid) {
+      applyAuthenticatedClientId(user.uid);
+      if (isRoomMode() && room.roomId) {
+        stopRoomListener();
+        listenFirebaseUpdates();
+        updateRoomMemberPresence();
+      }
+      setSyncStatus(isRoomMode() && room.roomId ? "已连接身份" : "身份已就绪", "ok");
+    }
+    renderIdentityControls();
+  });
+  signInAnonymously(auth).catch(() => {
+    authReady = true;
+    authUnavailable = true;
+    setSyncStatus(isRoomMode() ? "匿名身份不可用，使用本机身份" : "本地模式");
+    renderIdentityControls();
+  });
+}
+
 function getHostClientId(roomData = room) {
   const mode = normalizeRoomMode(roomData?.mode, roomData?.roomId || room.roomId);
   const fallbackClientId = mode === ROOM_MODES.local ? clientId : roomData?.operator || "";
@@ -349,6 +537,15 @@ function canCurrentClientControlPlayer(player) {
 
 function canCurrentClientManageRoom() {
   return canClientManageRoomData(clientId, room);
+}
+
+function getCurrentRoomRoleLabel(roomData = room) {
+  if (isLocalMode()) return "本地管理";
+  if (getHostClientId(roomData) === clientId) return "房主";
+  const currentPlayer = getCurrentDevicePlayer(roomData.players || players);
+  if (currentPlayer && normalizeAdminPlayerIds(roomData.adminPlayerIds).includes(currentPlayer.id)) return "协管";
+  if (canClientManageRoomData(clientId, roomData)) return "管理员";
+  return "玩家";
 }
 
 function canCurrentClientModifyClaims() {
@@ -627,8 +824,10 @@ function enterLocalMode() {
   room.mode = ROOM_MODES.local;
   room.operator = clientId;
   room.hostClientId = clientId;
+  room.inviteToken = "";
   room.adminKeyHash = "";
   room.adminPlayerIds = [];
+  room.joinRequests = {};
   room.members = createMembersMap(clientId);
   roomIdInput.value = "";
   syncReady = true;
@@ -674,8 +873,13 @@ function renderIdentityControls() {
     roomModeBtn.disabled = gameStarted && !isRoomMode();
   }
   if (roomEntry) roomEntry.hidden = !isRoomMode();
-  if (createRoomBtn) createRoomBtn.disabled = gameStarted || syncWriteInProgress;
-  if (joinRoomBtn) joinRoomBtn.disabled = gameStarted || syncWriteInProgress;
+  const roomAuthPending = isRoomMode() && !authReady;
+  if (createRoomBtn) createRoomBtn.disabled = gameStarted || syncWriteInProgress || roomAuthPending;
+  if (joinRoomBtn) joinRoomBtn.disabled = gameStarted || syncWriteInProgress || roomAuthPending;
+  if (copyInviteBtn) copyInviteBtn.disabled = !isRoomMode() || !room.roomId;
+  if (playerAliasInput && document.activeElement !== playerAliasInput) {
+    playerAliasInput.value = getPreferredDisplayName();
+  }
   if (!deviceIdentityEl) return;
 
   deviceIdentityEl.replaceChildren();
@@ -684,10 +888,11 @@ function renderIdentityControls() {
   const detail = document.createElement("span");
   const roomText = isRoomMode()
     ? room.roomId
-      ? `房间 ${room.roomId} · ${Object.keys(room.members || {}).length || 1} 台设备`
+      ? `房间 ${room.roomId} · ${Object.keys(room.members || {}).length || 1} 台设备${getPendingJoinRequestCount() ? ` · ${getPendingJoinRequestCount()} 个请求` : ""}`
       : "先创建或加入房间"
     : "不写入远程房间";
-  detail.textContent = `${getIdentitySummaryText()} · ${roomText}`;
+  const authText = authUnavailable ? "本机身份" : authReady ? "匿名身份" : "身份连接中";
+  detail.textContent = `${getIdentitySummaryText()} · ${roomText} · ${authText}`;
   deviceIdentityEl.append(title, detail);
   if (isRoomMode() && room.roomId) {
     const manageButton = createButton("席位与身份", openTableManager, false, "identity-manage-button");
@@ -801,6 +1006,21 @@ async function refreshFromRemote() {
   }
 }
 
+async function updateRoomMemberPresence(extra = {}) {
+  if (!isRoomMode() || !room.roomId) return false;
+  const member = touchMemberWithProfile(room.members, clientId, extra)[clientId];
+  room.members = {
+    ...normalizeMembers(room.members),
+    [clientId]: member
+  };
+  try {
+    await update(ref(db, `rooms/${room.roomId}/members/${clientId}`), member);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function isRemoteHandStill(expectedHandId, allowedStatuses) {
   const remoteGameState = await getRemoteGameState();
   if (!remoteGameState) return !room.roomId;
@@ -834,7 +1054,7 @@ async function updateFirebaseState(options = {}) {
   const nextStateVersion = stateVersion + 1;
   room.mode = normalizeRoomMode(room.mode, room.roomId);
   room.hostClientId = getRoomHostId(room, clientId);
-  room.members = touchMember(room.members, clientId);
+  room.members = touchMemberWithProfile(room.members, clientId);
 
   const nextGameState = {
     currentRound,
@@ -860,8 +1080,10 @@ async function updateFirebaseState(options = {}) {
     mode: room.mode,
     operator: room.operator,
     hostClientId: room.hostClientId,
+    inviteToken: room.inviteToken || "",
     adminKeyHash: room.adminKeyHash || "",
     adminPlayerIds: normalizeAdminPlayerIds(room.adminPlayerIds),
+    joinRequests: normalizeJoinRequests(room.joinRequests),
     members: room.members,
     gameState: nextGameState,
     players
@@ -891,8 +1113,10 @@ async function updateFirebaseState(options = {}) {
           mode: normalizeRoomMode(currentRoom.mode || nextRoomData.mode, room.roomId),
           operator: currentRoom.operator || nextRoomData.operator,
           hostClientId: getRoomHostId(currentRoom, nextRoomData.hostClientId),
+          inviteToken: currentRoom.inviteToken || nextRoomData.inviteToken,
           adminKeyHash: currentRoom.adminKeyHash || nextRoomData.adminKeyHash,
           adminPlayerIds: normalizeAdminPlayerIds(currentRoom.adminPlayerIds || nextRoomData.adminPlayerIds),
+          joinRequests: normalizeJoinRequests(currentRoom.joinRequests || nextRoomData.joinRequests),
           members: {
             ...normalizeMembers(currentRoom.members),
             ...normalizeMembers(nextRoomData.members)
@@ -1109,9 +1333,11 @@ function applyRoomData(data) {
   room.mode = normalizeRoomMode(data.mode, room.roomId);
   room.operator = String(data.operator || room.operator || clientId);
   room.hostClientId = getRoomHostId(data, room.operator || clientId);
+  room.inviteToken = normalizeInviteToken(data.inviteToken || room.inviteToken || "");
   room.adminKeyHash = String(data.adminKeyHash || room.adminKeyHash || "");
   room.adminPlayerIds = normalizeAdminPlayerIds(data.adminPlayerIds);
-  room.members = touchMember(data.members, clientId);
+  room.joinRequests = normalizeJoinRequests(data.joinRequests);
+  room.members = touchMemberWithProfile(data.members, clientId);
   room.gameState.logs = Array.isArray(gameState.logs) ? gameState.logs.map(String) : [];
   room.gameState.inProgress = Boolean(gameState.inProgress);
   players = Array.isArray(data.players)
@@ -1192,31 +1418,40 @@ function createRoom() {
   if (!room.roomId) {
     room.roomId = generateRoomId();
   }
-  const adminCode = createAccessCode();
   room.mode = ROOM_MODES.room;
   room.operator = clientId;
   room.hostClientId = clientId;
-  room.adminKeyHash = hashAccessCode(adminCode, getAdminCodeSalt(room.roomId));
+  room.inviteToken = createInviteToken();
+  room.adminKeyHash = "";
   room.adminPlayerIds = [];
+  room.joinRequests = {};
   room.members = createMembersMap(clientId, {
     [clientId]: {
+      role: "host",
       adminVerified: true
     }
   });
-  rememberAdminCode(adminCode, room.roomId);
+  room.members = touchMemberWithProfile(room.members, clientId, { role: "host", adminVerified: true });
   syncReady = true;
   loadTableViewRotation();
   handId = 0;
   handStatus = "setup";
   listenFirebaseUpdates();
   renderIdentityControls();
-  showAppAlert(`房间 ${room.roomId} 已创建。\n管理码：${adminCode}\n请保存这个管理码，用于换设备后恢复管理权限。`, "房间已创建");
+  const inviteUrl = getInviteUrl();
+  if (inviteUrl) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", room.roomId);
+    url.searchParams.set("invite", room.inviteToken);
+    window.history.replaceState({}, "", url.toString());
+  }
+  showAppAlert(`房间 ${room.roomId} 已创建。\n分享邀请链接后，玩家输入昵称并请求坐下，由你批准。`, "房间已创建");
 }
 
 function generateRoomId() {
-  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const alphabet = "abcdefghijkmnopqrstuvwxyz23456789";
   let id = "";
-  const bytes = new Uint8Array(4);
+  const bytes = new Uint8Array(8);
   if (crypto.getRandomValues) {
     crypto.getRandomValues(bytes);
     bytes.forEach(byte => {
@@ -1225,15 +1460,16 @@ function generateRoomId() {
     return id;
   }
 
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 8; index += 1) {
     id += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
   return id;
 }
 
-function joinRoom(roomId) {
+function joinRoom(roomId, { inviteToken = "" } = {}) {
   const normalizedRoomId = normalizeRoomId(roomId);
   if (!normalizedRoomId) return;
+  const normalizedInviteToken = normalizeInviteToken(inviteToken);
 
   const switchingRoom = room.roomId !== normalizedRoomId;
   room.roomId = normalizedRoomId;
@@ -1241,16 +1477,21 @@ function joinRoom(roomId) {
   if (switchingRoom) {
     room.operator = "";
     room.hostClientId = "";
+    room.inviteToken = normalizedInviteToken;
     room.adminKeyHash = "";
     room.adminPlayerIds = [];
+    room.joinRequests = {};
     room.members = createMembersMap(clientId);
     syncReady = false;
+  } else if (normalizedInviteToken && !room.inviteToken) {
+    room.inviteToken = normalizedInviteToken;
   }
-  room.members = touchMember(room.members, clientId);
+  room.members = touchMemberWithProfile(room.members, clientId);
   roomIdInput.value = normalizedRoomId;
   loadTableViewRotation();
   listenFirebaseUpdates();
   renderIdentityControls();
+  updateRoomMemberPresence();
 }
 
 function syncRoomFromInput() {
@@ -1259,15 +1500,34 @@ function syncRoomFromInput() {
   joinRoom(id);
 }
 
-if (manualSyncBtn) {
-  manualSyncBtn.addEventListener("click", () => {
-    const id = normalizeRoomId(roomIdInput.value);
-    if (!id) {
-      showAppAlert("请输入房间ID");
+if (playerAliasInput) {
+  playerAliasInput.value = getPreferredDisplayName();
+  playerAliasInput.addEventListener("change", async () => {
+    const safeName = playerAliasInput.value.trim().slice(0, 24);
+    playerAliasInput.value = safeName;
+    rememberPreferredDisplayName(safeName);
+    if (isRoomMode() && room.roomId) {
+      await updateRoomMemberPresence({ displayName: safeName });
+      renderIdentityControls();
+      if (tableManagerOpen) renderTableManager();
+    }
+  });
+}
+
+if (copyInviteBtn) {
+  copyInviteBtn.addEventListener("click", async () => {
+    if (!isRoomMode() || !room.roomId) {
+      showAppAlert("请先创建或加入房间。");
       return;
     }
-    room.mode = ROOM_MODES.room;
-    joinRoom(id);
+    const inviteUrl = getInviteUrl();
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      showAppAlert("邀请链接已复制。朋友打开后输入昵称，请求坐下即可。", "已复制邀请");
+    } catch (_) {
+      showAppAlert(inviteUrl, "邀请链接");
+    }
   });
 }
 
@@ -1282,6 +1542,7 @@ if (roomModeBtn) {
 if (createRoomBtn) {
   createRoomBtn.addEventListener("click", async () => {
     if (gameStarted) return;
+    rememberPreferredDisplayName(playerAliasInput?.value || getPreferredDisplayName());
     room.roomId = normalizeRoomId(roomIdInput.value);
     createRoom();
     roomIdInput.value = room.roomId;
@@ -1297,6 +1558,7 @@ if (joinRoomBtn) {
       showAppAlert("请输入房间ID");
       return;
     }
+    rememberPreferredDisplayName(playerAliasInput?.value || getPreferredDisplayName());
     joinRoom(id);
   });
 }
@@ -1357,8 +1619,10 @@ function isClaimedByOtherDevice(player) {
 function getSetupClaimLabel(player) {
   if (!isRoomMode()) return "本地";
   if (isCurrentDevicePlayer(player)) return "我的座位";
-  if (isClaimedByOtherDevice(player)) return "接管";
-  return "绑定";
+  const currentRequest = getJoinRequestForClient();
+  if (currentRequest?.playerId === player.id) return "待批准";
+  if (isClaimedByOtherDevice(player)) return "请求接管";
+  return "请求坐下";
 }
 
 function setCurrentMemberClaim(playerId, extra = {}) {
@@ -1399,7 +1663,7 @@ function getClaimAuthForPlayer(player, code = "", forceAdmin = false) {
   const normalizedCode = normalizeAccessCode(code) || getRememberedPlayerCode(player?.id);
   const canForce = forceAdmin && canCurrentClientManageRoom();
   const canUseCode = Boolean(player?.playerKeyHash && isPlayerCodeValid(player, normalizedCode));
-  const firstClaim = !player?.playerKeyHash;
+  const firstClaim = !player?.playerKeyHash && canCurrentClientManageRoom();
   return {
     code: normalizedCode,
     canForce,
@@ -1427,7 +1691,7 @@ async function claimPlayerIdentity(playerId, { code = "", forceAdmin = false, an
     showAppAlert("请输入该玩家的玩家码，或由管理员重置/接管。");
     return;
   }
-  const generatedCode = auth.firstClaim ? createAccessCode() : "";
+  const generatedCode = auth.firstClaim && !auth.canForce ? createAccessCode() : "";
   const generatedHash = generatedCode
     ? hashAccessCode(generatedCode, getPlayerCodeSalt(playerId))
     : "";
@@ -1443,7 +1707,7 @@ async function claimPlayerIdentity(playerId, { code = "", forceAdmin = false, an
 
       const adminForce = forceAdmin && canClientManageRoomData(clientId, currentRoom);
       const remoteCanUseCode = Boolean(target.playerKeyHash && isPlayerCodeValid(target, auth.code, currentRoom));
-      const remoteFirstClaim = !target.playerKeyHash;
+      const remoteFirstClaim = !target.playerKeyHash && auth.firstClaim;
       if (!adminForce && !remoteCanUseCode && !remoteFirstClaim) return undefined;
 
       remotePlayers.forEach(item => {
@@ -1565,7 +1829,140 @@ async function togglePlayerClaim(playerId) {
     await releaseCurrentPlayerIdentity();
     return;
   }
-  await claimPlayerIdentity(playerId);
+  if (canCurrentClientManageRoom()) {
+    await claimPlayerIdentity(playerId, { forceAdmin: true, announceCode: false });
+    return;
+  }
+  await requestSeatOwnership(playerId);
+}
+
+async function requestSeatOwnership(playerId) {
+  if (!isRoomMode() || !room.roomId) return;
+  const player = players.find(item => item.id === playerId);
+  if (!player) return;
+  const displayName = String(playerAliasInput?.value || getPreferredDisplayName()).trim().slice(0, 24);
+  if (!displayName) {
+    showAppAlert("请先输入你的昵称，再请求坐下。");
+    playerAliasInput?.focus();
+    return;
+  }
+  rememberPreferredDisplayName(displayName);
+  const request = {
+    clientId,
+    playerId,
+    displayName,
+    type: isClaimedByOtherDevice(player) ? "reclaim" : "join",
+    inviteToken: room.inviteToken || "",
+    requestedAt: Date.now()
+  };
+  setMutationInProgress(true);
+  try {
+    await update(ref(db, `rooms/${room.roomId}/joinRequests/${clientId}`), request);
+    room.joinRequests = {
+      ...normalizeJoinRequests(room.joinRequests),
+      [clientId]: request
+    };
+    await updateRoomMemberPresence({ displayName });
+    showAppAlert("请求已发送。房主或协管批准后，这个座位会绑定到当前设备。", "等待批准");
+    setSyncStatus("等待批准", "ok");
+  } catch (_) {
+    showAppAlert("请求发送失败，请检查房间连接后重试。");
+  } finally {
+    setMutationInProgress(false);
+    renderSetupPlayerInputs();
+    updatePlayerBoxes();
+    if (tableManagerOpen) renderTableManager();
+  }
+}
+
+async function approveSeatRequest(requestClientId) {
+  if (!canCurrentClientManageRoom() || !room.roomId) return;
+  const request = normalizeJoinRequests(room.joinRequests)[requestClientId];
+  if (!request) return;
+  const target = players.find(player => player.id === request.playerId);
+  if (!target) return;
+
+  setMutationInProgress(true);
+  try {
+    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
+      if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
+      const requests = normalizeJoinRequests(currentRoom.joinRequests);
+      const remoteRequest = requests[requestClientId];
+      if (!remoteRequest || remoteRequest.playerId !== request.playerId) return undefined;
+      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
+      const remoteTarget = remotePlayers.find(player => player.id === remoteRequest.playerId);
+      if (!remoteTarget) return undefined;
+      remotePlayers.forEach(player => {
+        if (normalizePlayerOwnerId(player.ownerClientId) === requestClientId) {
+          player.ownerClientId = "";
+        }
+      });
+      remoteTarget.ownerClientId = requestClientId;
+      remoteTarget.playerKeyHash = "";
+      delete requests[requestClientId];
+
+      const members = touchMember(currentRoom.members || room.members, clientId);
+      Object.entries(members).forEach(([memberId, member]) => {
+        if (String(member.claimedPlayerId || "") === remoteRequest.playerId) {
+          members[memberId] = {
+            ...member,
+            claimedPlayerId: ""
+          };
+        }
+      });
+      members[requestClientId] = {
+        ...(members[requestClientId] || {}),
+        clientId: requestClientId,
+        displayName: remoteRequest.displayName,
+        claimedPlayerId: remoteRequest.playerId,
+        lastSeenAt: Date.now()
+      };
+
+      const nextGameState = currentRoom.gameState || {};
+      const currentStatus = String(nextGameState.handStatus || inferHandStatus(nextGameState));
+      const nextRoom = {
+        ...currentRoom,
+        joinRequests: requests,
+        members,
+        players: remotePlayers
+      };
+      if (currentStatus === "settled") {
+        nextRoom.gameState = {
+          ...nextGameState,
+          nextHandApprovals: {},
+          stateVersion: toNonNegativeNumber(nextGameState.stateVersion, 0) + 1,
+          updatedBy: clientId
+        };
+      }
+      return nextRoom;
+    }, { applyLocally: false });
+    if (!result.committed) {
+      showAppAlert("批准请求失败，房间状态可能已变化。");
+      await refreshFromRemote();
+      return;
+    }
+    await refreshFromRemote();
+  } catch (_) {
+    showAppAlert("批准请求失败，请稍后再试。");
+  } finally {
+    setMutationInProgress(false);
+    if (tableManagerOpen) renderTableManager();
+  }
+}
+
+async function declineSeatRequest(requestClientId) {
+  if (!canCurrentClientManageRoom() || !room.roomId) return;
+  try {
+    await update(ref(db, `rooms/${room.roomId}/joinRequests/${requestClientId}`), null);
+    const requests = normalizeJoinRequests(room.joinRequests);
+    delete requests[requestClientId];
+    room.joinRequests = requests;
+    if (tableManagerOpen) renderTableManager();
+    renderIdentityControls();
+  } catch (_) {
+    showAppAlert("拒绝请求失败，请稍后再试。");
+  }
 }
 
 async function verifyAdminIdentity(code) {
@@ -1668,9 +2065,11 @@ async function syncLobbyState() {
         mode: ROOM_MODES.room,
         operator: existingRoom.operator || room.operator || clientId,
         hostClientId: getRoomHostId(existingRoom, room.hostClientId || clientId),
+        inviteToken: existingRoom.inviteToken || room.inviteToken || "",
         adminKeyHash: existingRoom.adminKeyHash || room.adminKeyHash || "",
         adminPlayerIds: normalizeAdminPlayerIds(existingRoom.adminPlayerIds || room.adminPlayerIds),
-        members: touchMember(existingRoom.members || room.members, clientId),
+        joinRequests: normalizeJoinRequests(existingRoom.joinRequests || room.joinRequests),
+        members: touchMemberWithProfile(existingRoom.members || room.members, clientId),
         gameState: nextGameState,
         players
       };
@@ -1685,7 +2084,7 @@ async function syncLobbyState() {
 
     stateVersion = nextStateVersion;
     room.gameState = nextGameState;
-    room.members = touchMember(room.members, clientId);
+    room.members = touchMemberWithProfile(room.members, clientId);
     syncReady = true;
     setSyncStatus("已同步", "ok");
     return true;
@@ -1699,12 +2098,12 @@ async function syncLobbyState() {
 }
 
 function updateSetupActionState() {
-  const canManage = canCurrentClientManageRoom();
+  const canManage = canCurrentClientManageRoom() && (!isRoomMode() || authReady);
   startGameBtn.disabled = !canManage || players.length < 2;
   addPlayerBtn.disabled = !canManage || players.length >= MAX_PLAYERS;
   addPlayerBtn.textContent = players.length >= MAX_PLAYERS ? `最多 ${MAX_PLAYERS} 人` : "添加玩家";
   if (!canManage && isRoomMode()) {
-    addPlayerBtn.textContent = "等待管理员添加";
+    addPlayerBtn.textContent = "等待房主/协管添加";
   }
   renderIdentityControls();
 }
@@ -1759,7 +2158,7 @@ function renderSetupPlayerInputs() {
 
     const delBtn = createButton("删除", () => {
       if (!canCurrentClientManageRoom()) {
-        showAppAlert("只有管理员可以删除玩家。");
+        showAppAlert("只有房主或协管可以删除玩家。");
         return;
       }
       players = players.filter(item => item.id !== player.id);
@@ -1779,7 +2178,7 @@ function renderSetupPlayerInputs() {
 
 addPlayerBtn.addEventListener("click", () => {
   if (!canCurrentClientManageRoom()) {
-    showAppAlert("只有管理员可以添加玩家。");
+    showAppAlert("只有房主或协管可以添加玩家。");
     return;
   }
   if (players.length >= MAX_PLAYERS) {
@@ -1793,10 +2192,21 @@ addPlayerBtn.addEventListener("click", () => {
   updateSetupActionState();
   scheduleLobbySync();
 });
+
+function applyRoomLinkFromUrl() {
+  const params = getRoomLinkParams();
+  if (!params.roomId) return;
+  enterRoomMode();
+  roomIdInput.value = params.roomId;
+  joinRoom(params.roomId, { inviteToken: params.inviteToken });
+}
+
+startAnonymousIdentity();
+applyRoomLinkFromUrl();
 renderSetupPlayerInputs();
 updateSetupActionState();
-syncReady = true;
-setSyncStatus("本地模式");
+syncReady = !isRoomMode();
+if (!isRoomMode()) setSyncStatus("本地模式");
 renderIdentityControls();
 
 // ----------------------
@@ -1805,7 +2215,7 @@ renderIdentityControls();
 startGameBtn.addEventListener("click", async () => {
   if (mutationInProgress) return;
   if (!canCurrentClientManageRoom()) {
-    showAppAlert("只有管理员可以开始牌局。");
+    showAppAlert("只有房主或协管可以开始牌局。");
     return;
   }
   setMutationInProgress(true);
@@ -1822,7 +2232,7 @@ startGameBtn.addEventListener("click", async () => {
           roomIdInput.value = room.roomId;
           await syncLobbyState();
         } else if (!canCurrentClientManageRoom()) {
-          showAppAlert("只有管理员可以开始牌局。");
+          showAppAlert("只有房主或协管可以开始牌局。");
           return;
         }
         const remoteGameState = await getRemoteGameState();
@@ -2328,7 +2738,7 @@ async function confirmDealPrompt() {
     return;
   }
   if (!canCurrentClientConfirmDeal()) {
-    showAppAlert("只有本局 Dealer 可以确认发牌；未绑定 Dealer 由管理员代管。");
+    showAppAlert("只有本局 Dealer 可以确认发牌；未绑定 Dealer 由房主/协管代管。");
     return;
   }
 
@@ -3084,7 +3494,7 @@ function renderTableManager() {
   title.textContent = "席位与身份管理";
   copy.appendChild(title);
   copy.appendChild(createParagraph(isRoomMode()
-    ? "玩家可在这里换设备接管身份；管理员可在开局前或两手牌之间调整牌桌。"
+    ? "玩家在这里查看身份与请求；房主/协管可批准入座，并在开局前或两手牌之间调整牌桌。"
     : "调整座次、筹码和离桌/回桌状态；保存后只影响下一手。"));
   header.appendChild(copy);
 
@@ -3095,6 +3505,8 @@ function renderTableManager() {
 
   if (isRoomMode()) {
     tableManagerPanel.appendChild(createIdentityManagerPanel());
+    const requestsPanel = createSeatRequestsPanel();
+    if (requestsPanel) tableManagerPanel.appendChild(requestsPanel);
   }
 
   const summary = document.createElement("div");
@@ -3162,12 +3574,13 @@ function createIdentityManagerPanel() {
   summary.className = "identity-manager-summary";
   const title = document.createElement("strong");
   title.textContent = currentPlayer
-    ? `当前身份：${getPlayerIdentityLabel(currentPlayer, currentIndex)}${isAdmin ? " · 管理员" : ""}`
+    ? `当前身份：${getPlayerIdentityLabel(currentPlayer, currentIndex)}${isAdmin ? ` · ${getCurrentRoomRoleLabel()}` : ""}`
     : isAdmin
-      ? "当前身份：管理员旁观"
+      ? `当前身份：${getCurrentRoomRoleLabel()}旁观`
       : "当前身份：旁观";
   const detail = document.createElement("span");
-  detail.textContent = `房间 ${room.roomId || "-"} · 设备 ${getClientShortId()}`;
+  const displayName = getPreferredDisplayName() || "未填写昵称";
+  detail.textContent = `房间 ${room.roomId || "-"} · ${displayName} · 设备 ${getClientShortId()}`;
   summary.append(title, detail);
   panel.appendChild(summary);
 
@@ -3177,29 +3590,70 @@ function createIdentityManagerPanel() {
     actions.appendChild(createButton("退出当前玩家", releaseCurrentPlayerIdentity, isSharedPromptActionLocked(), "table-chip-button"));
   }
 
-  if (!isAdmin) {
-    const adminInput = document.createElement("input");
-    adminInput.type = "text";
-    adminInput.inputMode = "text";
-    adminInput.placeholder = "输入管理码";
-    adminInput.autocomplete = "one-time-code";
-    adminInput.value = getRememberedAdminCode();
-    adminInput.className = "identity-code-input";
-    actions.appendChild(adminInput);
-    actions.appendChild(createButton("获得管理权限", async () => {
-      const ok = await verifyAdminIdentity(adminInput.value);
-      if (ok) renderTableManager();
-    }, isSharedPromptActionLocked(), "table-chip-button"));
-  } else {
-    actions.appendChild(createButton("清除本机管理码", () => {
-      forgetAdminCode();
-      showAppAlert("已清除这台设备保存的管理码。当前会话中的管理权限不会被立即撤销。");
-      renderIdentityControls();
-      renderTableManager();
+  actions.appendChild(createButton("复制邀请", async () => {
+    const inviteUrl = getInviteUrl();
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      showAppAlert("邀请链接已复制。", "已复制邀请");
+    } catch (_) {
+      showAppAlert(inviteUrl, "邀请链接");
+    }
+  }, !room.roomId, "table-chip-button"));
+
+  if (isAdmin) {
+    actions.appendChild(createButton("管理请求", () => {
+      const count = getPendingJoinRequestCount();
+      showAppAlert(count ? `当前有 ${count} 个待处理请求。` : "当前没有待处理请求。");
     }, false, "table-chip-button"));
   }
 
   panel.appendChild(actions);
+  return panel;
+}
+
+function createSeatRequestsPanel() {
+  const requests = Object.values(normalizeJoinRequests(room.joinRequests));
+  if (!requests.length && !canCurrentClientManageRoom()) return null;
+  const panel = document.createElement("div");
+  panel.className = "seat-requests-panel";
+
+  const title = document.createElement("strong");
+  title.textContent = requests.length
+    ? `入座请求（${requests.length}）`
+    : "入座请求";
+  panel.appendChild(title);
+
+  if (!requests.length) {
+    const empty = document.createElement("span");
+    empty.textContent = "暂无玩家请求。";
+    panel.appendChild(empty);
+    return panel;
+  }
+
+  const list = document.createElement("div");
+  list.className = "seat-request-list";
+  requests
+    .sort((left, right) => left.requestedAt - right.requestedAt)
+    .forEach(request => {
+      const row = document.createElement("div");
+      row.className = "seat-request-row";
+      const targetIndex = players.findIndex(player => player.id === request.playerId);
+      const targetPlayer = targetIndex >= 0 ? players[targetIndex] : null;
+      const copy = document.createElement("span");
+      copy.textContent = `${request.displayName || "未命名玩家"} 请求${request.type === "reclaim" ? "接管" : "坐下"} ${targetPlayer ? getPlayerIdentityLabel(targetPlayer, targetIndex) : "未知座位"}`;
+      row.appendChild(copy);
+
+      if (canCurrentClientManageRoom()) {
+        const actions = document.createElement("div");
+        actions.className = "seat-request-actions";
+        actions.appendChild(createButton("批准", () => approveSeatRequest(request.clientId), isSharedPromptActionLocked(), "table-chip-button"));
+        actions.appendChild(createButton("拒绝", () => declineSeatRequest(request.clientId), isSharedPromptActionLocked(), "table-chip-button table-danger-button"));
+        row.appendChild(actions);
+      }
+      list.appendChild(row);
+    });
+  panel.appendChild(list);
   return panel;
 }
 
@@ -3313,37 +3767,29 @@ function createSeatIdentityCell(draftPlayer, index) {
       ? `已绑定 ${getClientShortId(ownerId)}`
       : "未绑定";
   if (adminIds.includes(draftPlayer.id)) {
-    status.textContent += " · 管理员";
+    status.textContent += " · 协管";
   }
   cell.appendChild(status);
 
-  const codeInput = document.createElement("input");
-  codeInput.type = "text";
-  codeInput.inputMode = "text";
-  codeInput.autocomplete = "one-time-code";
-  codeInput.placeholder = player.playerKeyHash ? "玩家码" : "首次绑定自动生成";
-  codeInput.value = getRememberedPlayerCode(player.id);
-  codeInput.className = "identity-code-input";
-  cell.appendChild(codeInput);
+  const requests = getJoinRequestsForPlayer(draftPlayer.id);
+  if (requests.length) {
+    const requestSummary = document.createElement("span");
+    requestSummary.className = "table-identity-status";
+    requestSummary.textContent = `${requests.length} 个待批准请求`;
+    cell.appendChild(requestSummary);
+  }
 
   const actions = document.createElement("div");
   actions.className = "table-identity-actions";
-  actions.appendChild(createButton(isCurrentDevicePlayer(player) ? "已绑定" : "接管", async () => {
+  actions.appendChild(createButton(isCurrentDevicePlayer(player) ? "已绑定" : canCurrentClientManageRoom() ? "绑定到我" : ownerId ? "请求接管" : "请求坐下", async () => {
     if (isCurrentDevicePlayer(player)) return;
-    await claimPlayerIdentity(draftPlayer.id, { code: codeInput.value });
+    await togglePlayerClaim(draftPlayer.id);
     renderTableManager();
   }, isSharedPromptActionLocked() || !savedPlayer || isCurrentDevicePlayer(player), "table-chip-button"));
 
   if (canCurrentClientManageRoom()) {
-    actions.appendChild(createButton("强制接管", async () => {
-      await claimPlayerIdentity(draftPlayer.id, { forceAdmin: true, announceCode: false });
-      renderTableManager();
-    }, isSharedPromptActionLocked() || !savedPlayer, "table-chip-button"));
-    actions.appendChild(createButton("重置玩家码", async () => {
-      await resetPlayerCode(draftPlayer.id);
-    }, isSharedPromptActionLocked() || !savedPlayer, "table-chip-button"));
     const isAdminPlayer = adminIds.includes(draftPlayer.id);
-    actions.appendChild(createButton(isAdminPlayer ? "撤销管理" : "设为管理", async () => {
+    actions.appendChild(createButton(isAdminPlayer ? "撤销协管" : "设为协管", async () => {
       await togglePlayerAdmin(draftPlayer.id, !isAdminPlayer);
     }, isSharedPromptActionLocked() || !savedPlayer, "table-chip-button"));
   }
@@ -3415,13 +3861,13 @@ async function togglePlayerAdmin(playerId, shouldGrant) {
       };
     }, { applyLocally: false });
     if (!result.committed) {
-      showAppAlert("管理员权限更新没有成功，请等待同步后重试。");
+      showAppAlert("协管权限更新没有成功，请等待同步后重试。");
       await refreshFromRemote();
       return;
     }
     await refreshFromRemote();
   } catch (_) {
-    showAppAlert("管理员权限更新失败，请稍后再试。");
+    showAppAlert("协管权限更新失败，请稍后再试。");
   } finally {
     setMutationInProgress(false);
     if (tableManagerOpen) renderTableManager();
@@ -3470,7 +3916,7 @@ function setDraftStatus(index, status) {
 
 async function saveTableDraft({ startNextHand = false } = {}) {
   if (!canEditTableNow()) {
-    showAppAlert("只有管理员可以保存牌桌管理设置。");
+    showAppAlert("只有房主或协管可以保存牌桌管理设置。");
     return;
   }
   if (!tableDraft) {
@@ -4317,7 +4763,7 @@ function getApprovalPlayerLabelForClient(approverId, list = players, roomData = 
       .map(({ player, index }) => getPlayerCompactIdentityLabel(player, index, list))
       .join("、");
   }
-  if (approverId === getHostClientId(roomData)) return "管理员";
+  if (approverId === getHostClientId(roomData)) return "房主/协管";
   if (approverId === clientId) return "我";
   return `设备 ${getClientShortId(approverId)}`;
 }
@@ -4399,11 +4845,7 @@ function createSeatDetailPopover(player, index) {
 
   if (isRoomMode()) {
     const claimButton = createButton(getSetupClaimLabel(player), () => {
-      if (player.playerKeyHash && !isCurrentDevicePlayer(player) && !getRememberedPlayerCode(player.id) && !canCurrentClientManageRoom()) {
-        openTableManager();
-      } else {
-        togglePlayerClaim(player.id);
-      }
+      togglePlayerClaim(player.id);
       closeSeatDetailPopovers();
     }, !canCurrentClientModifyClaims(), "seat-claim-button");
     if (isCurrentDevicePlayer(player)) claimButton.classList.add("claimed");

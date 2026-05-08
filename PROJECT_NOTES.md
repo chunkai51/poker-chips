@@ -20,7 +20,7 @@ The app is intentionally lightweight:
 index.html
   -> loads styles.css
   -> loads src/main.js as a module
-       -> imports Firebase helpers from src/firebase.js
+       -> imports Firebase Auth/Database helpers from src/firebase.js
        -> imports client/room identity helpers from src/identity.js
        -> imports pure table and betting rules from src/game-rules.js
        -> imports collapsible player manual rendering from src/guide.js
@@ -97,28 +97,31 @@ Desktop and mobile share the same DOM. The layout switches mainly through CSS br
 
 Initializes Firebase and exports the small API surface used by the app:
 
+- `auth`
 - `db`
 - `ref`
 - `update`
 - `onValue`
 - `get`
 - `runTransaction`
+- `onAuthStateChanged`
+- `signInAnonymously`
 
-The Firebase config is client-side config. It is not treated like a private secret in normal Firebase web apps, but real deployments still need Realtime Database Security Rules.
+The Firebase config is client-side config. It is not treated like a private secret in normal Firebase web apps, but real deployments still need Firebase Auth, Realtime Database Security Rules, App Check, and eventually Cloud Functions command validation.
 
 ### `src/identity.js`
 
 Owns the compatibility identity layer for the multiplayer-by-player roadmap:
 
-- Persistent local `clientId` in `localStorage`
+- Persistent local `clientId` fallback in `localStorage`; `src/main.js` replaces it with Firebase Anonymous Auth `uid` when available
 - Room modes: `local` and `room`
 - Room host id normalization for legacy rooms and creator fallback
-- Room member map normalization, claimed-player ids, admin-session flags, and last-seen updates
+- Room member map normalization, claimed-player ids, display names, admin-session flags, and last-seen updates
 - Optional `ownerClientId` normalization for player objects
-- Access-code helpers for room management codes and per-player recovery codes
+- Access-code helpers kept for backward compatibility, but the primary UX is now invite-link + request approval
 - Permission helper stubs such as `canClientControlPlayer()` and `isRoomHost()`
 
-Important: this layer is still frontend-only. The app now uses it to gate administrator actions, own-player actions, Dealer confirmation, and multi-player approvals in the UI/write entrypoints, but it is not a security boundary until Firebase Auth and Database Rules are added. Unbound players (`ownerClientId === ""`) are controlled by the room manager proxy so rooms do not become stuck.
+Important: this layer is still partly frontend-enforced. The app now uses Anonymous Auth when available, but complete malicious-client resistance depends on finishing Security Rules and moving critical game mutations behind Cloud Functions command processing. Unbound players (`ownerClientId === ""`) are controlled by the room manager proxy so rooms do not become stuck.
 
 ### `src/game-rules.js`
 
@@ -219,8 +222,10 @@ room = {
   mode,
   operator,
   hostClientId,
+  inviteToken,
   adminKeyHash,
   adminPlayerIds,
+  joinRequests,
   members,
   players,
   gameState: {
@@ -250,9 +255,11 @@ Room identity fields:
 - `mode`: `local` or `room`. Local mode keeps single-device/shared-control behavior.
 - `operator`: legacy room creator/operator field, kept for compatibility.
 - `hostClientId`: normalized room host id. Existing rooms fall back to `operator`.
-- `adminKeyHash`: salted hash of the generated room management code. The clear code is shown once and optionally remembered on the creating device.
-- `adminPlayerIds`: player ids that carry management rights when the player is bound by a device.
-- `members`: map keyed by `clientId`, used for presence, claimed-player id, and the current device's admin-session flag.
+- `inviteToken`: long random token included in copied invitation links. It is a UX gate today and a future rules input, not a standalone secret once room reads are broad.
+- `adminKeyHash`: legacy salted room management-code hash. Kept for compatibility; no longer shown in the normal room flow.
+- `adminPlayerIds`: player ids that carry cohost rights when the player is bound by a device.
+- `joinRequests`: map keyed by requester `clientId`, used for seat join/reclaim approvals.
+- `members`: map keyed by `clientId`, used for presence, display name, claimed-player id, and the current device's admin-session flag.
 - Table view rotation is intentionally local-only. The offset is stored in `localStorage` under `pokerChipsTableViewRotation:{roomId}` and is never written to Firebase.
 - `gameState.nextHandApprovals`: room-mode readiness map for starting the next hand.
 - `gameState.settlementPreview.approvals`: room-mode confirmation map for applying the settlement preview.
@@ -262,8 +269,8 @@ Player objects now include seat-management fields:
 - `seatIndex`: normalized seat order index. The array order is still the source of truth for seat order.
 - `seatStatus`: one of `seated`, `sittingOut`, `busted`, `left`.
 - `dealer`: marks the previous/current Button seat. Next-hand rotation skips non-eligible seats.
-- `ownerClientId`: current device binding. Empty string means unbound and controlled by the room manager proxy.
-- `playerKeyHash`: salted hash of the player's recovery code. First binding generates the code; a later device can enter it to take over the same player.
+- `ownerClientId`: current Firebase Auth uid or local fallback client id binding. Empty string means unbound and controlled by the room manager proxy.
+- `playerKeyHash`: legacy salted player recovery-code hash. Kept for compatibility, but the normal flow uses join/reclaim requests approved by host/cohost.
 
 Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players can have `chips === 0` during an all-in hand; they are not marked `busted` until settlement finishes.
 
@@ -272,9 +279,9 @@ Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players 
 1. Add players in the setup panel.
 2. Start game:
    - Choose local mode or room mode.
-   - In room mode, create a room or join by room id. Creating a room generates a management code.
-   - In room mode, devices bind a player seat through the setup row or the shared "席位与身份管理" dialog. First binding generates a player code; later devices can enter that code to take over without interrupting the hand.
-   - In room mode, only administrators can add/remove players, edit setup stacks, and start the first hand.
+   - In room mode, enter a display name, create a room, and copy the invite link. Joining from `?room=...&invite=...` fills the room automatically.
+   - In room mode, ordinary devices request a seat or request a reclaim. Host/cohost approval binds that device to the player without interrupting the hand.
+   - In room mode, only host/cohost devices can add/remove players, edit setup stacks, approve seat requests, and start the first hand.
    - Read player names/chips.
    - Initialize hand state.
    - Call `startRound()`.
@@ -315,12 +322,34 @@ Only `seatStatus === "seated" && chips > 0` is eligible for a new hand. Players 
    - Dealer, small blind, big blind, and action order skip `busted`, `sittingOut`, and `left` seats.
    - Heads-up rules are handled when exactly two eligible players remain.
 9. Table management:
-   - The dialog can be opened during a hand in room mode for identity recovery and admin-code entry.
-   - Table edits are enabled only before the first hand or after settlement, and only for administrators.
-   - Identity binding, player-code takeover, admin-code verification, admin-player grant/revoke, and player-code reset live in the same dialog.
+   - The dialog can be opened during a hand in room mode for seat/reclaim request approval.
+   - Table edits are enabled only before the first hand or after settlement, and only for host/cohost devices.
+   - Identity binding now uses request approval. Legacy player/admin-code helpers remain in code but are hidden from the normal UI.
    - Table edits are held in `tableDraft` and synchronized only when saved.
    - Supports seat reorder, chip adjustment, sitting out, leaving, returning, deleting, and adding a player.
-   - “保存并开始下一局” first saves the table with a guarded write, then calls `approveNextHandStart()`; in room mode this records the administrator/proxy approval without skipping the all-player confirmation flow.
+   - “保存并开始下一局” first saves the table with a guarded write, then calls `approveNextHandStart()`; in room mode this records the host/cohost/proxy approval without skipping the all-player confirmation flow.
+
+## Security Roadmap
+
+Current implementation:
+
+- Anonymous Auth is attempted on startup. If unavailable, the app falls back to the historical local `clientId`.
+- Seat ownership is represented by `player.ownerClientId`.
+- Ordinary players request seats through `room.joinRequests`; host/cohost devices approve.
+- Some game mutations are still written directly by the browser with transaction guards.
+
+Repository scaffolding:
+
+- `database.rules.json`: transitional Realtime Database rules requiring `auth != null` and constraining members, join requests, and command creation. These rules still allow member writes needed by the current direct-write game flow.
+- `functions/index.js`: Cloud Functions v2 command-processing skeleton under `/rooms/{roomId}/commands/{commandId}`.
+- `firebase.json`: Firebase CLI entrypoint for rules, functions, and static hosting.
+
+Target production model:
+
+- Clients write intent commands only.
+- Cloud Functions validate seat ownership, hand id, current action, betting legality, and idempotency.
+- Cloud Functions write `players`, `gameState`, logs, settlement, and next-hand state with Admin SDK.
+- Security Rules deny direct client writes to critical game state once command coverage is complete.
 
 ## Firebase Sync and Concurrency
 
@@ -358,10 +387,10 @@ Implemented:
 - Chip Riffle popover with real-order chip animation, single/dual-color skins, CSS chip symbols, and sampled chip sound effects
 - Collapsible player manual on setup and game screens with usage guide, Texas Hold'em rules, and hand rankings
 - Setup mode switch for single-device local mode vs multiplayer room mode
-- Room creation/join controls in the setup panel, backed by the existing top-bar room id field
-- Multiplayer player binding through `ownerClientId` and per-player recovery codes
-- Room management code generation and verification
-- Administrator-player grant/revoke and administrator takeover/reset controls
+- Room creation/join controls in the setup panel with display name, invite link copying, and URL room auto-join
+- Anonymous Auth integration with local `clientId` fallback
+- Multiplayer player binding through `ownerClientId` plus host/cohost-approved join/reclaim requests
+- Cohost grant/revoke through administrator-player ids
 - Current-device identity display
 - Local-only table view rotation in room mode
 - Bound-player perspective: rotation offset `0` places the current device's player at the bottom-center table seat; manual rotation rotates the whole table locally, and “以我为底” resets the offset
@@ -381,15 +410,16 @@ Implemented:
 - Operation log
 - Showdown panel
 - Synchronized settlement preview with confirm/cancel before payouts
-- Shared seat and identity manager for in-hand player recovery plus setup/post-settlement seat order, chip edits, sit-out/leave/return, delete-player, and add-player
+- Shared seat and identity manager for in-hand seat/reclaim approvals plus setup/post-settlement seat order, chip edits, sit-out/leave/return, delete-player, and add-player
 - Busted players: zero-chip seated players become `busted` after settlement and are skipped next hand until topped up
 - Side-pot construction and multi-winner distribution
 - Next-hand reset and dealer rotation
 - Firebase room sync with optimistic conflict checks
 - Custom in-app alert/confirm dialog UI instead of native browser dialogs
 - Extracted pure game/table rules in `src/game-rules.js`
-- Compatibility identity layer in `src/identity.js` with `clientId`, `mode`, `hostClientId`, `members`, access codes, admin-player ids, and player `ownerClientId`
-- Frontend permission layer for room mode: administrator setup/table management, own-player actions, Dealer-only deal confirmation with manager proxy for unbound players
+- Compatibility identity layer in `src/identity.js` with `clientId`, `mode`, `hostClientId`, `members`, access-code compatibility helpers, admin-player ids, and player `ownerClientId`
+- Frontend permission layer for room mode: host/cohost setup/table management, own-player actions, Dealer-only deal confirmation with manager proxy for unbound players
+- Firebase CLI, Realtime Database rules, and Cloud Functions command-processing scaffold
 - All-required-player confirmation for settlement preview and next-hand start
 
 Needs more validation:
@@ -397,7 +427,7 @@ Needs more validation:
 - Complex All In and side-pot scenarios with 3+ players
 - Multiple clients acting at nearly the same time
 - Firebase permission-denied and offline cases
-- Permission edge cases with unbound players, administrator reconnects, ownership takeovers, and simultaneous approvals
+- Permission edge cases with unbound players, host/cohost reconnects, ownership takeovers, and simultaneous approvals
 - Recovery from partially created or stale rooms
 - Long sessions with many hands/log entries
 
@@ -408,9 +438,9 @@ Not implemented:
 - Automated tests
 - Build pipeline
 - Lint/format tooling
-- Authentication
-- Database security rules in this repository
-- Security-grade permission enforcement against malicious clients
+- Complete Cloud Functions command coverage for all betting, settlement, and next-hand mutations
+- Final strict database rules that deny direct client writes to `players` and `gameState`
+- App Check setup
 
 ## Development Notes
 
@@ -431,7 +461,7 @@ http://localhost:8000/
 Syntax checks:
 
 ```bash
-for f in src/*.js; do node --check "$f" || exit 1; done
+for f in src/*.js functions/*.js; do node --check "$f" || exit 1; done
 git diff --check
 ```
 
@@ -439,21 +469,21 @@ Browser validation checklist:
 
 - Setup screen renders on desktop and mobile.
 - Setup mode switch can move between local mode and room mode before a hand starts.
-- Creating a room writes a setup room and shows the generated room id.
-- Joining a room loads setup players when the remote room is still in setup.
-- Binding a player marks only one player as this device's seat; binding another releases the previous one.
+- Creating a room writes a setup room, generates an invite link, and copies/shows it from the room controls.
+- Joining from an invite URL fills the room id automatically and loads setup players when the remote room is still in setup.
+- A non-host device can enter a display name and request a seat; it is not bound until host/cohost approval.
+- Approving a join/reclaim request marks only one player as that device's seat and clears any previous binding for that requester.
 - Non-admin room clients cannot add/delete setup players, edit setup stacks, save table management, or start the first hand.
-- Non-admin room clients can still open "席位与身份管理" to bind or recover their own player identity.
-- Creating a room shows a management code; entering that code on another browser grants management rights.
-- First player binding shows a player code; entering that code on another browser can take over the same player without resetting the hand.
-- An administrator can reset a player code, force-take a player, and grant/revoke administrator rights for a player.
+- Non-admin room clients can still open "席位与身份管理" to inspect their identity and pending requests.
+- Host/cohost can approve or reject join/reclaim requests.
+- Host/cohost can grant/revoke cohost rights for a bound player.
 - Adding two players enables “开始游戏”.
 - Starting a game in local mode does not create a remote room and actions are not blocked by sync state.
 - Starting a game in room mode creates or joins a room.
 - Player cards fit without horizontal overflow at about 390px width.
 - Active player is visually obvious.
-- Room-mode action buttons are enabled only on the device that owns the current player; unbound players are controlled by the room manager proxy.
-- Deal prompts can only be confirmed by the Dealer owner, or by the room manager proxy when Dealer is unbound.
+- Room-mode action buttons are enabled only on the device that owns the current player; unbound players are controlled by host/cohost proxy.
+- Deal prompts can only be confirmed by the Dealer owner, or by host/cohost proxy when Dealer is unbound.
 - In room mode, a bound player appears at the bottom-center seat on that device when the view offset is reset.
 - Room-mode rotation buttons change only the current browser's layout and do not change another browser's layout.
 - Desktop and mobile show action buttons in the standalone current-action panel above the oval table.
@@ -496,9 +526,8 @@ Browser validation checklist:
 
 ## Suggested Next Steps
 
-1. Add Firebase Auth and Realtime Database Rules so the frontend permission model becomes a security boundary.
-2. Add a clearer player-join request flow for late joiners who need an administrator to create a new seat during an existing room.
-3. Replace the legacy creator fallback with Firebase Auth-backed administrator claims once security rules are introduced.
-4. Add unit tests for `src/game-rules.js` and `src/identity.js`, especially all-in, side-pot, split-pot, and heads-up rotation cases.
-5. Add Firebase rules documentation before treating identity fields as security boundaries.
-6. Consider room lifecycle controls: leave room, reset room, archive hand log.
+1. Move `playerAction`, deal confirmation, settlement preview confirmation, table saves, and next-hand approval to command writes processed by Cloud Functions.
+2. Tighten `database.rules.json` after command coverage so clients cannot directly write `players` or `gameState`.
+3. Enable Firebase Anonymous Auth, App Check, API key restrictions, and budget alerts in the Firebase console.
+4. Add unit tests for `src/game-rules.js`, `src/identity.js`, and the Cloud Functions command validator.
+5. Consider room lifecycle controls: leave room, reset room, archive hand log.

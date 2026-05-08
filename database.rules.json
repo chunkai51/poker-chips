@@ -1,0 +1,28 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostClientId').val() === auth.uid) || data.child('hostClientId').val() === auth.uid || data.child('members').child(auth.uid).exists())",
+        "members": {
+          "$uid": {
+            ".write": "auth != null && ($uid === auth.uid || root.child('rooms').child($roomId).child('hostClientId').val() === auth.uid)"
+          }
+        },
+        "joinRequests": {
+          "$uid": {
+            ".write": "auth != null && ($uid === auth.uid || root.child('rooms').child($roomId).child('hostClientId').val() === auth.uid)"
+          }
+        },
+        "commands": {
+          "$commandId": {
+            ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid",
+            ".validate": "newData.hasChildren(['uid', 'type', 'createdAt'])"
+          }
+        }
+      }
+    }
+  }
+}

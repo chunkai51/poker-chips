@@ -212,7 +212,7 @@ h3 {
 }
 
 .button-ghost,
-#manual-sync {
+#copy-invite {
   background: rgba(255, 248, 232, 0.06);
   border-color: rgba(244, 234, 210, 0.18);
 }
@@ -404,7 +404,7 @@ h3 {
 
 .room-entry {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(130px, 1fr) minmax(120px, 0.8fr) auto auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -1600,6 +1600,53 @@ h3 {
   padding: 14px 18px;
 }
 
+.seat-requests-panel {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid rgba(244, 234, 210, 0.1);
+  background: rgba(242, 217, 141, 0.055);
+  padding: 12px 18px;
+}
+
+.seat-requests-panel > strong {
+  color: var(--gold-300);
+  font-size: 0.88rem;
+}
+
+.seat-requests-panel > span {
+  color: rgba(244, 234, 210, 0.66);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.seat-request-list {
+  display: grid;
+  gap: 8px;
+}
+
+.seat-request-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid rgba(244, 234, 210, 0.12);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.12);
+  padding: 8px 10px;
+}
+
+.seat-request-row > span {
+  color: var(--ivory-100);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.seat-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .identity-manager-summary {
   display: grid;
   gap: 3px;
@@ -2604,31 +2651,6 @@ h3 {
     display: contents;
   }
 
-  .room-controls label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  #room-id {
-    grid-column: 1;
-    grid-row: 2;
-    min-height: 38px;
-    min-width: 0;
-  }
-
-  #manual-sync {
-    grid-column: 2;
-    grid-row: 2;
-    min-width: 72px;
-    min-height: 38px;
-    padding-inline: 12px;
-  }
-
   .sync-status {
     grid-column: 2;
     grid-row: 1;
@@ -2675,7 +2697,8 @@ h3 {
   }
 
   .room-entry label,
-  #room-id {
+  #room-id,
+  #player-alias {
     grid-column: 1 / -1;
   }
 
@@ -2843,8 +2866,17 @@ h3 {
     padding: 12px 14px;
   }
 
+  .seat-requests-panel {
+    padding: 12px 14px;
+  }
+
+  .seat-request-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .identity-manager-actions,
-  .table-identity-actions {
+  .table-identity-actions,
+  .seat-request-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
