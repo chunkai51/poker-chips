@@ -657,6 +657,22 @@ function createButton(label, onClick, disabled = false, className = "") {
   return button;
 }
 
+function addPendingRequestBadge(button, label, { floating = false } = {}) {
+  const requestCount = getPendingJoinRequestCount();
+  if (requestCount <= 0 || !canCurrentClientManageRoom()) return button;
+
+  const badge = document.createElement("span");
+  badge.className = "identity-request-badge";
+  if (floating) {
+    badge.classList.add("is-floating");
+    button.classList.add("has-request-badge");
+  }
+  badge.textContent = requestCount > 9 ? "9+" : String(requestCount);
+  button.appendChild(badge);
+  button.setAttribute("aria-label", `${label}，${requestCount} 个待处理请求`);
+  return button;
+}
+
 function closeAppDialog(result = false) {
   const backdrop = document.querySelector(".app-dialog-backdrop");
   if (!backdrop) return;
@@ -902,14 +918,7 @@ function renderIdentityControls() {
   deviceIdentityEl.append(title, detail);
   if (isRoomMode() && room.roomId) {
     const manageButton = createButton("席位与身份", openTableManager, false, "identity-manage-button");
-    const requestCount = getPendingJoinRequestCount();
-    if (requestCount > 0 && canCurrentClientManageRoom()) {
-      const badge = document.createElement("span");
-      badge.className = "identity-request-badge";
-      badge.textContent = requestCount > 9 ? "9+" : String(requestCount);
-      manageButton.appendChild(badge);
-      manageButton.setAttribute("aria-label", `席位与身份，${requestCount} 个待处理请求`);
-    }
+    addPendingRequestBadge(manageButton, "席位与身份");
     deviceIdentityEl.appendChild(manageButton);
   }
 }
@@ -949,7 +958,9 @@ function renderTableViewToolbar() {
   controls.appendChild(createButton("↺", () => rotateTableView(-1), players.length < 2, "table-view-button"));
   controls.appendChild(createButton("以我为底", resetTableViewRotation, resetDisabled, "table-view-button"));
   controls.appendChild(createButton("↻", () => rotateTableView(1), players.length < 2, "table-view-button"));
-  controls.appendChild(createButton("身份", openTableManager, false, "table-view-button"));
+  const identityButton = createButton("身份", openTableManager, false, "table-view-button");
+  addPendingRequestBadge(identityButton, "身份", { floating: true });
+  controls.appendChild(identityButton);
   tableViewToolbar.appendChild(controls);
 }
 
@@ -1121,6 +1132,8 @@ async function updateFirebaseState(options = {}) {
         if (Array.isArray(allowedStatuses) && !allowedStatuses.includes(currentStatus)) return undefined;
         if (typeof remoteGuard === "function" && !remoteGuard(currentRoom, currentGameState)) return undefined;
 
+        const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players);
+
         return {
           ...currentRoom,
           ...nextRoomData,
@@ -1129,12 +1142,14 @@ async function updateFirebaseState(options = {}) {
           hostClientId: getRoomHostId(currentRoom, nextRoomData.hostClientId),
           inviteToken: currentRoom.inviteToken || nextRoomData.inviteToken,
           adminKeyHash: currentRoom.adminKeyHash || nextRoomData.adminKeyHash,
-          adminPlayerIds: normalizeAdminPlayerIds(currentRoom.adminPlayerIds || nextRoomData.adminPlayerIds),
+          adminPlayerIds: normalizeAdminPlayerIds(currentRoom.adminPlayerIds || nextRoomData.adminPlayerIds)
+            .filter(playerId => playersForWrite.some(player => player.id === playerId)),
           joinRequests: normalizeJoinRequests(currentRoom.joinRequests || nextRoomData.joinRequests),
           members: {
             ...normalizeMembers(currentRoom.members),
             ...normalizeMembers(nextRoomData.members)
-          }
+          },
+          players: playersForWrite
         };
       }, { applyLocally: false });
 
@@ -1145,7 +1160,34 @@ async function updateFirebaseState(options = {}) {
         return false;
       }
     } else {
-      await update(ref(db, "rooms/" + room.roomId), nextRoomData);
+      const result = await runTransaction(getRoomRef(), (currentRoom) => {
+        if (!currentRoom) return nextRoomData;
+        const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players);
+        return {
+          ...currentRoom,
+          ...nextRoomData,
+          mode: normalizeRoomMode(currentRoom.mode || nextRoomData.mode, room.roomId),
+          operator: currentRoom.operator || nextRoomData.operator,
+          hostClientId: getRoomHostId(currentRoom, nextRoomData.hostClientId),
+          inviteToken: currentRoom.inviteToken || nextRoomData.inviteToken,
+          adminKeyHash: currentRoom.adminKeyHash || nextRoomData.adminKeyHash,
+          adminPlayerIds: normalizeAdminPlayerIds(currentRoom.adminPlayerIds || nextRoomData.adminPlayerIds)
+            .filter(playerId => playersForWrite.some(player => player.id === playerId)),
+          joinRequests: normalizeJoinRequests(currentRoom.joinRequests || nextRoomData.joinRequests),
+          members: {
+            ...normalizeMembers(currentRoom.members),
+            ...normalizeMembers(nextRoomData.members)
+          },
+          players: playersForWrite
+        };
+      }, { applyLocally: false });
+
+      if (!result.committed) {
+        const refreshed = await refreshFromRemote();
+        if (!refreshed) syncReady = false;
+        setSyncStatus("同步被其他设备抢先更新", "error");
+        return false;
+      }
     }
 
     stateVersion = nextStateVersion;
@@ -1206,6 +1248,32 @@ function normalizeIncomingPlayer(player, index) {
 
 function normalizeIncomingPlayers(list) {
   return Array.isArray(list) ? list.map(normalizeIncomingPlayer) : [];
+}
+
+function mergePlayerIdentityFields(nextPlayers, sourcePlayers = players) {
+  const sourceById = new Map(normalizeIncomingPlayers(sourcePlayers)
+    .map(player => [player.id, player]));
+  return normalizeIncomingPlayers(nextPlayers).map(player => {
+    const source = sourceById.get(player.id);
+    if (!source) return player;
+    return {
+      ...player,
+      ownerClientId: normalizePlayerOwnerId(source.ownerClientId),
+      playerKeyHash: String(source.playerKeyHash || "")
+    };
+  });
+}
+
+function syncTableDraftIdentityFromPlayers(sourcePlayers = players) {
+  if (!tableDraft) return;
+  const sourceById = new Map(normalizeIncomingPlayers(sourcePlayers)
+    .map(player => [player.id, player]));
+  tableDraft.forEach(draftPlayer => {
+    const source = sourceById.get(String(draftPlayer.id || ""));
+    if (!source) return;
+    draftPlayer.ownerClientId = normalizePlayerOwnerId(source.ownerClientId);
+    draftPlayer.playerKeyHash = String(source.playerKeyHash || "");
+  });
 }
 
 function normalizeIncomingPots(pots) {
@@ -1358,6 +1426,7 @@ function applyRoomData(data) {
     ? data.players.map(normalizeIncomingPlayer)
     : players;
   room.players = players;
+  syncTableDraftIdentityFromPlayers(players);
 
   renderIdentityControls();
   renderGameLog(room.gameState.logs);
@@ -1975,15 +2044,34 @@ async function approveSeatRequest(requestClientId) {
 
 async function declineSeatRequest(requestClientId) {
   if (!canCurrentClientManageRoom() || !room.roomId) return;
+  const normalizedRequestClientId = normalizePlayerOwnerId(requestClientId);
+  if (!normalizedRequestClientId) return;
+  setMutationInProgress(true);
   try {
-    await update(ref(db, `rooms/${room.roomId}/joinRequests/${requestClientId}`), null);
-    const requests = normalizeJoinRequests(room.joinRequests);
-    delete requests[requestClientId];
-    room.joinRequests = requests;
-    if (tableManagerOpen) renderTableManager();
-    renderIdentityControls();
+    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      if (!currentRoom) return undefined;
+      if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
+      const requests = normalizeJoinRequests(currentRoom.joinRequests);
+      if (!requests[normalizedRequestClientId]) return undefined;
+      delete requests[normalizedRequestClientId];
+      return {
+        ...currentRoom,
+        joinRequests: requests,
+        members: touchMember(currentRoom.members || room.members, clientId)
+      };
+    }, { applyLocally: false });
+    if (!result.committed) {
+      showAppAlert("拒绝请求失败，房间状态可能已变化。");
+      await refreshFromRemote();
+      return;
+    }
+    await refreshFromRemote();
+    setSyncStatus("已同步", "ok");
   } catch (_) {
     showAppAlert("拒绝请求失败，请稍后再试。");
+  } finally {
+    setMutationInProgress(false);
+    if (tableManagerOpen) renderTableManager();
   }
 }
 
@@ -2082,6 +2170,7 @@ async function syncLobbyState() {
 
       const existingRoom = currentRoom || {};
       if (currentRoom && !canClientManageRoomData(clientId, existingRoom)) return undefined;
+      const playersForWrite = mergePlayerIdentityFields(players, existingRoom.players || players);
       return {
         ...existingRoom,
         mode: ROOM_MODES.room,
@@ -2093,7 +2182,7 @@ async function syncLobbyState() {
         joinRequests: normalizeJoinRequests(existingRoom.joinRequests || room.joinRequests),
         members: touchMemberWithProfile(existingRoom.members || room.members, clientId),
         gameState: nextGameState,
-        players
+        players: playersForWrite
       };
     }, { applyLocally: false });
 
@@ -3944,7 +4033,7 @@ async function saveTableDraft({ startNextHand = false } = {}) {
     return;
   }
 
-  const nextPlayers = normalizeTableDraftPlayers();
+  let nextPlayers = mergePlayerIdentityFields(normalizeTableDraftPlayers(), players);
   if (nextPlayers.length > MAX_PLAYERS) {
     showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
     renderTableManager();
@@ -4543,6 +4632,14 @@ function openSettlementPreviewDialog() {
       });
       body.appendChild(list);
 
+      if (isRoomMode() && requiredApprovers.length > 0 && !progress.complete && (alreadyApproved || !canApprove)) {
+        body.appendChild(createWaitingNotice(getApprovalWaitingText(
+          settlementPreview.approvals,
+          requiredApprovers,
+          "确认结算"
+        )));
+      }
+
       const actions = document.createElement("div");
       actions.className = "prompt-actions";
       actions.appendChild(createButton("取消，重新选择", () => {
@@ -4604,11 +4701,24 @@ function createTableCenterOperations() {
 
   if (handStatus === "settlementPreview") {
     const requiredApprovers = getSettlementApproverIds();
+    const settlementProgress = getApprovalProgress(settlementPreview?.approvals, requiredApprovers);
+    const canApproveSettlement = isLocalMode() || requiredApprovers.includes(clientId);
+    const alreadyApprovedSettlement = Boolean(settlementProgress.approved[clientId]);
     operations.appendChild(createCenterOperationHeader("等待结算确认", [
       `总额 ${settlementPreview?.total || pot}`,
       getApprovalStatusText(settlementPreview?.approvals, requiredApprovers)
     ]));
-    operations.appendChild(createButton("查看并确认", openSettlementPreviewDialog, isSharedPromptActionLocked(), "prompt-primary"));
+    if (isRoomMode() && requiredApprovers.length > 0 && !settlementProgress.complete && (alreadyApprovedSettlement || !canApproveSettlement)) {
+      operations.appendChild(createWaitingNotice(getApprovalWaitingText(
+        settlementPreview?.approvals,
+        requiredApprovers,
+        "确认结算"
+      )));
+    }
+    const settlementButtonLabel = isRoomMode() && requiredApprovers.length > 0 && !settlementProgress.complete && (alreadyApprovedSettlement || !canApproveSettlement)
+      ? "查看结算"
+      : "查看并确认";
+    operations.appendChild(createButton(settlementButtonLabel, openSettlementPreviewDialog, isSharedPromptActionLocked(), "prompt-primary"));
     return operations;
   }
 
@@ -4623,6 +4733,13 @@ function createTableCenterOperations() {
       `下一局可参与 ${eligibleCount} 人`,
       isRoomMode() ? getApprovalStatusText(nextHandApprovals, nextHandApprovers) : "本地可直接开始"
     ]));
+    if (isRoomMode() && nextHandApprovers.length > 0 && !nextHandProgress.complete && (alreadyApprovedNextHand || !canApproveNextHand)) {
+      operations.appendChild(createWaitingNotice(getApprovalWaitingText(
+        nextHandApprovals,
+        nextHandApprovers,
+        "确认下一局"
+      )));
+    }
     const group = document.createElement("div");
     group.className = "table-center-action-buttons table-center-next-buttons";
     group.appendChild(createButton("席位管理", openTableManager, isInteractionLocked() || (isLocalMode() && !canCurrentClientManageRoom()), "table-manager-button"));
@@ -4848,6 +4965,16 @@ function getApprovalStatusText(approvals, requiredIds, list = players) {
   return pending.length > 0
     ? `已确认 ${progress.approvedCount}/${progress.requiredCount} · 等待 ${pending.join("、")}`
     : `已确认 ${progress.approvedCount}/${progress.requiredCount}`;
+}
+
+function getApprovalWaitingText(approvals, requiredIds, actionLabel, list = players) {
+  const progress = getApprovalProgress(approvals, requiredIds);
+  const pending = requiredIds
+    .filter(approverId => !progress.approved[approverId])
+    .map(approverId => getApprovalPlayerLabelForClient(approverId, list));
+  return pending.length > 0
+    ? `等待 ${pending.join("、")} ${actionLabel}`
+    : `等待同步${actionLabel}`;
 }
 
 function closeSeatDetailPopovers() {
