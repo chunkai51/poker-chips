@@ -451,7 +451,7 @@ function startAnonymousIdentity() {
   signInAnonymously(auth).catch(() => {
     authReady = true;
     authUnavailable = true;
-    setSyncStatus(isRoomMode() ? "匿名身份不可用，使用本机身份" : "本地模式");
+    setSyncStatus(isRoomMode() ? "连接异常，请检查网络后刷新" : "本地模式");
     renderIdentityControls();
   });
 }
@@ -913,7 +913,7 @@ function renderIdentityControls() {
       ? `房间 ${room.roomId} · ${Object.keys(room.members || {}).length || 1} 台设备${getPendingJoinRequestCount() ? ` · ${getPendingJoinRequestCount()} 个请求` : ""}`
       : "先创建或加入房间"
     : "不写入远程房间";
-  const authText = authUnavailable ? "本机身份" : authReady ? "匿名身份" : "身份连接中";
+  const authText = authUnavailable ? "连接异常，请检查网络后刷新" : authReady ? "匿名身份" : "身份连接中";
   detail.textContent = `${getIdentitySummaryText()} · ${roomText} · ${authText}`;
   deviceIdentityEl.append(title, detail);
   if (isRoomMode() && room.roomId) {
