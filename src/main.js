@@ -539,6 +539,12 @@ function canCurrentClientManageRoom() {
   return canClientManageRoomData(clientId, room);
 }
 
+function canCurrentClientEditRoomSettings() {
+  if (isLocalMode()) return true;
+  if (!room.roomId) return true;
+  return getHostClientId(room) === clientId;
+}
+
 function getCurrentRoomRoleLabel(roomData = room) {
   if (isLocalMode()) return "本地管理";
   if (getHostClientId(roomData) === clientId) return "房主";
@@ -896,6 +902,14 @@ function renderIdentityControls() {
   deviceIdentityEl.append(title, detail);
   if (isRoomMode() && room.roomId) {
     const manageButton = createButton("席位与身份", openTableManager, false, "identity-manage-button");
+    const requestCount = getPendingJoinRequestCount();
+    if (requestCount > 0 && canCurrentClientManageRoom()) {
+      const badge = document.createElement("span");
+      badge.className = "identity-request-badge";
+      badge.textContent = requestCount > 9 ? "9+" : String(requestCount);
+      manageButton.appendChild(badge);
+      manageButton.setAttribute("aria-label", `席位与身份，${requestCount} 个待处理请求`);
+    }
     deviceIdentityEl.appendChild(manageButton);
   }
 }
@@ -1621,8 +1635,8 @@ function getSetupClaimLabel(player) {
   if (isCurrentDevicePlayer(player)) return "我的座位";
   const currentRequest = getJoinRequestForClient();
   if (currentRequest?.playerId === player.id) return "待批准";
-  if (isClaimedByOtherDevice(player)) return "请求接管";
-  return "请求坐下";
+  if (isClaimedByOtherDevice(player)) return "已有人入座";
+  return canCurrentClientManageRoom() ? "绑定到我" : "请求坐下";
 }
 
 function setCurrentMemberClaim(playerId, extra = {}) {
@@ -1828,6 +1842,14 @@ async function togglePlayerClaim(playerId) {
   if (isCurrentDevicePlayer(player)) {
     await releaseCurrentPlayerIdentity();
     return;
+  }
+  if (isClaimedByOtherDevice(player)) {
+    const confirmed = await showAppConfirm(`${getPlayerIdentityLabel(player)} 已绑定到另一台设备。${canCurrentClientManageRoom() ? "确认要把这个座位接管到当前设备吗？" : "要向房主/协管提交接管请求吗？"}`, {
+      title: "确认接管座位",
+      confirmLabel: canCurrentClientManageRoom() ? "确认接管" : "提交请求",
+      danger: canCurrentClientManageRoom()
+    });
+    if (!confirmed) return;
   }
   if (canCurrentClientManageRoom()) {
     await claimPlayerIdentity(playerId, { forceAdmin: true, announceCode: false });
@@ -2099,8 +2121,11 @@ async function syncLobbyState() {
 
 function updateSetupActionState() {
   const canManage = canCurrentClientManageRoom() && (!isRoomMode() || authReady);
+  const canEditRoomSettings = canCurrentClientEditRoomSettings() && (!isRoomMode() || authReady);
   startGameBtn.disabled = !canManage || players.length < 2;
   addPlayerBtn.disabled = !canManage || players.length >= MAX_PLAYERS;
+  if (initialChipsInput) initialChipsInput.disabled = !canEditRoomSettings || gameStarted;
+  if (bigBlindInput) bigBlindInput.disabled = !canEditRoomSettings || gameStarted;
   addPlayerBtn.textContent = players.length >= MAX_PLAYERS ? `最多 ${MAX_PLAYERS} 人` : "添加玩家";
   if (!canManage && isRoomMode()) {
     addPlayerBtn.textContent = "等待房主/协管添加";
@@ -3423,14 +3448,14 @@ function getTableDraftSummary() {
   const leftCount = normalized.filter(player => player.seatStatus === "left").length;
 
   if (eligibleIndices.length < 2) {
-    return `下一手可参与 ${eligibleIndices.length} 人 · 至少需要 2 名已入座且有筹码的玩家`;
+    return `参与 ${eligibleIndices.length} 人 · 至少需要 2 名有筹码玩家`;
   }
 
   const dealerIndex = getPreviewDealerIndex(normalized);
   const layout = getHandLayout(dealerIndex, normalized);
   const detail = [
-    `下一手可参与 ${eligibleIndices.length} 人`,
-    `Button ${getPlayerIdentityLabel(normalized[layout.dealerIndex], layout.dealerIndex, normalized)}`,
+    `参与 ${eligibleIndices.length}`,
+    `BTN ${getPlayerIdentityLabel(normalized[layout.dealerIndex], layout.dealerIndex, normalized)}`,
     `小盲 ${getPlayerIdentityLabel(normalized[layout.smallBlindIndex], layout.smallBlindIndex, normalized)}`,
     `大盲 ${getPlayerIdentityLabel(normalized[layout.bigBlindIndex], layout.bigBlindIndex, normalized)}`
   ];
@@ -3602,10 +3627,12 @@ function createIdentityManagerPanel() {
   }, !room.roomId, "table-chip-button"));
 
   if (isAdmin) {
-    actions.appendChild(createButton("管理请求", () => {
-      const count = getPendingJoinRequestCount();
-      showAppAlert(count ? `当前有 ${count} 个待处理请求。` : "当前没有待处理请求。");
-    }, false, "table-chip-button"));
+    const count = getPendingJoinRequestCount();
+    if (count > 0) {
+      actions.appendChild(createButton(`处理请求 ${count}`, () => {
+        showAppAlert(`当前有 ${count} 个待处理请求。请在下方列表批准或拒绝。`);
+      }, false, "table-chip-button"));
+    }
   }
 
   panel.appendChild(actions);
@@ -3614,7 +3641,7 @@ function createIdentityManagerPanel() {
 
 function createSeatRequestsPanel() {
   const requests = Object.values(normalizeJoinRequests(room.joinRequests));
-  if (!requests.length && !canCurrentClientManageRoom()) return null;
+  if (!requests.length) return null;
   const panel = document.createElement("div");
   panel.className = "seat-requests-panel";
 
@@ -3623,13 +3650,6 @@ function createSeatRequestsPanel() {
     ? `入座请求（${requests.length}）`
     : "入座请求";
   panel.appendChild(title);
-
-  if (!requests.length) {
-    const empty = document.createElement("span");
-    empty.textContent = "暂无玩家请求。";
-    panel.appendChild(empty);
-    return panel;
-  }
 
   const list = document.createElement("div");
   list.className = "seat-request-list";
@@ -3781,7 +3801,7 @@ function createSeatIdentityCell(draftPlayer, index) {
 
   const actions = document.createElement("div");
   actions.className = "table-identity-actions";
-  actions.appendChild(createButton(isCurrentDevicePlayer(player) ? "已绑定" : canCurrentClientManageRoom() ? "绑定到我" : ownerId ? "请求接管" : "请求坐下", async () => {
+  actions.appendChild(createButton(isCurrentDevicePlayer(player) ? "已绑定" : ownerId ? "已有人入座" : canCurrentClientManageRoom() ? "绑定到我" : "请求坐下", async () => {
     if (isCurrentDevicePlayer(player)) return;
     await togglePlayerClaim(draftPlayer.id);
     renderTableManager();
@@ -4231,8 +4251,8 @@ function getRoundDisplayText() {
 function updateGameInfo() {
   const roundEl = document.getElementById("current-round");
   const potEl = document.getElementById("pot-amount");
-  roundEl.textContent = getRoundDisplayText();
-  potEl.textContent = `奖池: ${pot}`;
+  if (roundEl) roundEl.textContent = getRoundDisplayText();
+  if (potEl) potEl.textContent = `奖池: ${pot}`;
 }
 
 function createRaisePanel(player, index, actionDisabled) {
@@ -4552,16 +4572,25 @@ function createTableCenterOperations() {
       `需跟 ${getCallAmount(player)}`,
       `本轮下注 ${player.bet}`
     ]));
+    if (!canCurrentClientControlPlayer(player)) {
+      operations.appendChild(createWaitingNotice(`等待 ${getPlayerIdentityLabel(player)} 操作`));
+      return operations;
+    }
     operations.appendChild(createActionControls(player, index, actionDisabled, "table-center-action-buttons"));
     return operations;
   }
 
   if (handStatus === "waitingDeal" && pendingDealPrompt) {
+    const canConfirmDeal = canCurrentClientConfirmDeal();
     operations.appendChild(createCenterOperationHeader(pendingDealPrompt.title, [
       pendingDealPrompt.cardText,
-      canCurrentClientConfirmDeal() ? "你可确认发牌" : "等待 Dealer 确认"
+      canConfirmDeal ? "你可确认发牌" : "等待 Dealer 确认"
     ]));
-    operations.appendChild(createButton("已发牌，继续", confirmDealPrompt, isSharedPromptActionLocked() || !canCurrentClientConfirmDeal(), "prompt-primary"));
+    if (!canConfirmDeal) {
+      operations.appendChild(createWaitingNotice("等待 Dealer 确认发牌"));
+      return operations;
+    }
+    operations.appendChild(createButton("已发牌，继续", confirmDealPrompt, isSharedPromptActionLocked(), "prompt-primary"));
     return operations;
   }
 
@@ -4607,6 +4636,19 @@ function createTableCenterOperations() {
 
   operations.textContent = "操作区";
   return operations;
+}
+
+function createWaitingNotice(text) {
+  const notice = document.createElement("div");
+  notice.className = "table-waiting-notice";
+  const dots = document.createElement("span");
+  dots.className = "waiting-dots";
+  dots.setAttribute("aria-hidden", "true");
+  dots.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
+  const label = document.createElement("strong");
+  label.textContent = text;
+  notice.append(dots, label);
+  return notice;
 }
 
 function getPositionMarkers(position = "") {
