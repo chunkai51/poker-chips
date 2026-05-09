@@ -184,7 +184,24 @@ function toPositiveInteger(value, fallback = 0) {
 }
 
 function getPlayerName(player) {
-  return player && player.name ? player.name : "未命名玩家";
+  return player && player.name ? player.name : "空座位";
+}
+
+function getRawPlayerName(player) {
+  return String(player?.name || "").trim();
+}
+
+function isAutoSeatName(name = "") {
+  return /^玩家\d+$/.test(String(name || "").trim());
+}
+
+function shouldUseRequestNameForSeat(player, index = players.indexOf(player)) {
+  const rawName = getRawPlayerName(player);
+  return !rawName || rawName === `玩家${index + 1}` || isAutoSeatName(rawName);
+}
+
+function getRequestDisplayName(request) {
+  return String(request?.displayName || "").trim().slice(0, 24);
 }
 
 function getClientShortId(value = clientId) {
@@ -259,7 +276,7 @@ function normalizeJoinRequests(value = {}) {
       const requestClientId = normalizePlayerOwnerId(request?.clientId || key);
       if (!requestClientId) return null;
       const playerId = String(request?.playerId || "");
-      const displayName = String(request?.displayName || "").trim().slice(0, 24);
+      const displayName = getRequestDisplayName(request);
       return [requestClientId, {
         clientId: requestClientId,
         playerId,
@@ -438,6 +455,7 @@ function startAnonymousIdentity() {
   onAuthStateChanged(auth, (user) => {
     authReady = true;
     if (user?.uid) {
+      authUnavailable = false;
       applyAuthenticatedClientId(user.uid);
       if (isRoomMode() && room.roomId) {
         stopRoomListener();
@@ -451,7 +469,7 @@ function startAnonymousIdentity() {
   signInAnonymously(auth).catch(() => {
     authReady = true;
     authUnavailable = true;
-    setSyncStatus(isRoomMode() ? "连接异常，请检查网络后刷新" : "本地模式");
+    setSyncStatus(isRoomMode() && room.roomId ? "身份连接异常，房间同步以实际状态为准" : isRoomMode() ? "多人房间未连接" : "本地模式");
     renderIdentityControls();
   });
 }
@@ -568,6 +586,7 @@ function canCurrentClientConfirmDeal() {
 
 function hasDuplicatePlayerName(player, list = players) {
   const name = getPlayerName(player).trim().toLocaleLowerCase();
+  if (name === "空座位") return false;
   return list.filter(item => getPlayerName(item).trim().toLocaleLowerCase() === name).length > 1;
 }
 
@@ -885,6 +904,14 @@ function getIdentitySummaryText() {
     : "本地模式：这台设备可以管理整桌";
 }
 
+function getIdentityAuthText() {
+  if (isLocalMode()) return "";
+  if (authUnavailable) {
+    return syncReady ? "" : room.roomId ? "身份连接异常" : "";
+  }
+  return authReady ? "匿名身份" : "身份连接中";
+}
+
 function renderIdentityControls() {
   if (localModeBtn) {
     localModeBtn.classList.toggle("active", isLocalMode());
@@ -913,8 +940,8 @@ function renderIdentityControls() {
       ? `房间 ${room.roomId} · ${Object.keys(room.members || {}).length || 1} 台设备${getPendingJoinRequestCount() ? ` · ${getPendingJoinRequestCount()} 个请求` : ""}`
       : "先创建或加入房间"
     : "不写入远程房间";
-  const authText = authUnavailable ? "连接异常，请检查网络后刷新" : authReady ? "匿名身份" : "身份连接中";
-  detail.textContent = `${getIdentitySummaryText()} · ${roomText} · ${authText}`;
+  const authText = getIdentityAuthText();
+  detail.textContent = [getIdentitySummaryText(), roomText, authText].filter(Boolean).join(" · ");
   deviceIdentityEl.append(title, detail);
   if (isRoomMode() && room.roomId) {
     const manageButton = createButton("席位与身份", openTableManager, false, "identity-manage-button");
@@ -999,6 +1026,19 @@ function refreshInteractiveControls() {
 
 function getRoomRef() {
   return room.roomId ? ref(db, "rooms/" + room.roomId) : null;
+}
+
+async function remoteRoomExists(roomId = room.roomId) {
+  const normalizedRoomId = normalizeRoomId(roomId);
+  if (!normalizedRoomId) return false;
+
+  try {
+    const snapshot = await get(ref(db, "rooms/" + normalizedRoomId));
+    return snapshot.exists();
+  } catch (_) {
+    setSyncStatus("连接异常，请检查网络后刷新", "error");
+    return null;
+  }
 }
 
 async function getRemoteGameState() {
@@ -1132,7 +1172,7 @@ async function updateFirebaseState(options = {}) {
         if (Array.isArray(allowedStatuses) && !allowedStatuses.includes(currentStatus)) return undefined;
         if (typeof remoteGuard === "function" && !remoteGuard(currentRoom, currentGameState)) return undefined;
 
-        const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players);
+        const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players, { preserveNames: true });
 
         return {
           ...currentRoom,
@@ -1162,7 +1202,7 @@ async function updateFirebaseState(options = {}) {
     } else {
       const result = await runTransaction(getRoomRef(), (currentRoom) => {
         if (!currentRoom) return nextRoomData;
-        const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players);
+        const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players, { preserveNames: true });
         return {
           ...currentRoom,
           ...nextRoomData,
@@ -1230,7 +1270,7 @@ function normalizeIncomingPlayer(player, index) {
   const allIn = Boolean(player?.allIn);
   return {
     id: String(player?.id || `player${index}`),
-    name: String(player?.name || `玩家${index + 1}`),
+    name: String(player?.name || "").trim(),
     seatIndex: toNonNegativeNumber(player?.seatIndex, index),
     seatStatus: normalizeSeatStatus(player?.seatStatus, chips, allIn),
     chips,
@@ -1250,14 +1290,19 @@ function normalizeIncomingPlayers(list) {
   return Array.isArray(list) ? list.map(normalizeIncomingPlayer) : [];
 }
 
-function mergePlayerIdentityFields(nextPlayers, sourcePlayers = players) {
+function mergePlayerIdentityFields(nextPlayers, sourcePlayers = players, { preserveNames = false } = {}) {
   const sourceById = new Map(normalizeIncomingPlayers(sourcePlayers)
     .map(player => [player.id, player]));
-  return normalizeIncomingPlayers(nextPlayers).map(player => {
+  return normalizeIncomingPlayers(nextPlayers).map((player, index) => {
     const source = sourceById.get(player.id);
     if (!source) return player;
+    const sourceName = getRawPlayerName(source);
+    const nextName = getRawPlayerName(player);
     return {
       ...player,
+      name: preserveNames && sourceName && (!nextName || shouldUseRequestNameForSeat(player, index))
+        ? sourceName
+        : player.name,
       ownerClientId: normalizePlayerOwnerId(source.ownerClientId),
       playerKeyHash: String(source.playerKeyHash || "")
     };
@@ -1268,9 +1313,13 @@ function syncTableDraftIdentityFromPlayers(sourcePlayers = players) {
   if (!tableDraft) return;
   const sourceById = new Map(normalizeIncomingPlayers(sourcePlayers)
     .map(player => [player.id, player]));
-  tableDraft.forEach(draftPlayer => {
+  tableDraft.forEach((draftPlayer, index) => {
     const source = sourceById.get(String(draftPlayer.id || ""));
     if (!source) return;
+    const sourceName = getRawPlayerName(source);
+    if (sourceName && shouldUseRequestNameForSeat(draftPlayer, index)) {
+      draftPlayer.name = sourceName;
+    }
     draftPlayer.ownerClientId = normalizePlayerOwnerId(source.ownerClientId);
     draftPlayer.playerKeyHash = String(source.playerKeyHash || "");
   });
@@ -1497,7 +1546,7 @@ function listenFirebaseUpdates() {
   });
 }
 
-function createRoom() {
+function createRoom({ announce = true } = {}) {
   if (!room.roomId) {
     room.roomId = generateRoomId();
   }
@@ -1528,7 +1577,41 @@ function createRoom() {
     url.searchParams.set("invite", room.inviteToken);
     window.history.replaceState({}, "", url.toString());
   }
-  showAppAlert(`房间 ${room.roomId} 已创建。\n分享邀请链接后，玩家输入昵称并请求坐下，由你批准。`, "房间已创建");
+  if (announce) {
+    showAppAlert(`房间 ${room.roomId} 已创建。\n分享邀请链接后，玩家输入昵称并请求坐下，由你批准。`, "房间已创建");
+  }
+}
+
+async function createRoomIfAvailable({ announce = true } = {}) {
+  const requestedRoomId = normalizeRoomId(roomIdInput?.value || room.roomId);
+  const nextRoomId = requestedRoomId || generateRoomId();
+  const exists = await remoteRoomExists(nextRoomId);
+  if (exists === null) {
+    showAppAlert("无法检查房间是否存在，请检查网络后刷新重试。");
+    return false;
+  }
+  if (exists) {
+    roomIdInput.value = nextRoomId;
+    setSyncStatus("房间已存在", "error");
+    showAppAlert(`房间 ${nextRoomId} 已存在，请直接加入，或更换一个房间 ID 后再创建。`, "房间已存在");
+    return false;
+  }
+
+  room.roomId = nextRoomId;
+  createRoom({ announce: false });
+  roomIdInput.value = room.roomId;
+  const saved = await syncLobbyState({ createOnly: true });
+  if (!saved) {
+    setSyncStatus("房间创建失败", "error");
+    showAppAlert("房间创建失败，可能已被其他人抢先创建，或当前连接异常。请换一个房间 ID 或刷新后重试。", "创建失败");
+    return false;
+  }
+
+  setSyncStatus("房间已创建", "ok");
+  if (announce) {
+    showAppAlert(`房间 ${room.roomId} 已创建。\n分享邀请链接后，玩家输入昵称并请求坐下，由你批准。`, "房间已创建");
+  }
+  return true;
 }
 
 function generateRoomId() {
@@ -1626,11 +1709,7 @@ if (createRoomBtn) {
   createRoomBtn.addEventListener("click", async () => {
     if (gameStarted) return;
     rememberPreferredDisplayName(playerAliasInput?.value || getPreferredDisplayName());
-    room.roomId = normalizeRoomId(roomIdInput.value);
-    createRoom();
-    roomIdInput.value = room.roomId;
-    setSyncStatus("房间已创建", "ok");
-    await syncLobbyState();
+    await createRoomIfAvailable();
   });
 }
 
@@ -1799,6 +1878,10 @@ async function claimPlayerIdentity(playerId, { code = "", forceAdmin = false, an
         }
       });
       target.ownerClientId = clientId;
+      const currentDisplayName = getPreferredDisplayName();
+      if (currentDisplayName && shouldUseRequestNameForSeat(target, remotePlayers.indexOf(target))) {
+        target.name = currentDisplayName;
+      }
       if (remoteFirstClaim && generatedHash) {
         target.playerKeyHash = generatedHash;
       }
@@ -1815,6 +1898,7 @@ async function claimPlayerIdentity(playerId, { code = "", forceAdmin = false, an
       });
       members[clientId] = {
         ...members[clientId],
+        displayName: currentDisplayName || members[clientId]?.displayName || "",
         claimedPlayerId: playerId
       };
 
@@ -1984,6 +2068,8 @@ async function approveSeatRequest(requestClientId) {
       const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
       const remoteTarget = remotePlayers.find(player => player.id === remoteRequest.playerId);
       if (!remoteTarget) return undefined;
+      const remoteTargetIndex = remotePlayers.indexOf(remoteTarget);
+      const requestDisplayName = getRequestDisplayName(remoteRequest);
       remotePlayers.forEach(player => {
         if (normalizePlayerOwnerId(player.ownerClientId) === requestClientId) {
           player.ownerClientId = "";
@@ -1991,6 +2077,9 @@ async function approveSeatRequest(requestClientId) {
       });
       remoteTarget.ownerClientId = requestClientId;
       remoteTarget.playerKeyHash = "";
+      if (requestDisplayName && shouldUseRequestNameForSeat(remoteTarget, remoteTargetIndex)) {
+        remoteTarget.name = requestDisplayName;
+      }
       delete requests[requestClientId];
 
       const members = touchMember(currentRoom.members || room.members, clientId);
@@ -2005,7 +2094,7 @@ async function approveSeatRequest(requestClientId) {
       members[requestClientId] = {
         ...(members[requestClientId] || {}),
         clientId: requestClientId,
-        displayName: remoteRequest.displayName,
+        displayName: requestDisplayName,
         claimedPlayerId: remoteRequest.playerId,
         lastSeenAt: Date.now()
       };
@@ -2129,7 +2218,7 @@ function scheduleLobbySync() {
   }, 320);
 }
 
-async function syncLobbyState() {
+async function syncLobbyState({ createOnly = false } = {}) {
   if (!isRoomMode() || !room.roomId || gameStarted || handStatus !== "setup") return true;
   if (!canCurrentClientManageRoom()) return false;
   clearTimeout(lobbySyncTimer);
@@ -2161,6 +2250,7 @@ async function syncLobbyState() {
   renderIdentityControls();
   try {
     const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      if (createOnly && currentRoom) return undefined;
       const currentGameState = currentRoom?.gameState;
       const currentStatus = currentGameState
         ? String(currentGameState.handStatus || inferHandStatus(currentGameState))
@@ -2235,7 +2325,7 @@ function renderSetupPlayerInputs() {
 
     const nameInput = document.createElement("input");
     nameInput.type = "text";
-    nameInput.placeholder = `输入玩家 ${index + 1} 昵称`;
+    nameInput.placeholder = "待入座，可手动填写";
     nameInput.value = player.name || "";
     nameInput.classList.add("player-name-input");
     nameInput.disabled = !canCurrentClientManageRoom();
@@ -2338,14 +2428,22 @@ startGameBtn.addEventListener("click", async () => {
     const roomId = normalizeRoomId(roomIdInput.value);
     if (isRoomMode()) {
       if (roomId) {
-        joinRoom(roomId);
-        const remoteExists = await refreshFromRemote();
-        if (!remoteExists) {
+        const exists = await remoteRoomExists(roomId);
+        if (exists === null) return;
+        if (!exists) {
           room.roomId = roomId;
-          createRoom();
-          roomIdInput.value = room.roomId;
-          await syncLobbyState();
-        } else if (!canCurrentClientManageRoom()) {
+          roomIdInput.value = roomId;
+          const created = await createRoomIfAvailable({ announce: false });
+          if (!created) return;
+        } else {
+          joinRoom(roomId);
+          const refreshed = await refreshFromRemote();
+          if (!refreshed) {
+            showAppAlert("无法读取该房间，请检查网络后刷新重试。");
+            return;
+          }
+        }
+        if (!canCurrentClientManageRoom()) {
           showAppAlert("只有房主或协管可以开始牌局。");
           return;
         }
@@ -2358,9 +2456,8 @@ startGameBtn.addEventListener("click", async () => {
           return;
         }
       } else {
-        createRoom();
-        roomIdInput.value = room.roomId;
-        await syncLobbyState();
+        const created = await createRoomIfAvailable({ announce: false });
+        if (!created) return;
       }
     } else {
       stopRoomListener();
@@ -3455,7 +3552,7 @@ function openTableActionDialog({ title, description = "", className = "", buildC
 function createTableDraft() {
   return players.map((player, index) => ({
     id: String(player.id || `player${index}`),
-    name: getPlayerName(player),
+    name: getRawPlayerName(player),
     seatIndex: index,
     seatStatus: normalizeSeatStatus(player.seatStatus, player.chips, false),
     chips: toNonNegativeNumber(player.chips, 0),
@@ -3488,7 +3585,7 @@ function normalizeDraftPlayer(draftPlayer, index) {
 
   return {
     id: String(draftPlayer?.id || `player${index}`),
-    name: String(draftPlayer?.name || `玩家${index + 1}`).trim() || `玩家${index + 1}`,
+    name: String(draftPlayer?.name || "").trim(),
     seatIndex: index,
     seatStatus,
     chips,
@@ -3648,7 +3745,7 @@ function renderTableManager() {
     const id = getNextPlayerIdFromDraft();
     tableDraft.push({
       id,
-      name: `玩家${tableDraft.length + 1}`,
+      name: "",
       seatIndex: tableDraft.length,
       seatStatus: "seated",
       chips: toPositiveInteger(initialChipsInput.value, 1000),
@@ -3750,7 +3847,7 @@ function createSeatRequestsPanel() {
       const targetIndex = players.findIndex(player => player.id === request.playerId);
       const targetPlayer = targetIndex >= 0 ? players[targetIndex] : null;
       const copy = document.createElement("span");
-      copy.textContent = `${request.displayName || "未命名玩家"} 请求${request.type === "reclaim" ? "接管" : "坐下"} ${targetPlayer ? getPlayerIdentityLabel(targetPlayer, targetIndex) : "未知座位"}`;
+      copy.textContent = `${getRequestDisplayName(request) || "未填写昵称"} 请求${request.type === "reclaim" ? "接管" : "坐下"} ${targetPlayer ? getPlayerIdentityLabel(targetPlayer, targetIndex) : "未知座位"}`;
       row.appendChild(copy);
 
       if (canCurrentClientManageRoom()) {
@@ -3789,6 +3886,7 @@ function createTableManagerRow(draftPlayer, index) {
   const nameInput = document.createElement("input");
   nameInput.type = "text";
   nameInput.value = draftPlayer.name;
+  nameInput.placeholder = "待入座";
   nameInput.setAttribute("aria-label", `座位 ${index + 1} 玩家名`);
   nameInput.disabled = !canEdit;
   nameInput.addEventListener("input", () => {
