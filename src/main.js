@@ -19,6 +19,20 @@ import {
   normalizeIncomingDealPrompt as normalizeDealPrompt
 } from "./deal-prompts.js";
 import {
+  closeTableActionDialog,
+  openTableActionDialog,
+  showAppAlert,
+  showAppConfirm
+} from "./dialogs.js";
+import {
+  createButton,
+  createParagraph
+} from "./ui-dom.js";
+import {
+  getVisualSeatCoordinates,
+  normalizeRotationOffset
+} from "./table-layout.js";
+import {
   ROOM_MODES,
   createAccessCode,
   createMembersMap,
@@ -668,22 +682,6 @@ function getRaiseValidation(player, rawTarget) {
   return validateRaiseTarget(player, rawTarget, getRaiseState());
 }
 
-function createParagraph(text) {
-  const p = document.createElement("p");
-  p.textContent = text;
-  return p;
-}
-
-function createButton(label, onClick, disabled = false, className = "") {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.textContent = label;
-  button.disabled = disabled;
-  if (className) button.className = className;
-  button.addEventListener("click", onClick);
-  return button;
-}
-
 function addPendingRequestBadge(button, label, { floating = false } = {}) {
   const requestCount = getPendingJoinRequestCount();
   if (requestCount <= 0 || !canCurrentClientManageRoom()) return button;
@@ -698,108 +696,6 @@ function addPendingRequestBadge(button, label, { floating = false } = {}) {
   button.appendChild(badge);
   button.setAttribute("aria-label", `${label}，${requestCount} 个待处理请求`);
   return button;
-}
-
-function closeAppDialog(result = false) {
-  const backdrop = document.querySelector(".app-dialog-backdrop");
-  if (!backdrop) return;
-
-  const resolver = backdrop._resolveDialog;
-  const previousFocus = backdrop._previousFocus;
-  backdrop.remove();
-  if (previousFocus && typeof previousFocus.focus === "function") {
-    try {
-      previousFocus.focus({ preventScroll: true });
-    } catch (_) {
-      previousFocus.focus();
-    }
-  }
-  if (resolver) resolver(result);
-}
-
-function showAppDialog({
-  title = "提示",
-  message = "",
-  confirmLabel = "知道了",
-  cancelLabel = "",
-  danger = false
-} = {}) {
-  closeAppDialog(false);
-
-  return new Promise(resolve => {
-    const previousFocus = document.activeElement;
-    const backdrop = document.createElement("div");
-    backdrop.className = "app-dialog-backdrop";
-    backdrop._resolveDialog = resolve;
-    backdrop._previousFocus = previousFocus;
-
-    const dialog = document.createElement("section");
-    dialog.className = "app-dialog";
-    dialog.setAttribute("role", "dialog");
-    dialog.setAttribute("aria-modal", "true");
-    dialog.addEventListener("click", event => event.stopPropagation());
-
-    const heading = document.createElement("h3");
-    heading.textContent = title;
-    dialog.appendChild(heading);
-
-    if (message) {
-      const content = createParagraph(message);
-      content.className = "app-dialog-message";
-      dialog.appendChild(content);
-    }
-
-    const actions = document.createElement("div");
-    actions.className = "app-dialog-actions";
-
-    if (cancelLabel) {
-      actions.appendChild(createButton(cancelLabel, () => {
-        closeAppDialog(false);
-      }, false, "app-dialog-button app-dialog-cancel"));
-    }
-
-    const confirmButton = createButton(confirmLabel, () => {
-      closeAppDialog(true);
-    }, false, danger ? "app-dialog-button app-dialog-confirm danger" : "app-dialog-button app-dialog-confirm");
-    actions.appendChild(confirmButton);
-    dialog.appendChild(actions);
-
-    backdrop.appendChild(dialog);
-    backdrop.addEventListener("click", () => {
-      closeAppDialog(false);
-    });
-    backdrop.addEventListener("keydown", event => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeAppDialog(false);
-      }
-    });
-    document.body.appendChild(backdrop);
-    requestAnimationFrame(() => confirmButton.focus());
-  });
-}
-
-function showAppAlert(message, title = "提示") {
-  return showAppDialog({
-    title,
-    message,
-    confirmLabel: "知道了"
-  });
-}
-
-function showAppConfirm(message, {
-  title = "请确认",
-  confirmLabel = "确认",
-  cancelLabel = "取消",
-  danger = false
-} = {}) {
-  return showAppDialog({
-    title,
-    message,
-    confirmLabel,
-    cancelLabel,
-    danger
-  });
 }
 
 function clearGameLog() {
@@ -989,7 +885,7 @@ function renderTableViewToolbar() {
   const controls = document.createElement("div");
   controls.className = "table-view-controls";
   const hasClaimedPlayer = Boolean(currentPlayer);
-  const resetDisabled = !hasClaimedPlayer || normalizeRotationOffset(players.length) === 0;
+  const resetDisabled = !hasClaimedPlayer || normalizeRotationOffset(tableViewRotationOffset, players.length) === 0;
   controls.appendChild(createButton("↺", () => rotateTableView(-1), players.length < 2, "table-view-button"));
   controls.appendChild(createButton("以我为底", resetTableViewRotation, resetDisabled, "table-view-button"));
   controls.appendChild(createButton("↻", () => rotateTableView(1), players.length < 2, "table-view-button"));
@@ -3485,53 +3381,6 @@ document.addEventListener("click", (event) => {
   }
 });
 
-function closeTableActionDialog() {
-  document.querySelectorAll(".table-action-dialog-backdrop").forEach(dialog => dialog.remove());
-}
-
-function openTableActionDialog({ title, description = "", className = "", buildContent }) {
-  closeTableActionDialog();
-
-  const backdrop = document.createElement("div");
-  backdrop.className = className
-    ? `table-action-dialog-backdrop ${className}`
-    : "table-action-dialog-backdrop";
-  backdrop.addEventListener("click", (event) => {
-    if (event.target === backdrop) closeTableActionDialog();
-  });
-
-  const panel = document.createElement("section");
-  panel.className = "table-action-dialog";
-  panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-modal", "true");
-  panel.addEventListener("click", event => event.stopPropagation());
-
-  const header = document.createElement("div");
-  header.className = "table-action-dialog-header";
-
-  const copy = document.createElement("div");
-  const heading = document.createElement("h3");
-  heading.textContent = title;
-  copy.appendChild(heading);
-  if (description) {
-    copy.appendChild(createParagraph(description));
-  }
-  header.appendChild(copy);
-
-  const closeButton = createButton("×", closeTableActionDialog, false, "table-action-dialog-close");
-  closeButton.setAttribute("aria-label", "关闭浮窗");
-  header.appendChild(closeButton);
-  panel.appendChild(header);
-
-  const body = document.createElement("div");
-  body.className = "table-action-dialog-body";
-  buildContent(body, closeTableActionDialog);
-  panel.appendChild(body);
-
-  backdrop.appendChild(panel);
-  document.body.appendChild(backdrop);
-}
-
 function createTableDraft() {
   return players.map((player, index) => ({
     id: String(player.id || `player${index}`),
@@ -4873,113 +4722,6 @@ function createPositionMarker(label, type) {
   return marker;
 }
 
-function createSeatPoint(left, top, side, mobileLeft = left, mobileTop = top) {
-  return { left, top, side, mobileLeft, mobileTop };
-}
-
-// Visual seat slots, ordered from the bottom-center seat clockwise around the table.
-// Slot 0 is always the "my player at bottom" anchor; adjust these arrays directly
-// when tuning the table layout.
-const TABLE_SEAT_LAYOUTS = {
-  1: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93)
-  ],
-  2: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(50, 14, "seat-top", 50, 7)
-  ],
-  3: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(16, 22, "seat-left", 23, 22),
-    createSeatPoint(84, 22, "seat-right", 77, 22)
-  ],
-  4: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(12, 50, "seat-left", 21, 72),
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(88, 50, "seat-right", 79, 28)
-  ],
-  5: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(16, 62, "seat-left", 20, 75),
-    createSeatPoint(24, 22, "seat-top", 23, 17.5),
-    createSeatPoint(76, 22, "seat-top", 77, 17.5),
-    createSeatPoint(84, 62, "seat-right", 80, 75)
-  ],
-  6: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(20, 78, "seat-bottom", 23, 75),
-    createSeatPoint(20, 22, "seat-top", 23, 25),
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(80, 22, "seat-top", 77, 25),
-    createSeatPoint(80, 78, "seat-bottom", 77, 75)
-  ],
-  7: [
-    createSeatPoint(50, 88, "seat-bottom", 50, 93),
-    createSeatPoint(28, 84, "seat-bottom", 23, 75),
-    createSeatPoint(12, 42, "seat-left", 18, 25),
-    createSeatPoint(35, 14, "seat-top", 25, 10),
-    createSeatPoint(65, 14, "seat-top", 75, 10),
-    createSeatPoint(88, 42, "seat-right", 82, 25),
-    createSeatPoint(72, 84, "seat-bottom", 77, 75)
-  ],
-  8: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(22, 80, "seat-bottom", 23, 75),
-    createSeatPoint(12, 50, "seat-left", 21, 28),
-    createSeatPoint(22, 20, "seat-top", 25, 17.5),
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(78, 20, "seat-top", 75, 17.5),
-    createSeatPoint(88, 50, "seat-right", 79, 28),
-    createSeatPoint(78, 80, "seat-bottom", 77, 75)
-  ],
-  9: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
-    createSeatPoint(12, 54, "seat-left", 21, 72),
-    createSeatPoint(22, 20, "seat-top", 27, 17.5),
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(78, 20, "seat-top", 73, 17.5),
-    createSeatPoint(88, 38, "seat-right", 79, 28),
-    createSeatPoint(88, 68, "seat-right", 79, 72),
-    createSeatPoint(76, 82, "seat-bottom", 73, 82.5)
-  ],
-  10: [
-    createSeatPoint(50, 86, "seat-bottom", 50, 93),
-    createSeatPoint(24, 82, "seat-bottom", 27, 82.5),
-    createSeatPoint(12, 66, "seat-left", 21, 72),
-    createSeatPoint(12, 34, "seat-left", 21, 28),
-    createSeatPoint(24, 18, "seat-top", 27, 17.5),
-    createSeatPoint(50, 14, "seat-top", 50, 7),
-    createSeatPoint(76, 18, "seat-top", 73, 17.5),
-    createSeatPoint(88, 34, "seat-right", 79, 28),
-    createSeatPoint(88, 66, "seat-right", 79, 72),
-    createSeatPoint(76, 82, "seat-bottom", 73, 82.5)
-  ]
-};
-
-function getSeatLayout(count) {
-  return TABLE_SEAT_LAYOUTS[Math.min(Math.max(count, 1), MAX_PLAYERS)] || TABLE_SEAT_LAYOUTS[1];
-}
-
-function normalizeRotationOffset(length) {
-  if (length <= 0) return 0;
-  return ((tableViewRotationOffset % length) + length) % length;
-}
-
-function getVisualSeatCoordinates(playerIndex, count) {
-  const layout = getSeatLayout(count);
-  if (count <= 1) return layout[0];
-
-  const currentDevicePlayerIndex = getCurrentDevicePlayerIndex();
-  const manualOffset = normalizeRotationOffset(count);
-  const anchorPlayerIndex = isRoomMode() && currentDevicePlayerIndex >= 0
-    ? currentDevicePlayerIndex
-    : 0;
-  const visualIndex = (playerIndex - anchorPlayerIndex + manualOffset + count) % count;
-  return layout[visualIndex];
-}
-
 function getCompactPlayerStatus(player) {
   if (player.seatStatus !== "seated") return getSeatStatusLabel(player.seatStatus);
   if (player.folded) return "弃牌";
@@ -5162,7 +4904,14 @@ function updatePlayerBoxes() {
   boxes.appendChild(createTableCenterPanel());
 
   players.forEach((player, index) => {
-    const seat = getVisualSeatCoordinates(index, players.length);
+    const seat = getVisualSeatCoordinates({
+      playerIndex: index,
+      count: players.length,
+      currentDevicePlayerIndex: getCurrentDevicePlayerIndex(),
+      rotationOffset: tableViewRotationOffset,
+      roomMode: isRoomMode(),
+      maxSeats: MAX_PLAYERS
+    });
 
     const box = document.createElement("div");
     box.classList.add("player-box");

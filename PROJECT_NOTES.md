@@ -23,6 +23,8 @@ index.html
        -> imports Firebase Auth/Database helpers from src/firebase.js
        -> imports client/room identity helpers from src/identity.js
        -> imports pure table and betting rules from src/game-rules.js
+       -> imports visual table coordinates from src/table-layout.js
+       -> imports shared dialog and DOM factories from src/dialogs.js and src/ui-dom.js
        -> imports collapsible player manual rendering from src/guide.js
        -> imports chip riffle popover behavior from src/riffle.js
             -> imports sampled chip audio from src/riffle-sound.js
@@ -155,6 +157,34 @@ Owns pure, DOM-free poker table rules:
 
 Keep this module side-effect-free. It should be the first place to add unit tests for betting, all-in, side-pot-adjacent, and seat-rotation behavior.
 
+### `src/ui-dom.js`
+
+Owns tiny shared DOM factories:
+
+- `createParagraph()` for safe text-only paragraph creation
+- `createButton()` for standard button creation with disabled/class/click wiring
+
+Keep this module generic. It should not know about poker rules, room state, Firebase, or app-specific permission logic.
+
+### `src/dialogs.js`
+
+Owns shared modal shells:
+
+- App-level alert/confirm dialog replacements for browser `alert()` / `confirm()`
+- Table action dialog shell used by raise, showdown, settlement, and similar focused actions
+
+Business flows still live in `src/main.js`; this module only creates the reusable dialog frame and delegates content construction through callbacks.
+
+### `src/table-layout.js`
+
+Owns the visual seat-slot coordinates for the poker table:
+
+- `TABLE_SEAT_LAYOUTS`: editable desktop/mobile seat points for 1-10 players
+- `normalizeRotationOffset()`: pure rotation wraparound helper
+- `getVisualSeatCoordinates()`: maps a player index to a visual slot, including local-only table rotation and "my player at bottom" anchoring
+
+This is the preferred file for hand-tuning player label placement. Keep it DOM-free so layout experiments are easy to review and eventually test.
+
 ### `src/main.js`
 
 Still orchestrates most of the app:
@@ -169,7 +199,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, visual seat coordinates to `src/table-layout.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 

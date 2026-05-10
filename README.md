@@ -96,13 +96,16 @@ http://localhost:8000/
 ├── src/
 │   ├── approvals.js
 │   ├── deal-prompts.js
+│   ├── dialogs.js
 │   ├── firebase.js
 │   ├── game-rules.js
 │   ├── guide.js
 │   ├── identity.js
 │   ├── main.js
 │   ├── riffle.js
-│   └── riffle-sound.js
+│   ├── riffle-sound.js
+│   ├── table-layout.js
+│   └── ui-dom.js
 ├── functions/
 │   ├── index.js
 │   └── package.json
@@ -120,12 +123,15 @@ http://localhost:8000/
 - `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
 - `src/approvals.js`: 结算确认、下一局确认等多人审批进度的纯逻辑。
 - `src/deal-prompts.js`: 开局手牌、翻牌、转牌、河牌发牌提示的纯逻辑。
+- `src/dialogs.js`: 通用确认弹窗和牌桌操作浮层的 DOM 组装。
 - `src/firebase.js`: Firebase SDK 初始化、Anonymous Auth 和 Realtime Database API 导出。
 - `src/game-rules.js`: 座位资格、Button/盲注/行动顺序、跟注和加注规则等纯逻辑。
 - `src/identity.js`: 本机客户端 ID fallback、房间模式、成员列表和玩家归属字段的兼容身份层。
 - `src/guide.js`: 初始页和游戏页折叠玩家手册的内容与渲染。
 - `src/riffle.js`: 页眉 Chip Riffle 浮窗、换肤按钮、真实顺序洗筹动画和交互状态。
 - `src/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
+- `src/table-layout.js`: 牌桌玩家标签的可调座位坐标和本地旋转计算。
+- `src/ui-dom.js`: 小型 DOM 工厂，如按钮和段落元素。
 - `poker-game.js`: 兼容入口，转发到 `src/main.js`。
 - `assets/`: favicon、站点品牌图标和 Chip Riffle 音频采样。音频授权见 `assets/audio/riffle/LICENSES.md`。
 - `database.rules.json`: 过渡期 Realtime Database 规则草案，要求认证并约束成员/请求/命令写入。
@@ -177,7 +183,7 @@ python3 -m http.server 8000
 
 - All In、边池和复杂多人结算逻辑已有实现，但仍需要更多真实牌局场景验证。
 - 当前没有自动化测试套件。
-- 核心规则和身份工具已从 `src/main.js` 中拆出；UI、Firebase 写入编排和大部分状态仍集中在 `src/main.js`。
+- 核心规则、身份工具、牌桌坐标和通用弹窗工具已从 `src/main.js` 中拆出；Firebase 写入编排和大部分状态仍集中在 `src/main.js`。
 - 权限层正在从前端体验级限制迁移到 Auth/Rules/Functions 模型；当前仍有部分牌局写入由前端直接完成。
 - 房间同步依赖 Firebase CDN 和 Realtime Database；离线或网络受限时可能无法正常同步。
 - 本工具只负责筹码和下注流程，不判断牌型大小。
