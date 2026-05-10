@@ -94,6 +94,8 @@ http://localhost:8000/
 │   ├── favicon.png
 │   └── poker-chip-icon.png
 ├── src/
+│   ├── approvals.js
+│   ├── deal-prompts.js
 │   ├── firebase.js
 │   ├── game-rules.js
 │   ├── guide.js
@@ -116,6 +118,8 @@ http://localhost:8000/
 - `index.html`: 页面结构和主要 DOM 容器。
 - `styles.css`: 全站视觉主题、响应式布局、游戏控件样式和 Chip Riffle 外观皮肤。
 - `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
+- `src/approvals.js`: 结算确认、下一局确认等多人审批进度的纯逻辑。
+- `src/deal-prompts.js`: 开局手牌、翻牌、转牌、河牌发牌提示的纯逻辑。
 - `src/firebase.js`: Firebase SDK 初始化、Anonymous Auth 和 Realtime Database API 导出。
 - `src/game-rules.js`: 座位资格、Button/盲注/行动顺序、跟注和加注规则等纯逻辑。
 - `src/identity.js`: 本机客户端 ID fallback、房间模式、成员列表和玩家归属字段的兼容身份层。

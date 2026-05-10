@@ -109,6 +109,24 @@ Initializes Firebase and exports the small API surface used by the app:
 
 The Firebase config is client-side config. It is not treated like a private secret in normal Firebase web apps, but real deployments still need Firebase Auth, Realtime Database Security Rules, App Check, and eventually Cloud Functions command validation.
 
+### `src/approvals.js`
+
+Owns DOM-free approval progress helpers used by room-mode settlement confirmation and next-hand readiness:
+
+- Normalizes approval maps keyed by client id.
+- Computes approved/required counts and completion state.
+- Keep label rendering in `src/main.js`; this module should stay pure enough to reuse from a future backend command validator.
+
+### `src/deal-prompts.js`
+
+Owns DOM-free synchronized dealer prompt metadata:
+
+- Opening hand prompt: deal two hole cards after blinds are posted.
+- Flop / turn / river prompts.
+- Incoming prompt normalization for Firebase room state.
+
+The module intentionally does not decide who may confirm a prompt; that remains in room/identity flow code for now.
+
 ### `src/identity.js`
 
 Owns the compatibility identity layer for the multiplayer-by-player roadmap:
@@ -151,7 +169,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates identity normalization to `src/identity.js` and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 

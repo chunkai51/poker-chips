@@ -11,6 +11,14 @@ import {
   update
 } from "./firebase.js";
 import {
+  getApprovalProgress,
+  normalizeApprovalMap
+} from "./approvals.js";
+import {
+  createDealPrompt,
+  normalizeIncomingDealPrompt as normalizeDealPrompt
+} from "./deal-prompts.js";
+import {
   ROOM_MODES,
   createAccessCode,
   createMembersMap,
@@ -1359,64 +1367,6 @@ function normalizeSelectedWinnersByPot(value) {
   ]));
 }
 
-function getDealPromptMeta(nextRound) {
-  const prompts = {
-    0: {
-      title: "请发手牌",
-      cardText: "给每位玩家发两张底牌",
-      detail: "盲注已自动下入，确认后进入翻牌前行动。"
-    },
-    1: {
-      title: "请发翻牌",
-      cardText: "发三张公共牌",
-      detail: "确认后进入翻牌后下注。"
-    },
-    2: {
-      title: "请发转牌",
-      cardText: "发一张转牌",
-      detail: "确认后进入转牌下注。"
-    },
-    3: {
-      title: "请发河牌",
-      cardText: "发一张河牌",
-      detail: "确认后进入河牌下注。"
-    }
-  };
-
-  return prompts[nextRound] || {
-    title: "请发下一张公共牌",
-    cardText: "发公共牌",
-    detail: "确认后继续牌局。"
-  };
-}
-
-function createDealPrompt(nextRound) {
-  const prompt = getDealPromptMeta(nextRound);
-  return {
-    id: `deal_${handId}_${nextRound}_${Date.now()}`,
-    nextRound,
-    ...prompt
-  };
-}
-
-function normalizeIncomingDealPrompt(prompt) {
-  if (!prompt || typeof prompt !== "object") return null;
-
-  const nextRound = Number(prompt.nextRound);
-  if (!Number.isInteger(nextRound) || nextRound < 0 || nextRound >= rounds.length) {
-    return null;
-  }
-
-  const fallback = getDealPromptMeta(nextRound);
-  return {
-    id: String(prompt.id || `deal_${handId}_${nextRound}`),
-    nextRound,
-    title: String(prompt.title || fallback.title),
-    cardText: String(prompt.cardText || fallback.cardText),
-    detail: String(prompt.detail || fallback.detail)
-  };
-}
-
 function normalizeSettlementPreview(preview) {
   if (!preview || typeof preview !== "object") return null;
 
@@ -1460,7 +1410,7 @@ function applyRoomData(data) {
   awaitingShowdown = Boolean(gameState.awaitingShowdown);
   pendingPots = normalizeIncomingPots(gameState.pendingPots);
   selectedWinnersByPot = normalizeSelectedWinnersByPot(gameState.selectedWinnersByPot);
-  pendingDealPrompt = normalizeIncomingDealPrompt(gameState.pendingDealPrompt);
+  pendingDealPrompt = normalizeDealPrompt(gameState.pendingDealPrompt, { handId, roundCount: rounds.length });
   settlementPreview = normalizeSettlementPreview(gameState.settlementPreview);
   nextHandApprovals = normalizeApprovalMap(gameState.nextHandApprovals);
   handId = toNonNegativeNumber(gameState.handId, handId);
@@ -2690,7 +2640,7 @@ function startRound() {
     const bigBlindPosted = commitChips(players[layout.bigBlindIndex], bigBlind);
     firstToActIndex = layout.preflopFirstIndex;
     currentBet = getMaxStreetBet();
-    pendingDealPrompt = createDealPrompt(0);
+    pendingDealPrompt = createDealPrompt(0, { handId });
     handStatus = "waitingDeal";
     currentPlayerIndex = -1;
     updateGameInfo();
@@ -2944,7 +2894,7 @@ function nextPlayer() {
 
 function endRound() {
   const nextRound = currentRound + 1;
-  pendingDealPrompt = createDealPrompt(nextRound);
+  pendingDealPrompt = createDealPrompt(nextRound, { handId });
   handStatus = "waitingDeal";
   currentPlayerIndex = -1;
   updateGameLog(`${rounds[currentRound]} 下注结束，${pendingDealPrompt.cardText}后继续。`);
@@ -5039,13 +4989,6 @@ function getCompactPlayerStatus(player) {
   return "等待";
 }
 
-function normalizeApprovalMap(value = {}) {
-  if (!value || typeof value !== "object") return {};
-  return Object.fromEntries(Object.entries(value)
-    .filter(([approverId, approved]) => normalizePlayerOwnerId(approverId) && Boolean(approved))
-    .map(([approverId]) => [normalizePlayerOwnerId(approverId), true]));
-}
-
 function getApprovalPlayerLabelForClient(approverId, list = players, roomData = room) {
   const controlledPlayers = list
     .map((player, index) => ({ player, index }))
@@ -5076,17 +5019,6 @@ function getSettlementApproverIds(list = players, roomData = room) {
 
 function getNextHandApproverIds(list = players, roomData = room) {
   return getUniqueApproverIdsForPlayers(list.filter(isEligibleForNextHand), roomData);
-}
-
-function getApprovalProgress(approvals, requiredIds) {
-  const normalizedApprovals = normalizeApprovalMap(approvals);
-  const approvedCount = requiredIds.filter(approverId => normalizedApprovals[approverId]).length;
-  return {
-    approvedCount,
-    requiredCount: requiredIds.length,
-    complete: requiredIds.length > 0 && approvedCount >= requiredIds.length,
-    approved: normalizedApprovals
-  };
 }
 
 function getApprovalStatusText(approvals, requiredIds, list = players) {
