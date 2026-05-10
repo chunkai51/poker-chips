@@ -1361,6 +1361,11 @@ function normalizeSelectedWinnersByPot(value) {
 
 function getDealPromptMeta(nextRound) {
   const prompts = {
+    0: {
+      title: "请发手牌",
+      cardText: "给每位玩家发两张底牌",
+      detail: "盲注已自动下入，确认后进入翻牌前行动。"
+    },
     1: {
       title: "请发翻牌",
       cardText: "发三张公共牌",
@@ -1398,7 +1403,7 @@ function normalizeIncomingDealPrompt(prompt) {
   if (!prompt || typeof prompt !== "object") return null;
 
   const nextRound = Number(prompt.nextRound);
-  if (!Number.isInteger(nextRound) || nextRound <= 0 || nextRound >= rounds.length) {
+  if (!Number.isInteger(nextRound) || nextRound < 0 || nextRound >= rounds.length) {
     return null;
   }
 
@@ -2622,6 +2627,12 @@ function getMaxStreetBet() {
   return players.reduce((max, player) => Math.max(max, player.bet), 0);
 }
 
+function getFirstActionIndexForRound(round = currentRound) {
+  const dealerIndex = normalizeDealerForHand();
+  const layout = getHandLayout(dealerIndex);
+  return round === 0 ? layout.preflopFirstIndex : layout.postflopFirstIndex;
+}
+
 function startRound() {
   currentBet = 0;
   lastRaiseSize = bigBlind;
@@ -2675,16 +2686,20 @@ function startRound() {
 
   let firstToActIndex;
   if (currentRound === 0) {
-    if (layout.order.length === 2) {
-      commitChips(players[layout.smallBlindIndex], smallBlind);
-      commitChips(players[layout.bigBlindIndex], bigBlind);
-      firstToActIndex = layout.preflopFirstIndex;
-    } else {
-      commitChips(players[layout.smallBlindIndex], smallBlind);
-      commitChips(players[layout.bigBlindIndex], bigBlind);
-      firstToActIndex = layout.preflopFirstIndex;
-    }
+    const smallBlindPosted = commitChips(players[layout.smallBlindIndex], smallBlind);
+    const bigBlindPosted = commitChips(players[layout.bigBlindIndex], bigBlind);
+    firstToActIndex = layout.preflopFirstIndex;
     currentBet = getMaxStreetBet();
+    pendingDealPrompt = createDealPrompt(0);
+    handStatus = "waitingDeal";
+    currentPlayerIndex = -1;
+    updateGameInfo();
+    updatePlayerBoxes();
+    updateGameLog(`盲注已自动下入：${getPlayerIdentityLabel(players[layout.smallBlindIndex])} ${smallBlindPosted}，${getPlayerIdentityLabel(players[layout.bigBlindIndex])} ${bigBlindPosted}。请发两张底牌。`);
+    renderDealPromptPanel();
+    clearHandActions();
+    updateFirebaseState();
+    return;
   } else {
     firstToActIndex = layout.postflopFirstIndex;
   }
@@ -2955,10 +2970,28 @@ async function confirmDealPrompt() {
 
   setMutationInProgress(true);
   batchingStateUpdate = true;
-  currentRound = prompt.nextRound;
+  const isOpeningDeal = prompt.nextRound === 0;
   handStatus = "playing";
   pendingDealPrompt = null;
-  startRound();
+  if (isOpeningDeal) {
+    currentRound = 0;
+    currentPlayerIndex = findNextActionableIndex(getFirstActionIndexForRound(0), true);
+    hideDealPromptPanel();
+    updateGameInfo();
+    updatePlayerBoxes();
+    updateGameLog("底牌已发，进入翻牌前行动。");
+
+    if (!handleAutomaticHandEnd()) {
+      if (currentPlayerIndex === -1) {
+        beginShowdown();
+      } else {
+        updateGameLog(`轮到 ${getPlayerIdentityLabel(players[currentPlayerIndex])} 行动`);
+      }
+    }
+  } else {
+    currentRound = prompt.nextRound;
+    startRound();
+  }
   batchingStateUpdate = false;
 
   const saved = await updateFirebaseState({
@@ -4779,13 +4812,15 @@ function createTableCenterOperations() {
     const canConfirmDeal = canCurrentClientConfirmDeal();
     operations.appendChild(createCenterOperationHeader(pendingDealPrompt.title, [
       pendingDealPrompt.cardText,
+      pendingDealPrompt.detail,
       canConfirmDeal ? "你可确认发牌" : "等待 Dealer 确认"
-    ]));
+    ].filter(Boolean)));
     if (!canConfirmDeal) {
       operations.appendChild(createWaitingNotice("等待 Dealer 确认发牌"));
       return operations;
     }
-    operations.appendChild(createButton("已发牌，继续", confirmDealPrompt, isSharedPromptActionLocked(), "prompt-primary"));
+    const confirmLabel = pendingDealPrompt.nextRound === 0 ? "手牌已发，开始行动" : "已发牌，继续";
+    operations.appendChild(createButton(confirmLabel, confirmDealPrompt, isSharedPromptActionLocked(), "prompt-primary"));
     return operations;
   }
 
