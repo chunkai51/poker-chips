@@ -26,6 +26,13 @@ import {
   getVisualSeatCoordinates,
   normalizeRotationOffset
 } from "./table-layout.js";
+import {
+  createCenterOperationHeader,
+  createTableCenterPanel as createTableCenterPanelView,
+  createWaitingNotice,
+  renderSettlementPreviewContent,
+  renderShowdownSelection
+} from "./table-center-ui.js";
 import { renderTableManagerView } from "./table-manager-ui.js";
 import {
   listenRoom,
@@ -4161,28 +4168,6 @@ function renderCurrentActionPanel() {
   clearHandActions();
 }
 
-function createCenterOperationHeader(titleText, metaItems = []) {
-  const header = document.createElement("div");
-  header.className = "table-center-operation-header";
-
-  const title = document.createElement("strong");
-  title.textContent = titleText;
-  header.appendChild(title);
-
-  if (metaItems.length > 0) {
-    const meta = document.createElement("div");
-    meta.className = "table-center-operation-meta";
-    metaItems.forEach(text => {
-      const item = document.createElement("span");
-      item.textContent = text;
-      meta.appendChild(item);
-    });
-    header.appendChild(meta);
-  }
-
-  return header;
-}
-
 function openShowdownDialog() {
   if (!awaitingShowdown || handStatus !== "showdown") return;
 
@@ -4197,26 +4182,12 @@ function openShowdownDialog() {
 }
 
 function renderShowdownDialogBody(body, closeDialog) {
-  body.replaceChildren();
-
-  pendingPots.forEach((sidePot, potIndex) => {
-    const card = document.createElement("div");
-    card.classList.add("pot-card");
-
-    const heading = document.createElement("strong");
-    heading.textContent = `奖池 ${potIndex + 1}: ${sidePot.amount} 筹码`;
-    card.appendChild(heading);
-
+  const pots = pendingPots.map((sidePot, potIndex) => {
     const contenderNames = sidePot.contenders
       .map(id => getPlayerById(id))
       .filter(Boolean)
       .map(player => getPlayerIdentityLabel(player))
       .join("、");
-    card.appendChild(createParagraph(`可争夺玩家: ${contenderNames || "无"}`));
-
-    const options = document.createElement("div");
-    options.classList.add("winner-options");
-
     if (!selectedWinnersByPot[potIndex]) {
       selectedWinnersByPot[potIndex] = new Set();
     }
@@ -4224,37 +4195,44 @@ function renderShowdownDialogBody(body, closeDialog) {
       selectedWinnersByPot[potIndex].add(sidePot.contenders[0]);
     }
 
-    sidePot.contenders.forEach(playerId => {
-      const player = getPlayerById(playerId);
-      if (!player) return;
-
-      const selected = selectedWinnersByPot[potIndex].has(playerId);
-      const option = createButton(getPlayerIdentityLabel(player), () => {
-        const selectedSet = selectedWinnersByPot[potIndex] || new Set();
-        if (selectedSet.has(playerId)) {
-          selectedSet.delete(playerId);
-        } else {
-          selectedSet.add(playerId);
-        }
-        selectedWinnersByPot[potIndex] = selectedSet;
-        renderShowdownDialogBody(body, closeDialog);
-      }, isInteractionLocked() || sidePot.contenders.length === 1, "winner-option");
-      if (selected) option.classList.add("selected");
-      options.appendChild(option);
-    });
-
-    card.appendChild(options);
-    body.appendChild(card);
+    return {
+      index: potIndex,
+      amount: sidePot.amount,
+      contenderNames,
+      options: sidePot.contenders
+        .map(playerId => {
+          const player = getPlayerById(playerId);
+          if (!player) return null;
+          return {
+            playerId,
+            label: getPlayerIdentityLabel(player),
+            selected: selectedWinnersByPot[potIndex].has(playerId),
+            disabled: isInteractionLocked() || sidePot.contenders.length === 1
+          };
+        })
+        .filter(Boolean)
+    };
   });
 
-  const actions = document.createElement("div");
-  actions.classList.add("showdown-actions");
-  actions.appendChild(createButton("预结算", () => {
-    if (!buildSettlementPlan()) return;
-    closeDialog();
-    confirmShowdown();
-  }, isInteractionLocked() || handStatus !== "showdown", "prompt-primary"));
-  body.appendChild(actions);
+  renderShowdownSelection(body, {
+    pots,
+    onToggleWinner: (potIndex, playerId) => {
+      const selectedSet = selectedWinnersByPot[potIndex] || new Set();
+      if (selectedSet.has(playerId)) {
+        selectedSet.delete(playerId);
+      } else {
+        selectedSet.add(playerId);
+      }
+      selectedWinnersByPot[potIndex] = selectedSet;
+      renderShowdownDialogBody(body, closeDialog);
+    },
+    onConfirm: () => {
+      if (!buildSettlementPlan()) return;
+      closeDialog();
+      confirmShowdown();
+    },
+    confirmDisabled: isInteractionLocked() || handStatus !== "showdown"
+  });
 }
 
 function openSettlementPreviewDialog() {
@@ -4271,52 +4249,27 @@ function openSettlementPreviewDialog() {
       : "请检查本手筹码分配。",
     className: "settlement-action-dialog",
     buildContent(body, closeDialog) {
-      const list = document.createElement("div");
-      list.className = "settlement-preview-list";
-
-      settlementPreview.pots.forEach(previewPot => {
-        const card = document.createElement("div");
-        card.className = "settlement-preview-card";
-
-        const heading = document.createElement("strong");
-        heading.textContent = `奖池 ${previewPot.index + 1}: ${previewPot.amount} 筹码`;
-        card.appendChild(heading);
-
-        previewPot.payouts.forEach(payout => {
-          const winner = getPlayerById(payout.playerId);
-          const row = document.createElement("p");
-          row.className = "settlement-preview-row";
-          row.appendChild(document.createTextNode(getPlayerIdentityLabel(winner)));
-          const amount = document.createElement("span");
-          amount.textContent = `+${payout.amount}`;
-          row.appendChild(amount);
-          card.appendChild(row);
-        });
-
-        list.appendChild(card);
-      });
-      body.appendChild(list);
-
-      if (isRoomMode() && requiredApprovers.length > 0 && !progress.complete && (alreadyApproved || !canApprove)) {
-        body.appendChild(createWaitingNotice(getApprovalWaitingText(
-          settlementPreview.approvals,
-          requiredApprovers,
-          "确认结算"
-        )));
-      }
-
-      const actions = document.createElement("div");
-      actions.className = "prompt-actions";
-      actions.appendChild(createButton("取消，重新选择", () => {
-        closeDialog();
-        cancelSettlementPreview();
-      }, isSharedPromptActionLocked(), "prompt-secondary"));
       const confirmLabel = isRoomMode() && alreadyApproved && !progress.complete ? "已确认" : "确认结算";
-      actions.appendChild(createButton(confirmLabel, () => {
-        closeDialog();
-        confirmSettlementPreview();
-      }, isSharedPromptActionLocked() || !canApprove || (alreadyApproved && !progress.complete), "prompt-primary"));
-      body.appendChild(actions);
+      const showWaiting = isRoomMode() && requiredApprovers.length > 0 && !progress.complete && (alreadyApproved || !canApprove);
+      renderSettlementPreviewContent(body, {
+        preview: settlementPreview,
+        getPlayerLabel: playerId => getPlayerIdentityLabel(getPlayerById(playerId)),
+        showWaiting,
+        waitingText: showWaiting
+          ? getApprovalWaitingText(settlementPreview.approvals, requiredApprovers, "确认结算")
+          : "",
+        cancelDisabled: isSharedPromptActionLocked(),
+        confirmDisabled: isSharedPromptActionLocked() || !canApprove || (alreadyApproved && !progress.complete),
+        confirmLabel,
+        onCancel: () => {
+          closeDialog();
+          cancelSettlementPreview();
+        },
+        onConfirm: () => {
+          closeDialog();
+          confirmSettlementPreview();
+        }
+      });
     }
   });
 }
@@ -4420,19 +4373,6 @@ function createTableCenterOperations() {
 
   operations.textContent = "操作区";
   return operations;
-}
-
-function createWaitingNotice(text) {
-  const notice = document.createElement("div");
-  notice.className = "table-waiting-notice";
-  const dots = document.createElement("span");
-  dots.className = "waiting-dots";
-  dots.setAttribute("aria-hidden", "true");
-  dots.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
-  const label = document.createElement("strong");
-  label.textContent = text;
-  notice.append(dots, label);
-  return notice;
 }
 
 function getPositionMarkers(position = "") {
@@ -4577,57 +4517,11 @@ function toggleSeatDetail(box, player, index) {
 }
 
 function createTableCenterPanel() {
-  const center = document.createElement("section");
-  center.className = "poker-table-center";
-  center.setAttribute("aria-label", "牌桌状态");
-
-  const eyebrow = document.createElement("span");
-  eyebrow.className = "prompt-eyebrow";
-  eyebrow.textContent = "Poker Table";
-  center.appendChild(eyebrow);
-
-  const potBlock = document.createElement("div");
-  potBlock.className = "table-center-pot";
-  const potLabel = document.createElement("span");
-  potLabel.textContent = "奖池";
-  const potValue = document.createElement("strong");
-  potValue.textContent = String(pot);
-  potBlock.append(potLabel, potValue);
-  center.appendChild(potBlock);
-
-  const meta = document.createElement("div");
-  meta.className = "table-center-meta";
-  [getRoundDisplayText(), `最高下注 ${currentBet}`].forEach(text => {
-    const item = document.createElement("span");
-    item.textContent = text;
-    meta.appendChild(item);
+  return createTableCenterPanelView({
+    pot,
+    metaItems: [getRoundDisplayText(), `最高下注 ${currentBet}`],
+    operations: createTableCenterOperations()
   });
-  center.appendChild(meta);
-
-  /*
-  const turn = document.createElement("div");
-  turn.className = "table-center-turn";
-  if (shouldShowCurrentActionPanel()) {
-    const player = players[currentPlayerIndex];
-    turn.textContent = `${getPlayerName(player)} 行动 · 需跟 ${getCallAmount(player)}`;
-  } else if (handStatus === "waitingDeal" && pendingDealPrompt) {
-    turn.textContent = pendingDealPrompt.title;
-  } else if (handStatus === "showdown") {
-    turn.textContent = "等待选择赢家";
-  } else if (handStatus === "settlementPreview") {
-    turn.textContent = "等待结算确认";
-  } else if (handStatus === "settled") {
-    turn.textContent = "本手已结算";
-  } else {
-    turn.textContent = "等待牌局更新";
-  }
-  center.appendChild(turn);
-  */
-
-
-  center.appendChild(createTableCenterOperations());
-
-  return center;
 }
 
 function updatePlayerBoxes() {
