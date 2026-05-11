@@ -12,6 +12,7 @@ import {
   createDealPrompt,
   normalizeIncomingDealPrompt as normalizeDealPrompt
 } from "./deal-prompts.js";
+import { renderRaisePanelContent } from "./raise-ui.js";
 import {
   closeTableActionDialog,
   openTableActionDialog,
@@ -4029,109 +4030,39 @@ function createRaisePanel(player, index, actionDisabled) {
         description: `需跟 ${callAmount}，最小加注 ${minimumTarget}，当前奖池 ${pot}。`,
         className: "raise-action-dialog",
         buildContent(body, closeDialog) {
-          const panel = document.createElement("div");
-          panel.className = "raise-panel";
-
-          const info = document.createElement("div");
-          info.className = "raise-panel-info";
-          [
-            `需跟 ${callAmount}`,
-            `最小加到 ${minimumTarget}`,
-            `奖池 ${pot}`
-          ].forEach(text => {
-            const item = document.createElement("span");
-            item.textContent = text;
-            info.appendChild(item);
-          });
-          panel.appendChild(info);
-
-          const presetGrid = document.createElement("div");
-          presetGrid.className = "raise-preset-grid";
-          [
-            ["最小", () => getDefaultRaiseTarget(player)],
-            ["1/2池", () => getPotSizedRaiseTarget(player, 0.5)],
-            ["2/3池", () => getPotSizedRaiseTarget(player, 2 / 3)],
-            ["一池", () => getPotSizedRaiseTarget(player, 1)],
-            ["All In", () => maximumTarget]
-          ].forEach(([label, getTarget]) => {
-            const target = getTarget();
-            presetGrid.appendChild(createButton(`${label} ${target}`, () => {
-              setTarget(target);
-            }, raiseDisabled || target <= 0, "raise-preset-button"));
-          });
-          panel.appendChild(presetGrid);
-
-          const inputRow = document.createElement("div");
-          inputRow.className = "raise-input-row";
-
-          const inputWrap = document.createElement("label");
-          inputWrap.className = "raise-target-field";
-          const inputLabel = document.createElement("span");
-          inputLabel.textContent = "加到";
-          const raiseInput = document.createElement("input");
-          raiseInput.type = "number";
-          raiseInput.inputMode = "numeric";
-          raiseInput.min = "0";
-          raiseInput.step = String(getChipStep());
-          raiseInput.value = String(getDefaultRaiseTarget(player));
-          inputWrap.appendChild(inputLabel);
-          inputWrap.appendChild(raiseInput);
-          inputRow.appendChild(inputWrap);
-
-          const nudgeGrid = document.createElement("div");
-          nudgeGrid.className = "raise-nudge-grid";
           const step = getChipStep();
-          [
-            [`-${bigBlind}`, -bigBlind],
-            [`-${step}`, -step],
-            [`+${step}`, step],
-            [`+${bigBlind}`, bigBlind]
-          ].forEach(([label, delta]) => {
-            nudgeGrid.appendChild(createButton(label, () => {
-              setTarget(toPositiveInteger(raiseInput.value, 0) + delta);
-            }, raiseDisabled, "raise-nudge-button"));
+          renderRaisePanelContent(body, {
+            infoItems: [
+              `需跟 ${callAmount}`,
+              `最小加到 ${minimumTarget}`,
+              `奖池 ${pot}`
+            ],
+            presets: [
+              ["最小", () => getDefaultRaiseTarget(player)],
+              ["1/2池", () => getPotSizedRaiseTarget(player, 0.5)],
+              ["2/3池", () => getPotSizedRaiseTarget(player, 2 / 3)],
+              ["一池", () => getPotSizedRaiseTarget(player, 1)],
+              ["All In", () => maximumTarget]
+            ].map(([label, getTarget]) => ({
+              label,
+              target: getTarget()
+            })),
+            nudges: [
+              [`-${bigBlind}`, -bigBlind],
+              [`-${step}`, -step],
+              [`+${step}`, step],
+              [`+${bigBlind}`, bigBlind]
+            ].map(([label, delta]) => ({ label, delta })),
+            defaultTarget: getDefaultRaiseTarget(player),
+            maximumTarget,
+            step,
+            disabled: raiseDisabled,
+            getValidation: rawTarget => getRaiseValidation(player, rawTarget),
+            onConfirm: rawTarget => {
+              closeDialog();
+              playerAction("raise", index, rawTarget);
+            }
           });
-          inputRow.appendChild(nudgeGrid);
-          panel.appendChild(inputRow);
-
-          const preview = document.createElement("div");
-          preview.className = "raise-preview";
-          const previewTarget = document.createElement("span");
-          const previewCommit = document.createElement("span");
-          const previewMessage = document.createElement("em");
-          preview.appendChild(previewTarget);
-          preview.appendChild(previewCommit);
-          preview.appendChild(previewMessage);
-          panel.appendChild(preview);
-
-          const confirmButton = createButton("确认 Raise", () => {
-            closeDialog();
-            playerAction("raise", index, raiseInput.value);
-          }, raiseDisabled, "action-btn action-confirm raise-confirm-button");
-          panel.appendChild(confirmButton);
-
-          function setTarget(value) {
-            const nextValue = Math.max(0, Math.min(toPositiveInteger(value, 0), maximumTarget));
-            raiseInput.value = String(nextValue);
-            updatePreview();
-          }
-
-          function updatePreview() {
-            const validation = getRaiseValidation(player, raiseInput.value);
-            previewTarget.textContent = `加到 ${validation.targetBet || 0}`;
-            previewCommit.textContent = `本次投入 ${validation.commitAmount || 0}`;
-            previewMessage.textContent = validation.message;
-            preview.classList.toggle("is-invalid", !validation.valid);
-            confirmButton.textContent = validation.valid
-              ? `确认加到 ${validation.targetBet}`
-              : "确认 Raise";
-            confirmButton.disabled = raiseDisabled || !validation.valid;
-          }
-
-          raiseInput.addEventListener("input", updatePreview);
-          updatePreview();
-          body.appendChild(panel);
-          requestAnimationFrame(() => raiseInput.focus());
         }
       });
     }
