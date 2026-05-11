@@ -26,6 +26,7 @@ index.html
        -> imports client/room identity helpers from src/identity.js
        -> imports pure table and betting rules from src/game-rules.js
        -> imports visual table coordinates from src/table-layout.js
+       -> imports table manager DOM builders from src/table-manager-ui.js
        -> imports shared dialog and DOM factories from src/dialogs.js and src/ui-dom.js
        -> imports collapsible player manual rendering from src/guide.js
        -> imports chip riffle popover behavior from src/riffle.js
@@ -210,6 +211,17 @@ Owns the visual seat-slot coordinates for the poker table:
 
 This is the preferred file for hand-tuning player label placement. Keep it DOM-free so layout experiments are easy to review and eventually test.
 
+### `src/table-manager-ui.js`
+
+Owns DOM builders for the seat and identity management panel:
+
+- Panel header and footer
+- Current identity summary
+- Seat-request list
+- Player rows with seat order, chip editing, seat status, and identity controls
+
+`src/main.js` prepares the context, permission booleans, formatter functions, and mutation callbacks. This module should stay UI-focused and avoid direct Firebase writes or room-state ownership.
+
 ### `src/main.js`
 
 Still orchestrates most of the app:
@@ -224,7 +236,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room payload normalization to `src/room-state.js`, identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, visual seat coordinates to `src/table-layout.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room payload normalization to `src/room-state.js`, identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, visual seat coordinates to `src/table-layout.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 

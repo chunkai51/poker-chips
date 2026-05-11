@@ -106,6 +106,7 @@ http://localhost:8000/
 │   ├── room-sync.js
 │   ├── riffle.js
 │   ├── riffle-sound.js
+│   ├── table-manager-ui.js
 │   ├── table-layout.js
 │   └── ui-dom.js
 ├── functions/
@@ -134,6 +135,7 @@ http://localhost:8000/
 - `src/room-sync.js`: Firebase Realtime Database 房间读写、监听、事务和局部更新外壳。
 - `src/riffle.js`: 页眉 Chip Riffle 浮窗、换肤按钮、真实顺序洗筹动画和交互状态。
 - `src/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
+- `src/table-manager-ui.js`: 席位与身份管理窗口的 DOM 渲染。
 - `src/table-layout.js`: 牌桌玩家标签的可调座位坐标和本地旋转计算。
 - `src/ui-dom.js`: 小型 DOM 工厂，如按钮和段落元素。
 - `poker-game.js`: 兼容入口，转发到 `src/main.js`。
@@ -187,7 +189,7 @@ python3 -m http.server 8000
 
 - All In、边池和复杂多人结算逻辑已有实现，但仍需要更多真实牌局场景验证。
 - 当前没有自动化测试套件。
-- 核心规则、身份工具、牌桌坐标、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
+- 核心规则、身份工具、牌桌坐标、牌桌管理 UI、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
 - 权限层正在从前端体验级限制迁移到 Auth/Rules/Functions 模型；当前仍有部分牌局写入由前端直接完成。
 - 房间同步依赖 Firebase CDN 和 Realtime Database；离线或网络受限时可能无法正常同步。
 - 本工具只负责筹码和下注流程，不判断牌型大小。

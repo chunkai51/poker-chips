@@ -26,6 +26,7 @@ import {
   getVisualSeatCoordinates,
   normalizeRotationOffset
 } from "./table-layout.js";
+import { renderTableManagerView } from "./table-manager-ui.js";
 import {
   listenRoom,
   readRoom,
@@ -59,7 +60,6 @@ import {
   verifyAccessCode
 } from "./identity.js";
 import {
-  SEAT_STATUS_LABELS,
   canAct,
   canPlayerRaise as canPlayerRaiseWithState,
   getCallAmount as calculateCallAmount,
@@ -3431,319 +3431,144 @@ function renderTableManager() {
   if (!tableManagerBackdrop || !tableManagerPanel || !tableManagerOpen || !tableDraft) return;
 
   tableManagerBackdrop.hidden = false;
-  tableManagerPanel.replaceChildren();
-
-  const header = document.createElement("div");
-  header.className = "table-manager-header";
-
-  const copy = document.createElement("div");
-  const eyebrow = document.createElement("span");
-  eyebrow.className = "prompt-eyebrow";
-  eyebrow.textContent = "Room Seats";
-  copy.appendChild(eyebrow);
-
-  const title = document.createElement("h3");
-  title.id = "table-manager-title";
-  title.textContent = "席位与身份管理";
-  copy.appendChild(title);
-  copy.appendChild(createParagraph(isRoomMode()
-    ? "玩家在这里查看身份与请求；房主/协管可批准入座，并在开局前或两手牌之间调整牌桌。"
-    : "调整座次、筹码和离桌/回桌状态；保存后只影响下一手。"));
-  header.appendChild(copy);
-
-  const closeButton = createButton("×", closeTableManager, false, "table-manager-close");
-  closeButton.setAttribute("aria-label", "关闭牌桌管理");
-  header.appendChild(closeButton);
-  tableManagerPanel.appendChild(header);
-
-  if (isRoomMode()) {
-    tableManagerPanel.appendChild(createIdentityManagerPanel());
-    const requestsPanel = createSeatRequestsPanel();
-    if (requestsPanel) tableManagerPanel.appendChild(requestsPanel);
-  }
-
-  const summary = document.createElement("div");
-  summary.className = "table-manager-summary";
-  summary.textContent = canEditTableNow()
-    ? getTableDraftSummary()
-    : "身份绑定可随时调整；筹码、座次、删除玩家只在开局前或两手牌之间开放。";
-  tableManagerPanel.appendChild(summary);
-
-  const rows = document.createElement("div");
-  rows.className = "table-manager-rows";
-  tableDraft.forEach((draftPlayer, index) => {
-    rows.appendChild(createTableManagerRow(draftPlayer, index));
-  });
-  tableManagerPanel.appendChild(rows);
-
   const canEdit = canEditTableNow();
-  const addButton = createButton("添加玩家", () => {
-    if (tableDraft.length >= MAX_PLAYERS) {
-      showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
-      renderTableManager();
-      return;
-    }
-
-    const id = getNextPlayerIdFromDraft();
-    tableDraft.push({
-      id,
-      name: "",
-      seatIndex: tableDraft.length,
-      seatStatus: "seated",
-      chips: toPositiveInteger(initialChipsInput.value, 1000),
-      ownerClientId: "",
-      playerKeyHash: "",
-      dealer: false
-    });
-    renderTableManager();
-  }, isSharedPromptActionLocked() || !canEdit || tableDraft.length >= MAX_PLAYERS, "prompt-secondary");
+  const isActionLocked = isSharedPromptActionLocked();
+  let addButtonLabel = "添加玩家";
   if (tableDraft.length >= MAX_PLAYERS) {
-    addButton.textContent = `最多 ${MAX_PLAYERS} 人`;
+    addButtonLabel = `最多 ${MAX_PLAYERS} 人`;
   } else if (!canEdit) {
-    addButton.textContent = "当前阶段不可加人";
+    addButtonLabel = "当前阶段不可加人";
   }
-
-  const footer = document.createElement("div");
-  footer.className = "table-manager-footer";
-  footer.appendChild(addButton);
-
-  const actionGroup = document.createElement("div");
-  actionGroup.className = "table-manager-save-actions";
-  actionGroup.appendChild(createButton("取消", closeTableManager, false, "prompt-secondary"));
-  actionGroup.appendChild(createButton("保存牌桌", () => saveTableDraft({ startNextHand: false }), isSharedPromptActionLocked() || !canEdit, "prompt-secondary"));
-  actionGroup.appendChild(createButton("保存并开始下一局", () => saveTableDraft({ startNextHand: true }), isSharedPromptActionLocked() || !canEdit || handStatus !== "settled" || getEligiblePlayerIndices(tableDraft.map(normalizeDraftPlayer)).length < 2, "prompt-primary"));
-  footer.appendChild(actionGroup);
-  tableManagerPanel.appendChild(footer);
-}
-
-function createIdentityManagerPanel() {
-  const panel = document.createElement("div");
-  panel.className = "identity-manager-panel";
 
   const currentPlayer = getCurrentDevicePlayer();
   const currentIndex = currentPlayer ? players.indexOf(currentPlayer) : -1;
   const isAdmin = canCurrentClientManageRoom();
-  const summary = document.createElement("div");
-  summary.className = "identity-manager-summary";
-  const title = document.createElement("strong");
-  title.textContent = currentPlayer
-    ? `当前身份：${getPlayerIdentityLabel(currentPlayer, currentIndex)}${isAdmin ? ` · ${getCurrentRoomRoleLabel()}` : ""}`
-    : isAdmin
-      ? `当前身份：${getCurrentRoomRoleLabel()}旁观`
-      : "当前身份：旁观";
-  const detail = document.createElement("span");
   const displayName = getPreferredDisplayName() || "未填写昵称";
-  detail.textContent = `房间 ${room.roomId || "-"} · ${displayName} · 设备 ${getClientShortId()}`;
-  summary.append(title, detail);
-  panel.appendChild(summary);
-
-  const actions = document.createElement("div");
-  actions.className = "identity-manager-actions";
-  if (currentPlayer) {
-    actions.appendChild(createButton("退出当前玩家", releaseCurrentPlayerIdentity, isSharedPromptActionLocked(), "table-chip-button"));
-  }
-
-  actions.appendChild(createButton("复制邀请", async () => {
-    const inviteUrl = getInviteUrl();
-    if (!inviteUrl) return;
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
-      showAppAlert("邀请链接已复制。", "已复制邀请");
-    } catch (_) {
-      showAppAlert(inviteUrl, "邀请链接");
+  const pendingRequestCount = getPendingJoinRequestCount();
+  const identity = isRoomMode()
+    ? {
+      titleText: currentPlayer
+        ? `当前身份：${getPlayerIdentityLabel(currentPlayer, currentIndex)}${isAdmin ? ` · ${getCurrentRoomRoleLabel()}` : ""}`
+        : isAdmin
+          ? `当前身份：${getCurrentRoomRoleLabel()}旁观`
+          : "当前身份：旁观",
+      detailText: `房间 ${room.roomId || "-"} · ${displayName} · 设备 ${getClientShortId()}`,
+      hasCurrentPlayer: Boolean(currentPlayer),
+      isAdmin,
+      isActionLocked,
+      roomId: room.roomId,
+      pendingRequestCount
     }
-  }, !room.roomId, "table-chip-button"));
+    : null;
 
-  if (isAdmin) {
-    const count = getPendingJoinRequestCount();
-    if (count > 0) {
-      actions.appendChild(createButton(`处理请求 ${count}`, () => {
-        showAppAlert(`当前有 ${count} 个待处理请求。请在下方列表批准或拒绝。`);
-      }, false, "table-chip-button"));
-    }
-  }
-
-  panel.appendChild(actions);
-  return panel;
-}
-
-function createSeatRequestsPanel() {
-  const requests = Object.values(normalizeJoinRequests(room.joinRequests));
-  if (!requests.length) return null;
-  const panel = document.createElement("div");
-  panel.className = "seat-requests-panel";
-
-  const title = document.createElement("strong");
-  title.textContent = requests.length
-    ? `入座请求（${requests.length}）`
-    : "入座请求";
-  panel.appendChild(title);
-
-  const list = document.createElement("div");
-  list.className = "seat-request-list";
-  requests
+  const requests = Object.values(normalizeJoinRequests(room.joinRequests))
     .sort((left, right) => left.requestedAt - right.requestedAt)
-    .forEach(request => {
-      const row = document.createElement("div");
-      row.className = "seat-request-row";
+    .map(request => {
       const targetIndex = players.findIndex(player => player.id === request.playerId);
       const targetPlayer = targetIndex >= 0 ? players[targetIndex] : null;
-      const copy = document.createElement("span");
-      copy.textContent = `${getRequestDisplayName(request) || "未填写昵称"} 请求${request.type === "reclaim" ? "接管" : "坐下"} ${targetPlayer ? getPlayerIdentityLabel(targetPlayer, targetIndex) : "未知座位"}`;
-      row.appendChild(copy);
-
-      if (canCurrentClientManageRoom()) {
-        const actions = document.createElement("div");
-        actions.className = "seat-request-actions";
-        actions.appendChild(createButton("批准", () => approveSeatRequest(request.clientId), isSharedPromptActionLocked(), "table-chip-button"));
-        actions.appendChild(createButton("拒绝", () => declineSeatRequest(request.clientId), isSharedPromptActionLocked(), "table-chip-button table-danger-button"));
-        row.appendChild(actions);
-      }
-      list.appendChild(row);
+      return {
+        clientId: request.clientId,
+        text: `${getRequestDisplayName(request) || "未填写昵称"} 请求${request.type === "reclaim" ? "接管" : "坐下"} ${targetPlayer ? getPlayerIdentityLabel(targetPlayer, targetIndex) : "未知座位"}`
+      };
     });
-  panel.appendChild(list);
-  return panel;
+
+  renderTableManagerView({
+    panel: tableManagerPanel,
+    context: {
+      isRoomMode: isRoomMode(),
+      description: isRoomMode()
+        ? "玩家在这里查看身份与请求；房主/协管可批准入座，并在开局前或两手牌之间调整牌桌。"
+        : "调整座次、筹码和离桌/回桌状态；保存后只影响下一手。",
+      summaryText: canEdit
+        ? getTableDraftSummary()
+        : "身份绑定可随时调整；筹码、座次、删除玩家只在开局前或两手牌之间开放。",
+      canEdit,
+      canManageRoom: isAdmin,
+      isActionLocked,
+      tableDraft,
+      maxPlayers: MAX_PLAYERS,
+      adminPlayerIds: room.adminPlayerIds,
+      normalizeDraftPlayer,
+      addButtonLabel,
+      addDisabled: isActionLocked || !canEdit || tableDraft.length >= MAX_PLAYERS,
+      saveDisabled: isActionLocked || !canEdit,
+      saveAndStartDisabled: isActionLocked || !canEdit || handStatus !== "settled" || getEligiblePlayerIndices(tableDraft.map(normalizeDraftPlayer)).length < 2
+    },
+    identity,
+    requests,
+    callbacks: {
+      onClose: closeTableManager,
+      onAddPlayer: addDraftPlayer,
+      onSave: saveTableDraft,
+      onReleaseCurrentPlayer: releaseCurrentPlayerIdentity,
+      onCopyInvite: copyInviteLink,
+      onShowPendingRequests: count => {
+        showAppAlert(`当前有 ${count} 个待处理请求。请在下方列表批准或拒绝。`);
+      },
+      onApproveSeatRequest: approveSeatRequest,
+      onDeclineSeatRequest: declineSeatRequest,
+      onMoveDraftPlayer: moveDraftPlayer,
+      onDraftNameInput: (index, value) => {
+        tableDraft[index].name = value;
+      },
+      onSetDraftChips: setDraftChips,
+      onAdjustDraftChips: adjustDraftChips,
+      onSetDraftStatus: setDraftStatus,
+      onReturnSeat: returnDraftPlayerToTable,
+      onDeleteDraftPlayer: deleteDraftPlayer,
+      onTogglePlayerClaim: async playerId => {
+        await togglePlayerClaim(playerId);
+        renderTableManager();
+      },
+      onTogglePlayerAdmin: togglePlayerAdmin
+    },
+    formatters: {
+      getPlayerName,
+      getSavedPlayer: playerId => players.find(item => item.id === playerId),
+      isCurrentDevicePlayer,
+      getClientShortId,
+      getJoinRequestsForPlayer
+    }
+  });
 }
 
-function createTableManagerRow(draftPlayer, index) {
-  const row = document.createElement("div");
-  row.className = "table-manager-row";
-  if (!isEligibleForNextHand(normalizeDraftPlayer(draftPlayer, index))) {
-    row.classList.add("is-inactive");
-  }
-  const canEdit = canEditTableNow();
-
-  const seat = document.createElement("div");
-  seat.className = "table-seat-cell";
-  const seatLabel = document.createElement("strong");
-  seatLabel.textContent = `座位 ${index + 1}`;
-  seat.appendChild(seatLabel);
-  const moveActions = document.createElement("div");
-  moveActions.className = "table-seat-actions";
-  moveActions.appendChild(createButton("↑", () => moveDraftPlayer(index, -1), !canEdit || index === 0, "table-icon-button"));
-  moveActions.appendChild(createButton("↓", () => moveDraftPlayer(index, 1), !canEdit || index === tableDraft.length - 1, "table-icon-button"));
-  seat.appendChild(moveActions);
-  row.appendChild(seat);
-
-  const nameInput = document.createElement("input");
-  nameInput.type = "text";
-  nameInput.value = draftPlayer.name;
-  nameInput.placeholder = "待入座";
-  nameInput.setAttribute("aria-label", `座位 ${index + 1} 玩家名`);
-  nameInput.disabled = !canEdit;
-  nameInput.addEventListener("input", () => {
-    tableDraft[index].name = nameInput.value;
-  });
-  row.appendChild(nameInput);
-
-  const chipsCell = document.createElement("div");
-  chipsCell.className = "table-chip-cell";
-  const chipsInput = document.createElement("input");
-  chipsInput.type = "number";
-  chipsInput.inputMode = "numeric";
-  chipsInput.min = "0";
-  chipsInput.step = "10";
-  chipsInput.value = String(draftPlayer.chips);
-  chipsInput.setAttribute("aria-label", `${getPlayerName(draftPlayer)} 筹码`);
-  chipsInput.disabled = !canEdit;
-  chipsInput.addEventListener("change", () => {
-    setDraftChips(index, chipsInput.value);
-  });
-  chipsCell.appendChild(chipsInput);
-
-  const chipActions = document.createElement("div");
-  chipActions.className = "table-chip-actions";
-  chipActions.appendChild(createButton("-100", () => adjustDraftChips(index, -100), !canEdit || draftPlayer.chips <= 0, "table-chip-button"));
-  chipActions.appendChild(createButton("+100", () => adjustDraftChips(index, 100), !canEdit, "table-chip-button"));
-  chipActions.appendChild(createButton("+500", () => adjustDraftChips(index, 500), !canEdit, "table-chip-button"));
-  chipActions.appendChild(createButton("+1000", () => adjustDraftChips(index, 1000), !canEdit, "table-chip-button"));
-  chipsCell.appendChild(chipActions);
-  row.appendChild(chipsCell);
-
-  const statusCell = document.createElement("div");
-  statusCell.className = "table-status-cell";
-  const statusSelect = document.createElement("select");
-  statusSelect.setAttribute("aria-label", `${getPlayerName(draftPlayer)} 状态`);
-  statusSelect.disabled = !canEdit;
-  Object.entries(SEAT_STATUS_LABELS).forEach(([status, label]) => {
-    const option = document.createElement("option");
-    option.value = status;
-    option.textContent = label;
-    option.selected = draftPlayer.seatStatus === status;
-    statusSelect.appendChild(option);
-  });
-  statusSelect.addEventListener("change", () => {
-    setDraftStatus(index, statusSelect.value);
-  });
-  statusCell.appendChild(statusSelect);
-
-  const quickActions = document.createElement("div");
-  quickActions.className = "table-status-actions";
-  if (draftPlayer.seatStatus === "seated") {
-    quickActions.appendChild(createButton("坐出", () => setDraftStatus(index, "sittingOut"), !canEdit, "table-chip-button"));
-    quickActions.appendChild(createButton("离桌", () => setDraftStatus(index, "left"), !canEdit, "table-chip-button table-danger-button"));
-  } else {
-    quickActions.appendChild(createButton("回桌", () => {
-      if (tableDraft[index].chips <= 0) {
-        tableDraft[index].chips = toPositiveInteger(initialChipsInput.value, 1000);
-      }
-      setDraftStatus(index, "seated");
-    }, !canEdit, "table-chip-button"));
-  }
-  quickActions.appendChild(createButton("删除", () => deleteDraftPlayer(index), !canEdit || tableDraft.length <= 2, "table-chip-button table-danger-button"));
-  statusCell.appendChild(quickActions);
-  row.appendChild(statusCell);
-
-  if (isRoomMode()) {
-    row.appendChild(createSeatIdentityCell(draftPlayer, index));
-  }
-
-  return row;
-}
-
-function createSeatIdentityCell(draftPlayer, index) {
-  const cell = document.createElement("div");
-  cell.className = "table-identity-cell";
-  const savedPlayer = players.find(item => item.id === draftPlayer.id);
-  const player = savedPlayer || draftPlayer;
-  const ownerId = normalizePlayerOwnerId(player.ownerClientId);
-  const adminIds = normalizeAdminPlayerIds(room.adminPlayerIds);
-  const status = document.createElement("span");
-  status.className = "table-identity-status";
-  status.textContent = isCurrentDevicePlayer(player)
-    ? "当前设备"
-    : ownerId
-      ? `已绑定 ${getClientShortId(ownerId)}`
-      : "未绑定";
-  if (adminIds.includes(draftPlayer.id)) {
-    status.textContent += " · 协管";
-  }
-  cell.appendChild(status);
-
-  const requests = getJoinRequestsForPlayer(draftPlayer.id);
-  if (requests.length) {
-    const requestSummary = document.createElement("span");
-    requestSummary.className = "table-identity-status";
-    requestSummary.textContent = `${requests.length} 个待批准请求`;
-    cell.appendChild(requestSummary);
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "table-identity-actions";
-  actions.appendChild(createButton(isCurrentDevicePlayer(player) ? "已绑定" : ownerId ? "已有人入座" : canCurrentClientManageRoom() ? "绑定到我" : "请求坐下", async () => {
-    if (isCurrentDevicePlayer(player)) return;
-    await togglePlayerClaim(draftPlayer.id);
+function addDraftPlayer() {
+  if (tableDraft.length >= MAX_PLAYERS) {
+    showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
     renderTableManager();
-  }, isSharedPromptActionLocked() || !savedPlayer || isCurrentDevicePlayer(player), "table-chip-button"));
-
-  if (canCurrentClientManageRoom()) {
-    const isAdminPlayer = adminIds.includes(draftPlayer.id);
-    actions.appendChild(createButton(isAdminPlayer ? "撤销协管" : "设为协管", async () => {
-      await togglePlayerAdmin(draftPlayer.id, !isAdminPlayer);
-    }, isSharedPromptActionLocked() || !savedPlayer, "table-chip-button"));
+    return;
   }
-  cell.appendChild(actions);
-  return cell;
+
+  const id = getNextPlayerIdFromDraft();
+  tableDraft.push({
+    id,
+    name: "",
+    seatIndex: tableDraft.length,
+    seatStatus: "seated",
+    chips: toPositiveInteger(initialChipsInput.value, 1000),
+    ownerClientId: "",
+    playerKeyHash: "",
+    dealer: false
+  });
+  renderTableManager();
+}
+
+async function copyInviteLink() {
+  const inviteUrl = getInviteUrl();
+  if (!inviteUrl) return;
+  try {
+    await navigator.clipboard.writeText(inviteUrl);
+    showAppAlert("邀请链接已复制。", "已复制邀请");
+  } catch (_) {
+    showAppAlert(inviteUrl, "邀请链接");
+  }
+}
+
+function returnDraftPlayerToTable(index) {
+  if (tableDraft[index].chips <= 0) {
+    tableDraft[index].chips = toPositiveInteger(initialChipsInput.value, 1000);
+  }
+  setDraftStatus(index, "seated");
 }
 
 function moveDraftPlayer(index, direction) {
