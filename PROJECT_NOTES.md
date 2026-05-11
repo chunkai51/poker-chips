@@ -24,11 +24,13 @@ index.html
        -> imports player seat DOM builders from src/player-seat-ui.js
        -> imports raise action panel DOM builders from src/raise-ui.js
        -> imports room database adapter helpers from src/room-sync.js
+       -> imports room permission helpers from src/room-permissions.js
        -> imports room/game-state normalizers from src/room-state.js
        -> imports client/room identity helpers from src/identity.js
        -> imports pure table and betting rules from src/game-rules.js
        -> imports visual table coordinates from src/table-layout.js
        -> imports table center DOM builders from src/table-center-ui.js
+       -> imports table manager draft helpers from src/table-manager-controller.js
        -> imports table manager DOM builders from src/table-manager-ui.js
        -> imports shared dialog and DOM factories from src/dialogs.js and src/ui-dom.js
        -> imports collapsible player manual rendering from src/guide.js
@@ -139,6 +141,18 @@ Owns DOM-free room/game-state payload helpers:
 - Settlement-preview normalization
 
 This module is intentionally about data shape only. It should not render UI, write Firebase, or decide permissions.
+
+### `src/room-permissions.js`
+
+Owns DOM-free room permission helpers:
+
+- Host lookup
+- Admin/manager checks
+- Room-manager proxy lookup for unclaimed seats
+- Player-control checks
+- Current-device player lookup helpers
+
+`src/main.js` keeps thin wrappers because it still owns `clientId`, current `room`, remembered admin-code checks, and local fallback state.
 
 ### `src/player-seat-ui.js`
 
@@ -252,6 +266,18 @@ Owns DOM builders for table-center UI:
 
 `src/main.js` still decides which state is active, which actions are allowed, and what callbacks run. Keep this module UI-focused and callback-driven.
 
+### `src/table-manager-controller.js`
+
+Owns draft-state logic for the table management workflow:
+
+- Creates the editable table draft from current players
+- Normalizes draft players back into player payloads
+- Adds, deletes, reorders, and returns seats
+- Adjusts chip counts and seat status
+- Builds the next-hand preview summary
+
+It does not save to Firebase and does not render DOM. Persistence, permissions, and conflict guards remain in `src/main.js` for now.
+
 ### `src/table-manager-ui.js`
 
 Owns DOM builders for the seat and identity management panel:
@@ -277,7 +303,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room payload normalization to `src/room-state.js`, identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room payload normalization to `src/room-state.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 

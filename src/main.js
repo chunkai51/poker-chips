@@ -18,6 +18,20 @@ import {
   createPlayerSeatBox
 } from "./player-seat-ui.js";
 import {
+  adjustDraftChips as adjustTableDraftChips,
+  appendDraftPlayer,
+  createTableDraft as createTableDraftFromPlayers,
+  deleteDraftPlayer as deleteTableDraftPlayer,
+  getPreviewDealerIndex as getTableDraftPreviewDealerIndex,
+  getTableDraftSummary as getTableDraftSummaryText,
+  moveDraftPlayer as moveTableDraftPlayer,
+  normalizeDraftPlayer as normalizeTableDraftPlayer,
+  normalizeTableDraftPlayers as normalizeTableDraftPlayerList,
+  returnDraftPlayerToTable as returnTableDraftPlayerToTable,
+  setDraftChips as setTableDraftChips,
+  setDraftStatus as setTableDraftStatus
+} from "./table-manager-controller.js";
+import {
   closeTableActionDialog,
   openTableActionDialog,
   showAppAlert,
@@ -56,6 +70,17 @@ import {
   normalizeSettlementPreview,
   serializeSelectedWinnersByPot
 } from "./room-state.js";
+import {
+  canClientControlPlayerInRoom as canClientControlPlayerInRoomData,
+  canClientManageRoomData as canClientManageRoomPayload,
+  getCurrentDevicePlayer as getCurrentDevicePlayerFromList,
+  getCurrentDevicePlayerIndex as getCurrentDevicePlayerIndexFromList,
+  getHostClientId as getRoomSessionHostClientId,
+  getPlayerControllerId as getRoomPlayerControllerId,
+  getRoomManagerProxyId as getRoomManagerProxyClientId,
+  isClientAdminInRoom as isClientAdminInRoomData,
+  isCurrentDevicePlayer as isCurrentDevicePlayerInList
+} from "./room-permissions.js";
 import {
   ROOM_MODES,
   createAccessCode,
@@ -520,78 +545,71 @@ function startAnonymousIdentity() {
 }
 
 function getHostClientId(roomData = room) {
-  const mode = normalizeRoomMode(roomData?.mode, roomData?.roomId || room.roomId);
-  const fallbackClientId = mode === ROOM_MODES.local ? clientId : roomData?.operator || "";
-  return getRoomHostId(roomData, fallbackClientId) || fallbackClientId;
+  return getRoomSessionHostClientId(roomData, {
+    currentRoomId: room.roomId,
+    localClientId: clientId
+  });
 }
 
 function isClientAdminInRoom(actorClientId, roomData = room) {
-  const normalizedActorId = normalizePlayerOwnerId(actorClientId);
-  if (!normalizedActorId) return false;
-  const members = normalizeMembers(roomData?.members);
-  const member = members[normalizedActorId];
-  const adminPlayerIds = normalizeAdminPlayerIds(roomData?.adminPlayerIds);
-  const claimedPlayerId = String(member?.claimedPlayerId || "");
-  const roomPlayers = normalizeIncomingPlayers(roomData?.players || players);
-  const ownsAdminPlayer = adminPlayerIds.includes(claimedPlayerId) &&
-    roomPlayers.some(player => player.id === claimedPlayerId && normalizePlayerOwnerId(player.ownerClientId) === normalizedActorId);
-  const rememberedCodeValid = normalizedActorId === clientId &&
-    isAdminCodeValid(getRememberedAdminCode(roomData?.roomId || room.roomId), roomData);
-  return Boolean(member?.adminVerified) ||
-    rememberedCodeValid ||
-    ownsAdminPlayer ||
-    getHostClientId(roomData) === normalizedActorId;
+  return isClientAdminInRoomData(actorClientId, roomData, {
+    currentClientId: clientId,
+    currentRoomId: room.roomId,
+    players,
+    isRememberedAdminCodeValid: (targetRoomData, currentRoomId) => {
+      return isAdminCodeValid(getRememberedAdminCode(targetRoomData?.roomId || currentRoomId), targetRoomData);
+    }
+  });
 }
 
 function getRoomManagerProxyId(roomData = room) {
-  const adminPlayerIds = normalizeAdminPlayerIds(roomData?.adminPlayerIds);
-  const roomPlayers = normalizeIncomingPlayers(roomData?.players || players);
-  const adminPlayerOwner = roomPlayers
-    .filter(player => adminPlayerIds.includes(player.id))
-    .map(player => normalizePlayerOwnerId(player.ownerClientId))
-    .find(Boolean);
-  if (adminPlayerOwner) return adminPlayerOwner;
-
-  const adminMemberId = Object.values(normalizeMembers(roomData?.members))
-    .filter(member => member.adminVerified)
-    .sort((left, right) => toNonNegativeNumber(right.lastSeenAt, 0) - toNonNegativeNumber(left.lastSeenAt, 0))
-    .map(member => member.clientId)[0];
-  return adminMemberId || getHostClientId(roomData);
+  return getRoomManagerProxyClientId(roomData, {
+    currentRoomId: room.roomId,
+    localClientId: clientId,
+    players
+  });
 }
 
 function canClientManageRoomData(actorClientId, roomData = room) {
-  const normalizedActorId = normalizePlayerOwnerId(actorClientId);
-  if (!normalizedActorId) return false;
-  const mode = normalizeRoomMode(roomData?.mode, roomData?.roomId || room.roomId);
-  if (mode === ROOM_MODES.local) return true;
-  return isClientAdminInRoom(normalizedActorId, roomData);
+  return canClientManageRoomPayload(actorClientId, roomData, {
+    currentClientId: clientId,
+    currentRoomId: room.roomId,
+    players,
+    isRememberedAdminCodeValid: (targetRoomData, currentRoomId) => {
+      return isAdminCodeValid(getRememberedAdminCode(targetRoomData?.roomId || currentRoomId), targetRoomData);
+    }
+  });
 }
 
 function canClientControlPlayerInRoom(actorClientId, player, roomData = room) {
-  const normalizedActorId = normalizePlayerOwnerId(actorClientId);
-  if (!normalizedActorId) return false;
-  const mode = normalizeRoomMode(roomData?.mode, roomData?.roomId || room.roomId);
-  if (mode === ROOM_MODES.local) return true;
-  const ownerClientId = normalizePlayerOwnerId(player?.ownerClientId);
-  if (ownerClientId) return ownerClientId === normalizedActorId;
-  return canClientManageRoomData(normalizedActorId, roomData);
+  return canClientControlPlayerInRoomData(actorClientId, player, roomData, {
+    currentClientId: clientId,
+    currentRoomId: room.roomId,
+    players,
+    isRememberedAdminCodeValid: (targetRoomData, currentRoomId) => {
+      return isAdminCodeValid(getRememberedAdminCode(targetRoomData?.roomId || currentRoomId), targetRoomData);
+    }
+  });
 }
 
 function getCurrentDevicePlayerIndex(list = players) {
-  return list.findIndex(player => normalizePlayerOwnerId(player.ownerClientId) === clientId);
+  return getCurrentDevicePlayerIndexFromList(list, clientId);
 }
 
 function getCurrentDevicePlayer(list = players) {
-  const index = getCurrentDevicePlayerIndex(list);
-  return index >= 0 ? list[index] : null;
+  return getCurrentDevicePlayerFromList(list, clientId);
 }
 
 function isCurrentDevicePlayer(player) {
-  return normalizePlayerOwnerId(player?.ownerClientId) === clientId;
+  return isCurrentDevicePlayerInList(player, clientId);
 }
 
 function getPlayerControllerId(player, roomData = room) {
-  return normalizePlayerOwnerId(player?.ownerClientId) || getRoomManagerProxyId(roomData);
+  return getRoomPlayerControllerId(player, roomData, {
+    currentRoomId: room.roomId,
+    localClientId: clientId,
+    players
+  });
 }
 
 function canCurrentClientControlPlayer(player) {
@@ -3304,108 +3322,23 @@ document.addEventListener("click", (event) => {
 });
 
 function createTableDraft() {
-  return players.map((player, index) => ({
-    id: String(player.id || `player${index}`),
-    name: getRawPlayerName(player),
-    seatIndex: index,
-    seatStatus: normalizeSeatStatus(player.seatStatus, player.chips, false),
-    chips: toNonNegativeNumber(player.chips, 0),
-    ownerClientId: normalizePlayerOwnerId(player.ownerClientId),
-    playerKeyHash: String(player.playerKeyHash || ""),
-    dealer: Boolean(player.dealer)
-  }));
-}
-
-function getNextPlayerIdFromDraft() {
-  const usedIds = new Set(tableDraft.map(player => player.id));
-  let id = createPlayerId();
-  while (usedIds.has(id)) {
-    id = createPlayerId();
-  }
-  return id;
+  return createTableDraftFromPlayers(players);
 }
 
 function normalizeDraftPlayer(draftPlayer, index) {
-  let chips = toNonNegativeNumber(draftPlayer?.chips, 0);
-  let seatStatus = normalizeSeatStatus(draftPlayer?.seatStatus, chips, false);
-  if (chips <= 0) {
-    chips = 0;
-    if (seatStatus === "seated" || seatStatus === "sittingOut") {
-      seatStatus = "busted";
-    }
-  } else if (seatStatus === "busted") {
-    seatStatus = "seated";
-  }
-
-  return {
-    id: String(draftPlayer?.id || `player${index}`),
-    name: String(draftPlayer?.name || "").trim(),
-    seatIndex: index,
-    seatStatus,
-    chips,
-    folded: !isEligibleForNextHand({ seatStatus, chips }),
-    dealer: Boolean(draftPlayer?.dealer),
-    ownerClientId: normalizePlayerOwnerId(draftPlayer?.ownerClientId),
-    playerKeyHash: String(draftPlayer?.playerKeyHash || ""),
-    bet: 0,
-    totalBet: 0,
-    allIn: false,
-    acted: false,
-    position: getSeatStatusLabel(seatStatus)
-  };
+  return normalizeTableDraftPlayer(draftPlayer, index);
 }
 
 function normalizeTableDraftPlayers() {
-  const normalized = tableDraft.map(normalizeDraftPlayer);
-  const dealerCount = normalized.filter(player => player.dealer).length;
-  if (dealerCount > 1) {
-    let firstDealerSeen = false;
-    normalized.forEach(player => {
-      if (player.dealer && !firstDealerSeen) {
-        firstDealerSeen = true;
-      } else {
-        player.dealer = false;
-      }
-    });
-  }
-  return normalized;
+  return normalizeTableDraftPlayerList(tableDraft);
 }
 
 function getPreviewDealerIndex(list = tableDraft) {
-  const eligibleIndices = getEligiblePlayerIndices(list);
-  if (eligibleIndices.length === 0) return -1;
-
-  const currentDealerIndex = list.findIndex(player => player.dealer);
-  if (currentDealerIndex === -1) return eligibleIndices[0];
-  return getNextEligibleIndexAfter(currentDealerIndex, eligibleIndices);
+  return getTableDraftPreviewDealerIndex(list);
 }
 
 function getTableDraftSummary() {
-  const normalized = tableDraft.map(normalizeDraftPlayer);
-  const eligibleIndices = getEligiblePlayerIndices(normalized);
-  const sittingOutCount = normalized.filter(player => player.seatStatus === "sittingOut").length;
-  const bustedCount = normalized.filter(player => player.seatStatus === "busted").length;
-  const leftCount = normalized.filter(player => player.seatStatus === "left").length;
-
-  if (eligibleIndices.length < 2) {
-    return `参与 ${eligibleIndices.length} 人 · 至少需要 2 名有筹码玩家`;
-  }
-
-  const dealerIndex = getPreviewDealerIndex(normalized);
-  const layout = getHandLayout(dealerIndex, normalized);
-  const detail = [
-    `参与 ${eligibleIndices.length}`,
-    `BTN ${getPlayerIdentityLabel(normalized[layout.dealerIndex], layout.dealerIndex, normalized)}`,
-    `小盲 ${getPlayerIdentityLabel(normalized[layout.smallBlindIndex], layout.smallBlindIndex, normalized)}`,
-    `大盲 ${getPlayerIdentityLabel(normalized[layout.bigBlindIndex], layout.bigBlindIndex, normalized)}`
-  ];
-
-  const pending = [];
-  if (bustedCount > 0) pending.push(`${bustedCount} 人待补码`);
-  if (sittingOutCount > 0) pending.push(`${sittingOutCount} 人坐出`);
-  if (leftCount > 0) pending.push(`${leftCount} 人离桌`);
-  if (pending.length > 0) detail.push(pending.join("，"));
-  return detail.join(" · ");
+  return getTableDraftSummaryText(tableDraft, { getPlayerIdentityLabel });
 }
 
 function canEditTableNow() {
@@ -3551,16 +3484,10 @@ function addDraftPlayer() {
     return;
   }
 
-  const id = getNextPlayerIdFromDraft();
-  tableDraft.push({
-    id,
-    name: "",
-    seatIndex: tableDraft.length,
-    seatStatus: "seated",
-    chips: toPositiveInteger(initialChipsInput.value, 1000),
-    ownerClientId: "",
-    playerKeyHash: "",
-    dealer: false
+  appendDraftPlayer(tableDraft, {
+    createPlayerId,
+    initialChips: toPositiveInteger(initialChipsInput.value, 1000),
+    maxPlayers: MAX_PLAYERS
   });
   renderTableManager();
 }
@@ -3577,17 +3504,14 @@ async function copyInviteLink() {
 }
 
 function returnDraftPlayerToTable(index) {
-  if (tableDraft[index].chips <= 0) {
-    tableDraft[index].chips = toPositiveInteger(initialChipsInput.value, 1000);
-  }
-  setDraftStatus(index, "seated");
+  returnTableDraftPlayerToTable(tableDraft, index, {
+    fallbackChips: toPositiveInteger(initialChipsInput.value, 1000)
+  });
+  renderTableManager();
 }
 
 function moveDraftPlayer(index, direction) {
-  const nextIndex = index + direction;
-  if (nextIndex < 0 || nextIndex >= tableDraft.length) return;
-  const [player] = tableDraft.splice(index, 1);
-  tableDraft.splice(nextIndex, 0, player);
+  moveTableDraftPlayer(tableDraft, index, direction);
   renderTableManager();
 }
 
@@ -3669,34 +3593,25 @@ async function deleteDraftPlayer(index) {
     danger: true
   });
   if (!confirmed) return;
-  const [removed] = tableDraft.splice(index, 1);
+  const removed = deleteTableDraftPlayer(tableDraft, index);
   room.adminPlayerIds = normalizeAdminPlayerIds(room.adminPlayerIds).filter(id => id !== removed?.id);
   renderTableManager();
 }
 
 function adjustDraftChips(index, delta) {
-  const draftPlayer = tableDraft[index];
-  draftPlayer.chips = Math.max(0, toNonNegativeNumber(draftPlayer.chips, 0) + delta);
-  if (draftPlayer.chips <= 0 && draftPlayer.seatStatus === "seated") {
-    draftPlayer.seatStatus = "busted";
-  } else if (draftPlayer.chips > 0 && draftPlayer.seatStatus === "busted") {
-    draftPlayer.seatStatus = "seated";
-  }
+  adjustTableDraftChips(tableDraft, index, delta);
   renderTableManager();
 }
 
 function setDraftChips(index, value) {
-  tableDraft[index].chips = toNonNegativeNumber(value, 0);
-  adjustDraftChips(index, 0);
+  setTableDraftChips(tableDraft, index, value);
+  renderTableManager();
 }
 
 function setDraftStatus(index, status) {
-  if (status === "seated" && tableDraft[index].chips <= 0) {
-    tableDraft[index].chips = toPositiveInteger(initialChipsInput.value, 1000);
-  } else if (status === "busted") {
-    tableDraft[index].chips = 0;
-  }
-  tableDraft[index].seatStatus = normalizeSeatStatus(status, tableDraft[index].chips, false);
+  setTableDraftStatus(tableDraft, index, status, {
+    fallbackChips: toPositiveInteger(initialChipsInput.value, 1000)
+  });
   renderTableManager();
 }
 
