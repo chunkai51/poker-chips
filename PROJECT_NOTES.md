@@ -21,6 +21,8 @@ index.html
   -> loads styles.css
   -> loads src/main.js as a module
        -> imports Firebase Auth/Database helpers from src/firebase.js
+       -> imports room database adapter helpers from src/room-sync.js
+       -> imports room/game-state normalizers from src/room-state.js
        -> imports client/room identity helpers from src/identity.js
        -> imports pure table and betting rules from src/game-rules.js
        -> imports visual table coordinates from src/table-layout.js
@@ -111,6 +113,29 @@ Initializes Firebase and exports the small API surface used by the app:
 
 The Firebase config is client-side config. It is not treated like a private secret in normal Firebase web apps, but real deployments still need Firebase Auth, Realtime Database Security Rules, App Check, and eventually Cloud Functions command validation.
 
+### `src/room-sync.js`
+
+Thin Realtime Database adapter for room-level network access:
+
+- Room existence checks
+- Full room reads and game-state reads
+- Room listener setup
+- Room-level transactions
+- Member presence and join-request partial updates
+
+Keep Firebase `ref/get/update/onValue/runTransaction` usage here instead of spreading low-level database calls across UI and game-flow code. Business transaction bodies still live in `src/main.js` for now; a later split can move command-specific mutations behind a cleaner room command layer.
+
+### `src/room-state.js`
+
+Owns DOM-free room/game-state payload helpers:
+
+- Player payload normalization
+- Side-pot payload normalization
+- Winner-selection serialization and normalization
+- Settlement-preview normalization
+
+This module is intentionally about data shape only. It should not render UI, write Firebase, or decide permissions.
+
 ### `src/approvals.js`
 
 Owns DOM-free approval progress helpers used by room-mode settlement confirmation and next-hand readiness:
@@ -199,7 +224,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, visual seat coordinates to `src/table-layout.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room payload normalization to `src/room-state.js`, identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, visual seat coordinates to `src/table-layout.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 

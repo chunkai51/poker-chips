@@ -1,14 +1,8 @@
 // src/main.js
 import {
   auth,
-  db,
-  get,
   onAuthStateChanged,
-  onValue,
-  ref,
-  runTransaction,
-  signInAnonymously,
-  update
+  signInAnonymously
 } from "./firebase.js";
 import {
   getApprovalProgress,
@@ -32,6 +26,23 @@ import {
   getVisualSeatCoordinates,
   normalizeRotationOffset
 } from "./table-layout.js";
+import {
+  listenRoom,
+  readRoom,
+  readRoomGameState,
+  roomExists,
+  transactRoom,
+  updateJoinRequest,
+  updateRoomMember
+} from "./room-sync.js";
+import {
+  normalizeIncomingPlayer,
+  normalizeIncomingPlayers,
+  normalizeIncomingPots,
+  normalizeSelectedWinnersByPot,
+  normalizeSettlementPreview,
+  serializeSelectedWinnersByPot
+} from "./room-state.js";
 import {
   ROOM_MODES,
   createAccessCode,
@@ -928,17 +939,12 @@ function refreshInteractiveControls() {
   }
 }
 
-function getRoomRef() {
-  return room.roomId ? ref(db, "rooms/" + room.roomId) : null;
-}
-
 async function remoteRoomExists(roomId = room.roomId) {
   const normalizedRoomId = normalizeRoomId(roomId);
   if (!normalizedRoomId) return false;
 
   try {
-    const snapshot = await get(ref(db, "rooms/" + normalizedRoomId));
-    return snapshot.exists();
+    return roomExists(normalizedRoomId);
   } catch (_) {
     setSyncStatus("连接异常，请检查网络后刷新", "error");
     return null;
@@ -946,25 +952,18 @@ async function remoteRoomExists(roomId = room.roomId) {
 }
 
 async function getRemoteGameState() {
-  const roomRef = getRoomRef();
-  if (!roomRef) return null;
-
   try {
-    const snapshot = await get(roomRef);
-    const data = snapshot.val();
-    return data?.gameState || null;
+    return readRoomGameState(room.roomId);
   } catch (_) {
     return null;
   }
 }
 
 async function refreshFromRemote() {
-  const roomRef = getRoomRef();
-  if (!roomRef) return false;
+  if (!room.roomId) return false;
 
   try {
-    const snapshot = await get(roomRef);
-    const data = snapshot.val();
+    const data = await readRoom(room.roomId);
     if (!data || !data.gameState) return false;
     syncReady = true;
     applyRoomData(data);
@@ -983,7 +982,7 @@ async function updateRoomMemberPresence(extra = {}) {
     [clientId]: member
   };
   try {
-    await update(ref(db, `rooms/${room.roomId}/members/${clientId}`), member);
+    await updateRoomMember(room.roomId, clientId, member);
     return true;
   } catch (_) {
     return false;
@@ -1036,7 +1035,7 @@ async function updateFirebaseState(options = {}) {
     gameOver,
     awaitingShowdown,
     pendingPots,
-    selectedWinnersByPot: serializeSelectedWinnersByPot(),
+    selectedWinnersByPot: serializeSelectedWinnersByPot(selectedWinnersByPot),
     pendingDealPrompt,
     settlementPreview,
     nextHandApprovals,
@@ -1064,7 +1063,7 @@ async function updateFirebaseState(options = {}) {
 
   try {
     if (guardedWrite) {
-      const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      const result = await transactRoom(room.roomId, (currentRoom) => {
         if (!currentRoom || !currentRoom.gameState) return undefined;
 
         const currentGameState = currentRoom.gameState;
@@ -1104,7 +1103,7 @@ async function updateFirebaseState(options = {}) {
         return false;
       }
     } else {
-      const result = await runTransaction(getRoomRef(), (currentRoom) => {
+      const result = await transactRoom(room.roomId, (currentRoom) => {
         if (!currentRoom) return nextRoomData;
         const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players, { preserveNames: true });
         return {
@@ -1169,31 +1168,6 @@ function updateGameLog(message) {
   updateLogSummary();
 }
 
-function normalizeIncomingPlayer(player, index) {
-  const chips = toNonNegativeNumber(player?.chips, 0);
-  const allIn = Boolean(player?.allIn);
-  return {
-    id: String(player?.id || `player${index}`),
-    name: String(player?.name || "").trim(),
-    seatIndex: toNonNegativeNumber(player?.seatIndex, index),
-    seatStatus: normalizeSeatStatus(player?.seatStatus, chips, allIn),
-    chips,
-    folded: Boolean(player?.folded),
-    dealer: Boolean(player?.dealer),
-    ownerClientId: normalizePlayerOwnerId(player?.ownerClientId),
-    playerKeyHash: String(player?.playerKeyHash || ""),
-    bet: toNonNegativeNumber(player?.bet, 0),
-    totalBet: toNonNegativeNumber(player?.totalBet, 0),
-    allIn,
-    acted: Boolean(player?.acted),
-    position: String(player?.position || "")
-  };
-}
-
-function normalizeIncomingPlayers(list) {
-  return Array.isArray(list) ? list.map(normalizeIncomingPlayer) : [];
-}
-
 function mergePlayerIdentityFields(nextPlayers, sourcePlayers = players, { preserveNames = false } = {}) {
   const sourceById = new Map(normalizeIncomingPlayers(sourcePlayers)
     .map(player => [player.id, player]));
@@ -1229,70 +1203,6 @@ function syncTableDraftIdentityFromPlayers(sourcePlayers = players) {
   });
 }
 
-function normalizeIncomingPots(pots) {
-  if (!Array.isArray(pots)) return [];
-
-  return pots.map(sidePot => ({
-    amount: toNonNegativeNumber(sidePot?.amount, 0),
-    participants: Array.isArray(sidePot?.participants)
-      ? sidePot.participants.map(String)
-      : [],
-    contenders: Array.isArray(sidePot?.contenders)
-      ? sidePot.contenders.map(String)
-      : []
-  })).filter(sidePot => sidePot.amount > 0 && sidePot.contenders.length > 0);
-}
-
-function serializeSelectedWinnersByPot() {
-  return Object.fromEntries(Object.entries(selectedWinnersByPot).map(([potIndex, value]) => {
-    const ids = value instanceof Set ? Array.from(value) : Array.isArray(value) ? value : [];
-    return [potIndex, [...new Set(ids.map(String))]];
-  }));
-}
-
-function normalizeSelectedWinnersByPot(value) {
-  if (!value || typeof value !== "object") return {};
-
-  return Object.fromEntries(Object.entries(value).map(([potIndex, ids]) => [
-    potIndex,
-    new Set(ids instanceof Set
-      ? Array.from(ids).map(String)
-      : Array.isArray(ids)
-        ? ids.map(String)
-        : [])
-  ]));
-}
-
-function normalizeSettlementPreview(preview) {
-  if (!preview || typeof preview !== "object") return null;
-
-  const pots = Array.isArray(preview.pots)
-    ? preview.pots.map((previewPot, index) => ({
-      index: Number.isInteger(previewPot?.index) ? previewPot.index : index,
-      amount: toNonNegativeNumber(previewPot?.amount, 0),
-      winnerIds: Array.isArray(previewPot?.winnerIds)
-        ? previewPot.winnerIds.map(String)
-        : [],
-      payouts: Array.isArray(previewPot?.payouts)
-        ? previewPot.payouts.map(payout => ({
-          playerId: String(payout?.playerId || ""),
-          amount: toNonNegativeNumber(payout?.amount, 0)
-        })).filter(payout => payout.playerId && payout.amount > 0)
-        : []
-    })).filter(previewPot => previewPot.amount > 0 && previewPot.payouts.length > 0)
-    : [];
-
-  if (pots.length === 0) return null;
-
-  return {
-    id: String(preview.id || `settlement_${handId}`),
-    total: toNonNegativeNumber(preview.total, pots.reduce((sum, previewPot) => sum + previewPot.amount, 0)),
-    winnersByPot: normalizeSelectedWinnersByPot(preview.winnersByPot),
-    approvals: normalizeApprovalMap(preview.approvals),
-    pots
-  };
-}
-
 function applyRoomData(data) {
   const gameState = data.gameState;
   currentRound = toNonNegativeNumber(gameState.currentRound, 0);
@@ -1307,7 +1217,7 @@ function applyRoomData(data) {
   pendingPots = normalizeIncomingPots(gameState.pendingPots);
   selectedWinnersByPot = normalizeSelectedWinnersByPot(gameState.selectedWinnersByPot);
   pendingDealPrompt = normalizeDealPrompt(gameState.pendingDealPrompt, { handId, roundCount: rounds.length });
-  settlementPreview = normalizeSettlementPreview(gameState.settlementPreview);
+  settlementPreview = normalizeSettlementPreview(gameState.settlementPreview, { handId });
   nextHandApprovals = normalizeApprovalMap(gameState.nextHandApprovals);
   handId = toNonNegativeNumber(gameState.handId, handId);
   handStatus = String(gameState.handStatus || inferHandStatus(gameState));
@@ -1375,25 +1285,25 @@ function listenFirebaseUpdates() {
     unsubscribeRoom = null;
   }
 
-  const roomRef = ref(db, "rooms/" + room.roomId);
   listenedRoomId = room.roomId;
   syncReady = false;
   setSyncStatus("同步中...");
-  unsubscribeRoom = onValue(roomRef, (snapshot) => {
-    const data = snapshot.val();
-    if (!data || !data.gameState) {
+  unsubscribeRoom = listenRoom(room.roomId, {
+    onData: (data) => {
+      syncReady = true;
+      applyRoomData(data);
+      setSyncStatus("已同步", "ok");
+    },
+    onMissing: () => {
       syncReady = false;
       refreshInteractiveControls();
-      return;
+    },
+    onError: (error) => {
+      syncReady = false;
+      const permissionDenied = String(error?.message || error).includes("permission");
+      setSyncStatus(permissionDenied ? "同步失败：权限不足" : "同步失败", "error");
+      refreshInteractiveControls();
     }
-    syncReady = true;
-    applyRoomData(data);
-    setSyncStatus("已同步", "ok");
-  }, (error) => {
-    syncReady = false;
-    const permissionDenied = String(error?.message || error).includes("permission");
-    setSyncStatus(permissionDenied ? "同步失败：权限不足" : "同步失败", "error");
-    refreshInteractiveControls();
   });
 }
 
@@ -1711,7 +1621,7 @@ async function claimPlayerIdentity(playerId, { code = "", forceAdmin = false, an
 
   setMutationInProgress(true);
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
       const currentStatus = String(currentRoom.gameState?.handStatus || inferHandStatus(currentRoom.gameState || {}));
       const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
@@ -1804,7 +1714,7 @@ async function releaseCurrentPlayerIdentity() {
   if (!currentPlayer) return;
   setMutationInProgress(true);
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
       const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
       remotePlayers.forEach(player => {
@@ -1883,7 +1793,7 @@ async function requestSeatOwnership(playerId) {
   };
   setMutationInProgress(true);
   try {
-    await update(ref(db, `rooms/${room.roomId}/joinRequests/${clientId}`), request);
+    await updateJoinRequest(room.roomId, clientId, request);
     room.joinRequests = {
       ...normalizeJoinRequests(room.joinRequests),
       [clientId]: request
@@ -1910,7 +1820,7 @@ async function approveSeatRequest(requestClientId) {
 
   setMutationInProgress(true);
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
       if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
       const requests = normalizeJoinRequests(currentRoom.joinRequests);
@@ -1988,7 +1898,7 @@ async function declineSeatRequest(requestClientId) {
   if (!normalizedRequestClientId) return;
   setMutationInProgress(true);
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom) return undefined;
       if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
       const requests = normalizeJoinRequests(currentRoom.joinRequests);
@@ -2023,7 +1933,7 @@ async function verifyAdminIdentity(code) {
   }
   setMutationInProgress(true);
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom || !currentRoom.adminKeyHash) return undefined;
       if (!isAdminCodeValid(normalizedCode, currentRoom)) return undefined;
       const members = touchMember(currentRoom.members || room.members, clientId);
@@ -2100,7 +2010,7 @@ async function syncLobbyState({ createOnly = false } = {}) {
   setSyncStatus("同步中...");
   renderIdentityControls();
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (createOnly && currentRoom) return undefined;
       const currentGameState = currentRoom?.gameState;
       const currentStatus = currentGameState
@@ -3241,14 +3151,14 @@ async function approveSettlementPreview() {
   setMutationInProgress(true);
   let completeAfterCommit = false;
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom || !currentRoom.gameState || !Array.isArray(currentRoom.players)) return undefined;
       const currentGameState = currentRoom.gameState;
       const currentStatus = String(currentGameState.handStatus || inferHandStatus(currentGameState));
       if (currentStatus !== "settlementPreview" || !currentGameState.settlementPreview) return undefined;
 
       const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
-      const remotePreview = normalizeSettlementPreview(currentGameState.settlementPreview);
+      const remotePreview = normalizeSettlementPreview(currentGameState.settlementPreview, { handId });
       if (!remotePreview) return undefined;
       const remoteRequiredApprovers = getSettlementApproverIds(remotePlayers, currentRoom);
       if (!remoteRequiredApprovers.includes(clientId)) return undefined;
@@ -3351,7 +3261,7 @@ async function finalizeSettlementPreview() {
     remoteGuard: (currentRoom, currentGameState) => {
       if (!isRoomMode()) return true;
       const remotePlayers = normalizeIncomingPlayers(currentRoom.players);
-      const remotePreview = normalizeSettlementPreview(currentGameState.settlementPreview);
+      const remotePreview = normalizeSettlementPreview(currentGameState.settlementPreview, { handId });
       const remoteRequiredApprovers = getSettlementApproverIds(remotePlayers, currentRoom);
       return getApprovalProgress(remotePreview?.approvals, remoteRequiredApprovers).complete;
     }
@@ -3852,7 +3762,7 @@ async function resetPlayerCode(playerId) {
   const nextHash = hashAccessCode(nextCode, getPlayerCodeSalt(playerId));
   setMutationInProgress(true);
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
       if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
       const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
@@ -3885,7 +3795,7 @@ async function togglePlayerAdmin(playerId, shouldGrant) {
   if (!canCurrentClientManageRoom() || !room.roomId) return;
   setMutationInProgress(true);
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
       if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
       if (!currentRoom.players.some(player => String(player?.id) === playerId)) return undefined;
@@ -4072,7 +3982,7 @@ async function approveNextHandStart(expectedHandId = handId) {
   setMutationInProgress(true);
   let completeAfterCommit = false;
   try {
-    const result = await runTransaction(getRoomRef(), (currentRoom) => {
+    const result = await transactRoom(room.roomId, (currentRoom) => {
       if (!currentRoom || !currentRoom.gameState || !Array.isArray(currentRoom.players)) return undefined;
       const currentGameState = currentRoom.gameState;
       const currentStatus = String(currentGameState.handStatus || inferHandStatus(currentGameState));
