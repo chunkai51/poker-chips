@@ -14,6 +14,10 @@ import {
 } from "./deal-prompts.js";
 import { renderRaisePanelContent } from "./raise-ui.js";
 import {
+  closeSeatDetailPopovers,
+  createPlayerSeatBox
+} from "./player-seat-ui.js";
+import {
   closeTableActionDialog,
   openTableActionDialog,
   showAppAlert,
@@ -4306,28 +4310,6 @@ function createTableCenterOperations() {
   return operations;
 }
 
-function getPositionMarkers(position = "") {
-  const markers = [];
-  const isDealer = position.includes("Dealer");
-  const isSmallBlind = position.includes("小盲");
-  if (isDealer && isSmallBlind) {
-    markers.push(["D/SB", "dealer-small-blind"]);
-  } else if (isDealer) {
-    markers.push(["D", "dealer"]);
-  } else if (isSmallBlind) {
-    markers.push(["SB", "small-blind"]);
-  }
-  if (position.includes("大盲")) markers.push(["BB", "big-blind"]);
-  return markers;
-}
-
-function createPositionMarker(label, type) {
-  const marker = document.createElement("span");
-  marker.className = `seat-marker seat-marker-${type}`;
-  marker.textContent = label;
-  return marker;
-}
-
 function getCompactPlayerStatus(player) {
   if (player.seatStatus !== "seated") return getSeatStatusLabel(player.seatStatus);
   if (player.folded) return "弃牌";
@@ -4390,63 +4372,6 @@ function getApprovalWaitingText(approvals, requiredIds, actionLabel, list = play
     : `等待同步${actionLabel}`;
 }
 
-function closeSeatDetailPopovers() {
-  document.querySelectorAll(".seat-detail-popover").forEach(popover => popover.remove());
-  document.querySelectorAll(".player-box.is-detail-open").forEach(box => {
-    box.classList.remove("is-detail-open");
-    box.setAttribute("aria-expanded", "false");
-  });
-}
-
-function createSeatDetailPopover(player, index) {
-  const popover = document.createElement("div");
-  popover.className = "seat-detail-popover";
-  popover.setAttribute("role", "tooltip");
-  popover.addEventListener("click", event => event.stopPropagation());
-
-  const title = document.createElement("strong");
-  title.textContent = getPlayerIdentityLabel(player, index);
-  popover.appendChild(title);
-
-  [
-    ["座位", String(index + 1)],
-    ["位置", player.position || "-"],
-    ["剩余筹码", String(player.chips)],
-    ["本轮下注", String(player.bet)],
-    ["本局投入", String(player.totalBet || 0)],
-    ["状态", getPlayerStatus(player)]
-  ].forEach(([label, value]) => {
-    const row = document.createElement("span");
-    const labelEl = document.createElement("em");
-    labelEl.textContent = label;
-    const valueEl = document.createElement("b");
-    valueEl.textContent = value;
-    row.append(labelEl, valueEl);
-    popover.appendChild(row);
-  });
-
-  if (isRoomMode()) {
-    const claimButton = createButton(getSetupClaimLabel(player), () => {
-      togglePlayerClaim(player.id);
-      closeSeatDetailPopovers();
-    }, !canCurrentClientModifyClaims(), "seat-claim-button");
-    if (isCurrentDevicePlayer(player)) claimButton.classList.add("claimed");
-    popover.appendChild(claimButton);
-  }
-
-  return popover;
-}
-
-function toggleSeatDetail(box, player, index) {
-  const alreadyOpen = box.classList.contains("is-detail-open");
-  closeSeatDetailPopovers();
-  if (alreadyOpen) return;
-
-  box.classList.add("is-detail-open");
-  box.setAttribute("aria-expanded", "true");
-  box.appendChild(createSeatDetailPopover(player, index));
-}
-
 function createTableCenterPanel() {
   return createTableCenterPanelView({
     pot,
@@ -4473,73 +4398,40 @@ function updatePlayerBoxes() {
       maxSeats: MAX_PLAYERS
     });
 
-    const box = document.createElement("div");
-    box.classList.add("player-box");
-    box.classList.add(seat.side);
-    if (isCurrentDevicePlayer(player)) box.classList.add("is-mine");
-    if (player.folded) box.classList.add("folded");
-    if (player.allIn) box.classList.add("all-in");
-    if (player.seatStatus !== "seated") box.classList.add("seat-inactive");
-    if (index === currentPlayerIndex) box.classList.add("active");
-    box.style.setProperty("--seat-left", `${seat.left}%`);
-    box.style.setProperty("--seat-top", `${seat.top}%`);
-    box.style.setProperty("--seat-left-mobile", `${seat.mobileLeft}%`);
-    box.style.setProperty("--seat-top-mobile", `${seat.mobileTop}%`);
-    box.setAttribute("aria-label", `${getPlayerIdentityLabel(player, index)}，筹码 ${player.chips}，本轮下注 ${player.bet}，${getPlayerStatus(player)}`);
-    box.setAttribute("role", "button");
-    box.setAttribute("aria-expanded", "false");
-    box.tabIndex = 0;
-    box.addEventListener("click", () => {
-      toggleSeatDetail(box, player, index);
-    });
-    box.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      toggleSeatDetail(box, player, index);
-    });
-
-    const main = document.createElement("div");
-    main.className = "player-seat-main";
-    const name = document.createElement("h3");
-    name.className = "player-name";
-    name.textContent = getPlayerCompactIdentityLabel(player, index);
-    main.appendChild(name);
-
-    const chipValue = document.createElement("p");
-    chipValue.className = "seat-chip";
-    chipValue.textContent = String(player.chips);
-    main.appendChild(chipValue);
-    box.appendChild(main);
-
-    const meta = document.createElement("div");
-    meta.className = "seat-meta";
-    const badges = document.createElement("div");
-    badges.className = "player-badges";
-    const positionMarkers = getPositionMarkers(player.position);
-    if (positionMarkers.length > 0) {
-      positionMarkers.forEach(([label, type]) => {
-        badges.appendChild(createPositionMarker(label, type));
-      });
-    } else {
-      const seatMarker = document.createElement("span");
-      seatMarker.className = "seat-marker seat-marker-seat";
-      seatMarker.textContent = String(index + 1);
-      badges.appendChild(seatMarker);
-    }
-    meta.appendChild(badges);
-
-    const betBadge = document.createElement("span");
-    betBadge.className = "seat-bet-badge";
-    betBadge.textContent = `Bet ${player.bet}`;
-    meta.appendChild(betBadge);
-
-    const status = document.createElement("p");
-    status.className = "seat-status-badge";
-    status.textContent = getCompactPlayerStatus(player);
-    meta.appendChild(status);
-    box.appendChild(meta);
-
-    boxes.appendChild(box);
+    boxes.appendChild(createPlayerSeatBox({
+      index,
+      seat,
+      side: seat.side,
+      isMine: isCurrentDevicePlayer(player),
+      folded: player.folded,
+      allIn: player.allIn,
+      inactive: player.seatStatus !== "seated",
+      active: index === currentPlayerIndex,
+      ariaLabel: `${getPlayerIdentityLabel(player, index)}，筹码 ${player.chips}，本轮下注 ${player.bet}，${getPlayerStatus(player)}`,
+      identityLabel: getPlayerIdentityLabel(player, index),
+      compactIdentityLabel: getPlayerCompactIdentityLabel(player, index),
+      chips: player.chips,
+      bet: player.bet,
+      statusLabel: getPlayerStatus(player),
+      compactStatusLabel: getCompactPlayerStatus(player),
+      position: player.position,
+      detailRows: [
+        ["座位", String(index + 1)],
+        ["位置", player.position || "-"],
+        ["剩余筹码", String(player.chips)],
+        ["本轮下注", String(player.bet)],
+        ["本局投入", String(player.totalBet || 0)],
+        ["状态", getPlayerStatus(player)]
+      ],
+      claim: isRoomMode()
+        ? {
+          label: getSetupClaimLabel(player),
+          disabled: !canCurrentClientModifyClaims(),
+          claimed: isCurrentDevicePlayer(player),
+          onClick: () => togglePlayerClaim(player.id)
+        }
+        : null
+    }));
   });
 
   renderCurrentActionPanel();

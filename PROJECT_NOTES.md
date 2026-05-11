@@ -21,6 +21,7 @@ index.html
   -> loads styles.css
   -> loads src/main.js as a module
        -> imports Firebase Auth/Database helpers from src/firebase.js
+       -> imports player seat DOM builders from src/player-seat-ui.js
        -> imports raise action panel DOM builders from src/raise-ui.js
        -> imports room database adapter helpers from src/room-sync.js
        -> imports room/game-state normalizers from src/room-state.js
@@ -138,6 +139,19 @@ Owns DOM-free room/game-state payload helpers:
 - Settlement-preview normalization
 
 This module is intentionally about data shape only. It should not render UI, write Firebase, or decide permissions.
+
+### `src/player-seat-ui.js`
+
+Owns DOM builders for player seats around the visual poker table:
+
+- Player capsule shell and state classes
+- Seat coordinate CSS variables
+- Position markers such as D, SB, BB, and D/SB
+- Bet/status badges
+- Seat detail popover
+- Optional claim/reclaim button inside the popover
+
+`src/main.js` still computes labels, permissions, active seat state, and claim callbacks. Keep this module focused on rendering the seat UI from prepared values.
 
 ### `src/raise-ui.js`
 
@@ -263,7 +277,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room payload normalization to `src/room-state.js`, identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room payload normalization to `src/room-state.js`, identity normalization to `src/identity.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 
