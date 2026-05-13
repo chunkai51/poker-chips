@@ -172,6 +172,7 @@ Owns DOM-free player identity binding helpers:
 - Claim/release room transaction payloads
 - Seat ownership request creation
 - Seat request approval and decline transaction payloads
+- Cohost grant/revoke transaction payloads
 
 This module intentionally does not call Firebase, show dialogs, focus inputs, or refresh UI. Transaction helpers receive `currentRoom`, `room`, `clientId`, and dependencies such as `canClientManageRoom`, `inferHandStatus`, `getRoomHostId`, `normalizeRoomMode`, and `touchMember` through parameters, then return the next room payload or `undefined` to reject the transaction.
 

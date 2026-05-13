@@ -9,14 +9,11 @@ import {
   normalizeApprovalMap
 } from "./approvals.js";
 import {
-  forgetAdminCode as forgetStoredAdminCode,
-  getAdminCodeSalt as getAdminAccessCodeSalt,
   getPlayerCodeSalt as getPlayerAccessCodeSalt,
   getRememberedAdminCode as getStoredAdminCode,
   getRememberedPlayerCode as getStoredPlayerCode,
   isAdminCodeValid as isAdminAccessCodeValid,
   isPlayerCodeValid as isPlayerAccessCodeValid,
-  rememberAdminCode as storeAdminCode,
   rememberPlayerCode as storePlayerCode
 } from "./access-codes.js";
 import {
@@ -111,6 +108,7 @@ import {
   buildClaimPlayerRoomUpdate,
   buildDeclineSeatRequestRoomUpdate,
   buildReleasePlayerRoomUpdate,
+  buildTogglePlayerAdminRoomUpdate,
   createSeatOwnershipRequest,
   getClaimAuthForPlayer as getClaimAuthForPlayerData,
   getSetupClaimLabel as getSetupClaimLabelData,
@@ -152,7 +150,6 @@ import {
   getClientId,
   getRoomHostId,
   hashAccessCode,
-  normalizeAccessCode,
   normalizeAdminPlayerIds,
   normalizeMembers,
   normalizePlayerOwnerId,
@@ -368,16 +365,8 @@ function touchMemberWithProfile(existingMembers = room.members, actorClientId = 
   return members;
 }
 
-function rememberAdminCode(code, roomId = room.roomId) {
-  storeAdminCode(code, roomId);
-}
-
 function getRememberedAdminCode(roomId = room.roomId) {
   return getStoredAdminCode(roomId);
-}
-
-function forgetAdminCode(roomId = room.roomId) {
-  forgetStoredAdminCode(roomId);
 }
 
 function rememberPlayerCode(playerId, code, roomId = room.roomId) {
@@ -390,10 +379,6 @@ function getRememberedPlayerCode(playerId, roomId = room.roomId) {
 
 function getPlayerCodeSalt(playerId, roomId = room.roomId) {
   return getPlayerAccessCodeSalt(playerId, roomId);
-}
-
-function getAdminCodeSalt(roomId = room.roomId) {
-  return getAdminAccessCodeSalt(roomId);
 }
 
 function isPlayerCodeValid(player, code, roomData = room) {
@@ -1704,52 +1689,6 @@ async function declineSeatRequest(requestClientId) {
   } finally {
     setMutationInProgress(false);
     if (tableManagerOpen) renderTableManager();
-  }
-}
-
-async function verifyAdminIdentity(code) {
-  const normalizedCode = normalizeAccessCode(code);
-  if (!isRoomMode() || !room.roomId || !normalizedCode) {
-    showAppAlert("请输入管理码。");
-    return false;
-  }
-  setMutationInProgress(true);
-  try {
-    const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (!currentRoom || !currentRoom.adminKeyHash) return undefined;
-      if (!isAdminCodeValid(normalizedCode, currentRoom)) return undefined;
-      const members = touchMember(currentRoom.members || room.members, clientId);
-      members[clientId] = {
-        ...members[clientId],
-        adminVerified: true
-      };
-      return {
-        ...currentRoom,
-        members
-      };
-    }, { applyLocally: false });
-    if (!result.committed) {
-      showAppAlert("管理码不正确，或房间尚未完成同步。");
-      await refreshFromRemote();
-      return false;
-    }
-    rememberAdminCode(normalizedCode);
-    const members = normalizeMembers(room.members);
-    members[clientId] = {
-      ...(members[clientId] || {}),
-      clientId,
-      adminVerified: true,
-      lastSeenAt: Date.now()
-    };
-    room.members = members;
-    setSyncStatus("已获得管理权限", "ok");
-    await refreshFromRemote();
-    return true;
-  } catch (_) {
-    showAppAlert("管理权限验证失败，请稍后再试。");
-    return false;
-  } finally {
-    setMutationInProgress(false);
   }
 }
 
@@ -3126,60 +3065,20 @@ function moveDraftPlayer(index, direction) {
   renderTableManager();
 }
 
-async function resetPlayerCode(playerId) {
-  if (!canCurrentClientManageRoom()) return;
-  const player = players.find(item => item.id === playerId);
-  if (!player || !room.roomId) return;
-  const nextCode = createAccessCode();
-  const nextHash = hashAccessCode(nextCode, getPlayerCodeSalt(playerId));
-  setMutationInProgress(true);
-  try {
-    const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
-      if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
-      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
-      const target = remotePlayers.find(item => item.id === playerId);
-      if (!target) return undefined;
-      target.playerKeyHash = nextHash;
-      return {
-        ...currentRoom,
-        players: remotePlayers,
-        members: touchMember(currentRoom.members || room.members, clientId)
-      };
-    }, { applyLocally: false });
-    if (!result.committed) {
-      showAppAlert("重置玩家码没有成功，请等待同步后重试。");
-      await refreshFromRemote();
-      return;
-    }
-    rememberPlayerCode(playerId, nextCode);
-    showAppAlert(`${getPlayerIdentityLabel(player)} 的新玩家码：${nextCode}`, "玩家码已重置");
-    await refreshFromRemote();
-  } catch (_) {
-    showAppAlert("重置玩家码失败，请稍后再试。");
-  } finally {
-    setMutationInProgress(false);
-    if (tableManagerOpen) renderTableManager();
-  }
-}
-
 async function togglePlayerAdmin(playerId, shouldGrant) {
   if (!canCurrentClientManageRoom() || !room.roomId) return;
   setMutationInProgress(true);
   try {
     const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
-      if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
-      if (!currentRoom.players.some(player => String(player?.id) === playerId)) return undefined;
-      const currentIds = normalizeAdminPlayerIds(currentRoom.adminPlayerIds);
-      const nextIds = shouldGrant
-        ? [...new Set([...currentIds, playerId])]
-        : currentIds.filter(id => id !== playerId);
-      return {
-        ...currentRoom,
-        adminPlayerIds: nextIds,
-        members: touchMember(currentRoom.members || room.members, clientId)
-      };
+      return buildTogglePlayerAdminRoomUpdate({
+        currentRoom,
+        room,
+        clientId,
+        playerId,
+        shouldGrant,
+        canClientManageRoom: canClientManageRoomData,
+        touchMember
+      });
     }, { applyLocally: false });
     if (!result.committed) {
       showAppAlert("协管权限更新没有成功，请等待同步后重试。");

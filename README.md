@@ -147,7 +147,7 @@ http://localhost:8000/
 - `src/guide.js`: 初始页和游戏页折叠玩家手册的内容与渲染。
 - `src/player-seat-ui.js`: 牌桌玩家标签、位置徽章和座位详情浮窗的 DOM 渲染。
 - `src/raise-ui.js`: Raise 加注面板的预设、微调、输入和实时预览 DOM 渲染。
-- `src/room-claims-controller.js`: 玩家入座/接管、释放绑定、请求批准/拒绝的纯数据变换。
+- `src/room-claims-controller.js`: 玩家入座/接管、释放绑定、请求批准/拒绝和协管授权的纯数据变换。
 - `src/room-entry.js`: 房间 ID、邀请链接、昵称本地记忆和入座请求归一化工具。
 - `src/room-lobby-controller.js`: 本地/房间模式切换、创建/加入房间数据草稿和准备页同步 payload。
 - `src/room-state.js`: 房间/牌局 payload 的玩家、奖池、赢家选择和结算预览归一化。

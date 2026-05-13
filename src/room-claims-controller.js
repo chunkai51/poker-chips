@@ -1,7 +1,12 @@
 // src/room-claims-controller.js
 // Seat claim, release, join-request, and approval data helpers.
 
-import { normalizeAccessCode, normalizeMembers, normalizePlayerOwnerId } from "./identity.js";
+import {
+  normalizeAccessCode,
+  normalizeAdminPlayerIds,
+  normalizeMembers,
+  normalizePlayerOwnerId
+} from "./identity.js";
 import { getRequestDisplayName, normalizeJoinRequests } from "./room-entry.js";
 import { normalizeIncomingPlayer } from "./room-state.js";
 import { shouldUseRequestNameForSeat } from "./player-model.js";
@@ -306,6 +311,29 @@ export function buildDeclineSeatRequestRoomUpdate({
   return {
     ...currentRoom,
     joinRequests: requests,
+    members: touchMember(currentRoom.members || room.members, clientId)
+  };
+}
+
+export function buildTogglePlayerAdminRoomUpdate({
+  currentRoom,
+  room = {},
+  clientId = "",
+  playerId = "",
+  shouldGrant = false,
+  canClientManageRoom = () => false,
+  touchMember
+} = {}) {
+  if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
+  if (!canClientManageRoom(clientId, currentRoom)) return undefined;
+  if (!currentRoom.players.some(player => String(player?.id) === playerId)) return undefined;
+  const currentIds = normalizeAdminPlayerIds(currentRoom.adminPlayerIds);
+  const nextIds = shouldGrant
+    ? [...new Set([...currentIds, playerId])]
+    : currentIds.filter(id => id !== playerId);
+  return {
+    ...currentRoom,
+    adminPlayerIds: nextIds,
     members: touchMember(currentRoom.members || room.members, clientId)
   };
 }
