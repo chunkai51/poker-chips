@@ -99,6 +99,13 @@ import {
   rememberPreferredDisplayName as storePreferredDisplayName
 } from "./room-entry.js";
 import {
+  buildLobbyRoomForWrite,
+  createHostRoom,
+  createJoinedRoom,
+  createLobbyGameState,
+  createLocalModeRoom
+} from "./room-lobby-controller.js";
+import {
   createPlayerId as createPlayerModelId,
   createSetupPlayer as createSetupPlayerData,
   getPlayerCompactIdentityLabel as formatPlayerCompactIdentityLabel,
@@ -722,15 +729,11 @@ function enterLocalMode() {
     return;
   }
   stopRoomListener();
-  room.roomId = "";
-  room.mode = ROOM_MODES.local;
-  room.operator = clientId;
-  room.hostClientId = clientId;
-  room.inviteToken = "";
-  room.adminKeyHash = "";
-  room.adminPlayerIds = [];
-  room.joinRequests = {};
-  room.members = createMembersMap(clientId);
+  room = createLocalModeRoom({
+    room,
+    clientId,
+    createMembersMap
+  });
   roomIdInput.value = "";
   syncReady = true;
   loadTableViewRotation();
@@ -1257,20 +1260,14 @@ function createRoom({ announce = true } = {}) {
   if (!room.roomId) {
     room.roomId = generateRoomId();
   }
-  room.mode = ROOM_MODES.room;
-  room.operator = clientId;
-  room.hostClientId = clientId;
-  room.inviteToken = createInviteToken();
-  room.adminKeyHash = "";
-  room.adminPlayerIds = [];
-  room.joinRequests = {};
-  room.members = createMembersMap(clientId, {
-    [clientId]: {
-      role: "host",
-      adminVerified: true
-    }
+  room = createHostRoom({
+    room,
+    roomId: room.roomId,
+    clientId,
+    inviteToken: createInviteToken(),
+    createMembersMap,
+    touchMemberWithProfile
   });
-  room.members = touchMemberWithProfile(room.members, clientId, { role: "host", adminVerified: true });
   syncReady = true;
   loadTableViewRotation();
   handId = 0;
@@ -1326,22 +1323,16 @@ function joinRoom(roomId, { inviteToken = "" } = {}) {
   if (!normalizedRoomId) return;
   const normalizedInviteToken = normalizeInviteToken(inviteToken);
 
-  const switchingRoom = room.roomId !== normalizedRoomId;
-  room.roomId = normalizedRoomId;
-  room.mode = ROOM_MODES.room;
-  if (switchingRoom) {
-    room.operator = "";
-    room.hostClientId = "";
-    room.inviteToken = normalizedInviteToken;
-    room.adminKeyHash = "";
-    room.adminPlayerIds = [];
-    room.joinRequests = {};
-    room.members = createMembersMap(clientId);
-    syncReady = false;
-  } else if (normalizedInviteToken && !room.inviteToken) {
-    room.inviteToken = normalizedInviteToken;
-  }
-  room.members = touchMemberWithProfile(room.members, clientId);
+  const result = createJoinedRoom({
+    room,
+    clientId,
+    roomId: normalizedRoomId,
+    inviteToken: normalizedInviteToken,
+    createMembersMap,
+    touchMemberWithProfile
+  });
+  room = result.room;
+  if (result.switchingRoom) syncReady = false;
   roomIdInput.value = normalizedRoomId;
   loadTableViewRotation();
   listenFirebaseUpdates();
@@ -1885,56 +1876,34 @@ async function syncLobbyState({ createOnly = false } = {}) {
   clearTimeout(lobbySyncTimer);
   normalizeSetupPlayers();
   const nextStateVersion = stateVersion + 1;
-  const nextGameState = {
-    currentRound: 0,
-    pot: 0,
-    currentBet: 0,
-    lastRaiseSize: bigBlind,
-    currentPlayerIndex: -1,
-    logs: room.gameState.logs,
-    inProgress: false,
-    gameOver: false,
-    awaitingShowdown: false,
-    pendingPots: [],
-    selectedWinnersByPot: {},
-    pendingDealPrompt: null,
-    settlementPreview: null,
-    nextHandApprovals: {},
+  const nextGameState = createLobbyGameState({
+    bigBlind,
     handId,
-    handStatus: "setup",
     stateVersion: nextStateVersion,
-    updatedBy: clientId
-  };
+    logs: room.gameState.logs,
+    clientId
+  });
 
   syncWriteInProgress = true;
   setSyncStatus("同步中...");
   renderIdentityControls();
   try {
     const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (createOnly && currentRoom) return undefined;
-      const currentGameState = currentRoom?.gameState;
-      const currentStatus = currentGameState
-        ? String(currentGameState.handStatus || inferHandStatus(currentGameState))
-        : "setup";
-      const currentInProgress = Boolean(currentGameState?.inProgress);
-      if (currentInProgress && currentStatus !== "setup") return undefined;
-
-      const existingRoom = currentRoom || {};
-      if (currentRoom && !canClientManageRoomData(clientId, existingRoom)) return undefined;
-      const playersForWrite = mergePlayerIdentityFields(players, existingRoom.players || players);
-      return {
-        ...existingRoom,
-        mode: ROOM_MODES.room,
-        operator: existingRoom.operator || room.operator || clientId,
-        hostClientId: getRoomHostId(existingRoom, room.hostClientId || clientId),
-        inviteToken: existingRoom.inviteToken || room.inviteToken || "",
-        adminKeyHash: existingRoom.adminKeyHash || room.adminKeyHash || "",
-        adminPlayerIds: normalizeAdminPlayerIds(existingRoom.adminPlayerIds || room.adminPlayerIds),
-        joinRequests: normalizeJoinRequests(existingRoom.joinRequests || room.joinRequests),
-        members: touchMemberWithProfile(existingRoom.members || room.members, clientId),
-        gameState: nextGameState,
-        players: playersForWrite
-      };
+      return buildLobbyRoomForWrite({
+        currentRoom,
+        createOnly,
+        room,
+        players,
+        clientId,
+        nextGameState,
+        canClientManageRoom: canClientManageRoomData,
+        getRoomHostId,
+        inferHandStatus,
+        mergePlayerIdentityFields,
+        normalizeAdminPlayerIds,
+        normalizeJoinRequests,
+        touchMemberWithProfile
+      });
     }, { applyLocally: false });
 
     if (!result.committed) {

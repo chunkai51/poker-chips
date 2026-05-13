@@ -26,6 +26,7 @@ index.html
        -> imports raise action panel DOM builders from src/raise-ui.js
        -> imports room database adapter helpers from src/room-sync.js
        -> imports room entry/link/request helpers from src/room-entry.js
+       -> imports room lobby state helpers from src/room-lobby-controller.js
        -> imports room permission helpers from src/room-permissions.js
        -> imports room/game-state normalizers from src/room-state.js
        -> imports settlement calculation helpers from src/settlement-engine.js
@@ -147,6 +148,18 @@ Owns room-entry and invitation helpers:
 - Join/reclaim request normalization
 
 This module may touch browser storage and URL parsing, but it should not render DOM, write Firebase, or decide game permissions.
+
+### `src/room-lobby-controller.js`
+
+Owns DOM-free lobby-state helpers:
+
+- Local-mode room data reset
+- Host room data initialization
+- Joined-room data initialization
+- Setup/lobby game-state payload creation
+- Room transaction payload construction for lobby sync
+
+This module should receive dependencies explicitly through parameters, such as `createMembersMap`, `touchMemberWithProfile`, `canClientManageRoom`, `mergePlayerIdentityFields`, and normalizers. It should not read module-level app state, render DOM, start listeners, or call Firebase directly.
 
 ### `src/access-codes.js`
 
@@ -364,7 +377,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room lobby data helpers to `src/room-lobby-controller.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 
