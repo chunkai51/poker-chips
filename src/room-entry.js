@@ -12,7 +12,7 @@ function toNonNegativeNumber(value, fallback = 0) {
 
 function getStorage() {
   try {
-    return globalThis.localStorage || null;
+    return typeof window !== "undefined" ? window.localStorage : null;
   } catch (_) {
     return null;
   }

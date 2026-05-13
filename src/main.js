@@ -9,6 +9,17 @@ import {
   normalizeApprovalMap
 } from "./approvals.js";
 import {
+  forgetAdminCode as forgetStoredAdminCode,
+  getAdminCodeSalt as getAdminAccessCodeSalt,
+  getPlayerCodeSalt as getPlayerAccessCodeSalt,
+  getRememberedAdminCode as getStoredAdminCode,
+  getRememberedPlayerCode as getStoredPlayerCode,
+  isAdminCodeValid as isAdminAccessCodeValid,
+  isPlayerCodeValid as isPlayerAccessCodeValid,
+  rememberAdminCode as storeAdminCode,
+  rememberPlayerCode as storePlayerCode
+} from "./access-codes.js";
+import {
   createDealPrompt,
   normalizeIncomingDealPrompt as normalizeDealPrompt
 } from "./deal-prompts.js";
@@ -45,6 +56,10 @@ import {
   getVisualSeatCoordinates,
   normalizeRotationOffset
 } from "./table-layout.js";
+import {
+  loadTableViewRotation as loadStoredTableViewRotation,
+  saveTableViewRotation as saveStoredTableViewRotation
+} from "./table-view-preferences.js";
 import {
   createCenterOperationHeader,
   createTableCenterPanel as createTableCenterPanelView,
@@ -124,8 +139,7 @@ import {
   normalizeMembers,
   normalizePlayerOwnerId,
   normalizeRoomMode,
-  touchMember,
-  verifyAccessCode
+  touchMember
 } from "./identity.js";
 import {
   canAct,
@@ -220,9 +234,6 @@ let lobbySyncTimer = null;
 let tableViewRotationOffset = 0;
 
 const MAX_PLAYERS = 10;
-const TABLE_VIEW_ROTATION_KEY_PREFIX = "pokerChipsTableViewRotation:";
-const ROOM_ADMIN_CODE_KEY_PREFIX = "pokerChipsAdminCode:";
-const PLAYER_CODE_KEY_PREFIX = "pokerChipsPlayerCode:";
 let clientId = getClientId();
 let authReady = false;
 let authUnavailable = false;
@@ -339,77 +350,43 @@ function touchMemberWithProfile(existingMembers = room.members, actorClientId = 
   return members;
 }
 
-function getAdminCodeStorageKey(roomId = room.roomId) {
-  return `${ROOM_ADMIN_CODE_KEY_PREFIX}${roomId || "local"}`;
-}
-
-function getPlayerCodeStorageKey(playerId, roomId = room.roomId) {
-  return `${PLAYER_CODE_KEY_PREFIX}${roomId || "local"}:${playerId}`;
-}
-
 function rememberAdminCode(code, roomId = room.roomId) {
-  const normalizedCode = normalizeAccessCode(code);
-  if (!normalizedCode || !roomId) return;
-  try {
-    localStorage.setItem(getAdminCodeStorageKey(roomId), normalizedCode);
-  } catch (_) {
-    // Access recovery codes are convenience-only; storage failures should not block play.
-  }
+  storeAdminCode(code, roomId);
 }
 
 function getRememberedAdminCode(roomId = room.roomId) {
-  try {
-    return normalizeAccessCode(localStorage.getItem(getAdminCodeStorageKey(roomId)));
-  } catch (_) {
-    return "";
-  }
+  return getStoredAdminCode(roomId);
 }
 
 function forgetAdminCode(roomId = room.roomId) {
-  try {
-    localStorage.removeItem(getAdminCodeStorageKey(roomId));
-  } catch (_) {
-    // Optional local cache.
-  }
+  forgetStoredAdminCode(roomId);
 }
 
 function rememberPlayerCode(playerId, code, roomId = room.roomId) {
-  const normalizedCode = normalizeAccessCode(code);
-  if (!playerId || !normalizedCode || !roomId) return;
-  try {
-    localStorage.setItem(getPlayerCodeStorageKey(playerId, roomId), normalizedCode);
-  } catch (_) {
-    // Optional local cache.
-  }
+  storePlayerCode(playerId, code, roomId);
 }
 
 function getRememberedPlayerCode(playerId, roomId = room.roomId) {
-  if (!playerId) return "";
-  try {
-    return normalizeAccessCode(localStorage.getItem(getPlayerCodeStorageKey(playerId, roomId)));
-  } catch (_) {
-    return "";
-  }
+  return getStoredPlayerCode(playerId, roomId);
 }
 
 function getPlayerCodeSalt(playerId, roomId = room.roomId) {
-  return `${roomId || "local"}:${playerId}`;
+  return getPlayerAccessCodeSalt(playerId, roomId);
 }
 
 function getAdminCodeSalt(roomId = room.roomId) {
-  return `${roomId || "local"}:admin`;
+  return getAdminAccessCodeSalt(roomId);
 }
 
 function isPlayerCodeValid(player, code, roomData = room) {
-  const normalizedCode = normalizeAccessCode(code);
-  if (!player?.playerKeyHash || !normalizedCode) return false;
-  return verifyAccessCode(normalizedCode, player.playerKeyHash, getPlayerCodeSalt(player.id, roomData.roomId || room.roomId));
+  return isPlayerAccessCodeValid(player, code, roomData.roomId || room.roomId);
 }
 
 function isAdminCodeValid(code, roomData = room) {
-  const normalizedCode = normalizeAccessCode(code);
-  if (!roomData?.adminKeyHash || !normalizedCode) return false;
-  return verifyAccessCode(normalizedCode, roomData.adminKeyHash, getAdminCodeSalt(roomData.roomId || room.roomId));
+  return isAdminAccessCodeValid(code, {
+    ...roomData,
+    roomId: roomData.roomId || room.roomId
+  });
 }
 
 function getPlayerById(id) {
@@ -705,24 +682,16 @@ function setSyncStatus(message, status = "") {
   if (status) syncStatusEl.classList.add(status);
 }
 
-function getTableViewRotationStorageKey() {
-  return `${TABLE_VIEW_ROTATION_KEY_PREFIX}${room.roomId || "local"}`;
+function getTableViewRotationRoomId() {
+  return room.roomId || "local";
 }
 
 function loadTableViewRotation() {
-  try {
-    tableViewRotationOffset = parseInt(localStorage.getItem(getTableViewRotationStorageKey()) || "0", 10) || 0;
-  } catch (_) {
-    tableViewRotationOffset = 0;
-  }
+  tableViewRotationOffset = loadStoredTableViewRotation(getTableViewRotationRoomId());
 }
 
 function saveTableViewRotation() {
-  try {
-    localStorage.setItem(getTableViewRotationStorageKey(), String(tableViewRotationOffset));
-  } catch (_) {
-    // Local view rotation is optional; storage failures should not affect the hand.
-  }
+  saveStoredTableViewRotation(tableViewRotationOffset, getTableViewRotationRoomId());
 }
 
 function rotateTableView(delta) {

@@ -94,6 +94,7 @@ http://localhost:8000/
 │   ├── favicon.png
 │   └── poker-chip-icon.png
 ├── src/
+│   ├── access-codes.js
 │   ├── approvals.js
 │   ├── deal-prompts.js
 │   ├── dialogs.js
@@ -116,6 +117,7 @@ http://localhost:8000/
 │   ├── table-manager-controller.js
 │   ├── table-manager-ui.js
 │   ├── table-layout.js
+│   ├── table-view-preferences.js
 │   └── ui-dom.js
 ├── functions/
 │   ├── index.js
@@ -132,6 +134,7 @@ http://localhost:8000/
 - `index.html`: 页面结构和主要 DOM 容器。
 - `styles.css`: 全站视觉主题、响应式布局、游戏控件样式和 Chip Riffle 外观皮肤。
 - `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
+- `src/access-codes.js`: 旧版管理员/玩家恢复码的本地缓存、salt 和校验工具。
 - `src/player-model.js`: 玩家 ID、开局玩家字段归一化和重复昵称显示标签等数据层工具。
 - `src/approvals.js`: 结算确认、下一局确认等多人审批进度的纯逻辑。
 - `src/deal-prompts.js`: 开局手牌、翻牌、转牌、河牌发牌提示的纯逻辑。
@@ -153,6 +156,7 @@ http://localhost:8000/
 - `src/table-manager-controller.js`: 席位管理 draft 的座次、筹码、状态、摘要和归一化逻辑。
 - `src/table-manager-ui.js`: 席位与身份管理窗口的 DOM 渲染。
 - `src/table-layout.js`: 牌桌玩家标签的可调座位坐标和本地旋转计算。
+- `src/table-view-preferences.js`: 本机牌桌视角旋转等不会同步到房间的偏好存储。
 - `src/ui-dom.js`: 小型 DOM 工厂，如按钮和段落元素。
 - `poker-game.js`: 兼容入口，转发到 `src/main.js`。
 - `assets/`: favicon、站点品牌图标和 Chip Riffle 音频采样。音频授权见 `assets/audio/riffle/LICENSES.md`。
@@ -205,7 +209,7 @@ python3 -m http.server 8000
 
 - All In、边池和复杂多人结算逻辑已有实现，但仍需要更多真实牌局场景验证。
 - 当前没有自动化测试套件。
-- 核心规则、身份工具、玩家模型、房间入口工具、权限判断、边池结算计算、玩家座位 UI、加注面板 UI、牌桌坐标、牌桌中央 UI、牌桌管理逻辑/UI、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
+- 核心规则、身份工具、恢复码工具、玩家模型、房间入口工具、权限判断、边池结算计算、玩家座位 UI、加注面板 UI、牌桌坐标、牌桌视角偏好、牌桌中央 UI、牌桌管理逻辑/UI、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
 - 权限层正在从前端体验级限制迁移到 Auth/Rules/Functions 模型；当前仍有部分牌局写入由前端直接完成。
 - 房间同步依赖 Firebase CDN 和 Realtime Database；离线或网络受限时可能无法正常同步。
 - 本工具只负责筹码和下注流程，不判断牌型大小。

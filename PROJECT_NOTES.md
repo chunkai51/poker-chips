@@ -21,6 +21,7 @@ index.html
   -> loads styles.css
   -> loads src/main.js as a module
        -> imports Firebase Auth/Database helpers from src/firebase.js
+       -> imports legacy access-code helpers from src/access-codes.js
        -> imports player seat DOM builders from src/player-seat-ui.js
        -> imports raise action panel DOM builders from src/raise-ui.js
        -> imports room database adapter helpers from src/room-sync.js
@@ -32,6 +33,7 @@ index.html
        -> imports player model helpers from src/player-model.js
        -> imports pure table and betting rules from src/game-rules.js
        -> imports visual table coordinates from src/table-layout.js
+       -> imports local table-view preferences from src/table-view-preferences.js
        -> imports table center DOM builders from src/table-center-ui.js
        -> imports table manager draft helpers from src/table-manager-controller.js
        -> imports table manager DOM builders from src/table-manager-ui.js
@@ -145,6 +147,17 @@ Owns room-entry and invitation helpers:
 - Join/reclaim request normalization
 
 This module may touch browser storage and URL parsing, but it should not render DOM, write Firebase, or decide game permissions.
+
+### `src/access-codes.js`
+
+Owns legacy recovery-code helpers:
+
+- Admin-code and player-code local-storage keys
+- Remembered admin/player code persistence
+- Admin/player code salts
+- Admin/player code validation against stored hashes
+
+The normal UX now uses invite-link + seat request approval, but these helpers remain for old rooms and recovery paths. Keep this module free of DOM rendering, Firebase writes, and room permission decisions.
 
 ### `src/room-state.js`
 
@@ -293,6 +306,15 @@ Owns the visual seat-slot coordinates for the poker table:
 
 This is the preferred file for hand-tuning player label placement. Keep it DOM-free so layout experiments are easy to review and eventually test.
 
+### `src/table-view-preferences.js`
+
+Owns local-only table-view preferences:
+
+- Local rotation storage key
+- Rotation offset load/save helpers
+
+These preferences are intentionally not written to Firebase. Each browser/device can rotate the visual table independently.
+
 ### `src/table-center-ui.js`
 
 Owns DOM builders for table-center UI:
@@ -342,7 +364,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room payload normalization to `src/room-state.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 
