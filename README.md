@@ -99,6 +99,7 @@ http://localhost:8000/
 │   ├── deal-prompts.js
 │   ├── dialogs.js
 │   ├── firebase.js
+│   ├── game-state-snapshot.js
 │   ├── game-rules.js
 │   ├── guide.js
 │   ├── identity.js
@@ -142,6 +143,7 @@ http://localhost:8000/
 - `src/deal-prompts.js`: 开局手牌、翻牌、转牌、河牌发牌提示的纯逻辑。
 - `src/dialogs.js`: 通用确认弹窗和牌桌操作浮层的 DOM 组装。
 - `src/firebase.js`: Firebase SDK 初始化、Anonymous Auth 和 Realtime Database API 导出。
+- `src/game-state-snapshot.js`: 远端同步前的 gameState 快照、room payload 合并和乐观并发守卫。
 - `src/game-rules.js`: 座位资格、Button/盲注/行动顺序、跟注和加注规则等纯逻辑。
 - `src/identity.js`: 本机客户端 ID fallback、房间模式、成员列表和玩家归属字段的兼容身份层。
 - `src/guide.js`: 初始页和游戏页折叠玩家手册的内容与渲染。
@@ -213,7 +215,7 @@ python3 -m http.server 8000
 
 - All In、边池和复杂多人结算逻辑已有实现，但仍需要更多真实牌局场景验证。
 - 当前没有自动化测试套件。
-- 核心规则、身份工具、恢复码工具、玩家模型、房间入口工具、房间大厅数据工具、身份绑定/请求工具、权限判断、边池结算计算、玩家座位 UI、加注面板 UI、牌桌坐标、牌桌视角偏好、牌桌中央 UI、牌桌管理逻辑/UI、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
+- 核心规则、身份工具、恢复码工具、玩家模型、房间入口工具、房间大厅数据工具、身份绑定/请求工具、权限判断、同步快照、边池结算计算、玩家座位 UI、加注面板 UI、牌桌坐标、牌桌视角偏好、牌桌中央 UI、牌桌管理逻辑/UI、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
 - 权限层正在从前端体验级限制迁移到 Auth/Rules/Functions 模型；当前仍有部分牌局写入由前端直接完成。
 - 房间同步依赖 Firebase CDN 和 Realtime Database；离线或网络受限时可能无法正常同步。
 - 本工具只负责筹码和下注流程，不判断牌型大小。

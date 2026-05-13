@@ -79,9 +79,14 @@ import {
   normalizeIncomingPlayers,
   normalizeIncomingPots,
   normalizeSelectedWinnersByPot,
-  normalizeSettlementPreview,
-  serializeSelectedWinnersByPot
+  normalizeSettlementPreview
 } from "./room-state.js";
+import {
+  buildGuardedRoomSyncPayload,
+  buildMergedRoomSyncPayload,
+  createGameStateSnapshot,
+  prepareRoomDataForGameSync
+} from "./game-state-snapshot.js";
 import {
   createInviteToken,
   generateRoomId,
@@ -965,11 +970,8 @@ async function updateFirebaseState(options = {}) {
     expectedStateVersion !== null ||
     Array.isArray(allowedStatuses);
   const nextStateVersion = stateVersion + 1;
-  room.mode = normalizeRoomMode(room.mode, room.roomId);
-  room.hostClientId = getRoomHostId(room, clientId);
-  room.members = touchMemberWithProfile(room.members, clientId);
 
-  const nextGameState = {
+  const nextGameState = createGameStateSnapshot({
     currentRound,
     pot,
     currentBet,
@@ -980,7 +982,7 @@ async function updateFirebaseState(options = {}) {
     gameOver,
     awaitingShowdown,
     pendingPots,
-    selectedWinnersByPot: serializeSelectedWinnersByPot(selectedWinnersByPot),
+    selectedWinnersByPot,
     pendingDealPrompt,
     settlementPreview,
     nextHandApprovals,
@@ -988,19 +990,20 @@ async function updateFirebaseState(options = {}) {
     handStatus,
     stateVersion: nextStateVersion,
     updatedBy: clientId
-  };
-  const nextRoomData = {
-    mode: room.mode,
-    operator: room.operator,
-    hostClientId: room.hostClientId,
-    inviteToken: room.inviteToken || "",
-    adminKeyHash: room.adminKeyHash || "",
-    adminPlayerIds: normalizeAdminPlayerIds(room.adminPlayerIds),
-    joinRequests: normalizeJoinRequests(room.joinRequests),
-    members: room.members,
-    gameState: nextGameState,
-    players
-  };
+  });
+  const preparedSync = prepareRoomDataForGameSync({
+    room,
+    players,
+    clientId,
+    nextGameState,
+    normalizeRoomMode,
+    getRoomHostId,
+    normalizeAdminPlayerIds,
+    normalizeJoinRequests,
+    touchMemberWithProfile
+  });
+  room = preparedSync.room;
+  const nextRoomData = preparedSync.roomData;
 
   syncWriteInProgress = true;
   setSyncStatus("同步中...");
@@ -1009,36 +1012,23 @@ async function updateFirebaseState(options = {}) {
   try {
     if (guardedWrite) {
       const result = await transactRoom(room.roomId, (currentRoom) => {
-        if (!currentRoom || !currentRoom.gameState) return undefined;
-
-        const currentGameState = currentRoom.gameState;
-        const currentHandId = toNonNegativeNumber(currentGameState.handId, 0);
-        const currentStatus = String(currentGameState.handStatus || inferHandStatus(currentGameState));
-        const currentStateVersion = toNonNegativeNumber(currentGameState.stateVersion, 0);
-        if (expectedHandId !== null && currentHandId !== expectedHandId) return undefined;
-        if (expectedStateVersion !== null && currentStateVersion !== expectedStateVersion) return undefined;
-        if (Array.isArray(allowedStatuses) && !allowedStatuses.includes(currentStatus)) return undefined;
-        if (typeof remoteGuard === "function" && !remoteGuard(currentRoom, currentGameState)) return undefined;
-
-        const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players, { preserveNames: true });
-
-        return {
-          ...currentRoom,
-          ...nextRoomData,
-          mode: normalizeRoomMode(currentRoom.mode || nextRoomData.mode, room.roomId),
-          operator: currentRoom.operator || nextRoomData.operator,
-          hostClientId: getRoomHostId(currentRoom, nextRoomData.hostClientId),
-          inviteToken: currentRoom.inviteToken || nextRoomData.inviteToken,
-          adminKeyHash: currentRoom.adminKeyHash || nextRoomData.adminKeyHash,
-          adminPlayerIds: normalizeAdminPlayerIds(currentRoom.adminPlayerIds || nextRoomData.adminPlayerIds)
-            .filter(playerId => playersForWrite.some(player => player.id === playerId)),
-          joinRequests: normalizeJoinRequests(currentRoom.joinRequests || nextRoomData.joinRequests),
-          members: {
-            ...normalizeMembers(currentRoom.members),
-            ...normalizeMembers(nextRoomData.members)
-          },
-          players: playersForWrite
-        };
+        return buildGuardedRoomSyncPayload({
+          currentRoom,
+          nextRoomData,
+          roomId: room.roomId,
+          expectedHandId,
+          expectedStateVersion,
+          allowedStatuses,
+          remoteGuard,
+          toNonNegativeNumber,
+          inferHandStatus,
+          mergePlayerIdentityFields,
+          normalizeRoomMode,
+          getRoomHostId,
+          normalizeAdminPlayerIds,
+          normalizeJoinRequests,
+          normalizeMembers
+        });
       }, { applyLocally: false });
 
       if (!result.committed) {
@@ -1049,25 +1039,17 @@ async function updateFirebaseState(options = {}) {
       }
     } else {
       const result = await transactRoom(room.roomId, (currentRoom) => {
-        if (!currentRoom) return nextRoomData;
-        const playersForWrite = mergePlayerIdentityFields(nextRoomData.players, currentRoom.players, { preserveNames: true });
-        return {
-          ...currentRoom,
-          ...nextRoomData,
-          mode: normalizeRoomMode(currentRoom.mode || nextRoomData.mode, room.roomId),
-          operator: currentRoom.operator || nextRoomData.operator,
-          hostClientId: getRoomHostId(currentRoom, nextRoomData.hostClientId),
-          inviteToken: currentRoom.inviteToken || nextRoomData.inviteToken,
-          adminKeyHash: currentRoom.adminKeyHash || nextRoomData.adminKeyHash,
-          adminPlayerIds: normalizeAdminPlayerIds(currentRoom.adminPlayerIds || nextRoomData.adminPlayerIds)
-            .filter(playerId => playersForWrite.some(player => player.id === playerId)),
-          joinRequests: normalizeJoinRequests(currentRoom.joinRequests || nextRoomData.joinRequests),
-          members: {
-            ...normalizeMembers(currentRoom.members),
-            ...normalizeMembers(nextRoomData.members)
-          },
-          players: playersForWrite
-        };
+        return buildMergedRoomSyncPayload({
+          currentRoom,
+          nextRoomData,
+          roomId: room.roomId,
+          mergePlayerIdentityFields,
+          normalizeRoomMode,
+          getRoomHostId,
+          normalizeAdminPlayerIds,
+          normalizeJoinRequests,
+          normalizeMembers
+        });
       }, { applyLocally: false });
 
       if (!result.committed) {

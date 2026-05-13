@@ -30,6 +30,7 @@ index.html
        -> imports room lobby state helpers from src/room-lobby-controller.js
        -> imports room permission helpers from src/room-permissions.js
        -> imports room/game-state normalizers from src/room-state.js
+       -> imports game-state sync snapshot helpers from src/game-state-snapshot.js
        -> imports settlement calculation helpers from src/settlement-engine.js
        -> imports client/room identity helpers from src/identity.js
        -> imports player model helpers from src/player-model.js
@@ -197,6 +198,17 @@ Owns DOM-free room/game-state payload helpers:
 - Settlement-preview normalization
 
 This module is intentionally about data shape only. It should not render UI, write Firebase, or decide permissions.
+
+### `src/game-state-snapshot.js`
+
+Owns DOM-free sync payload helpers:
+
+- Game-state snapshot creation before remote writes
+- Local room-data preparation before sync
+- Current remote room + next local room payload merge
+- Guarded write checks for hand id, hand status, state version, and optional remote guard callbacks
+
+This module should receive dependencies explicitly through parameters, such as `normalizeRoomMode`, `getRoomHostId`, `normalizeAdminPlayerIds`, `normalizeJoinRequests`, `normalizeMembers`, and `mergePlayerIdentityFields`. It should not call Firebase, mutate app globals, render UI, or decide what user message should be shown after conflicts.
 
 ### `src/settlement-engine.js`
 
@@ -392,7 +404,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room lobby data helpers to `src/room-lobby-controller.js`, room claim/request helpers to `src/room-claims-controller.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room lobby data helpers to `src/room-lobby-controller.js`, room claim/request helpers to `src/room-claims-controller.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, sync snapshot helpers to `src/game-state-snapshot.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 
