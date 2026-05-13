@@ -32,6 +32,7 @@ index.html
        -> imports room/game-state normalizers from src/room/room-state.js
        -> imports game-state sync snapshot helpers from src/room/game-state-snapshot.js
        -> imports hand-flow state transition helpers from src/core/hand-flow-controller.js
+       -> imports hand lifecycle state transitions from src/game/hand-controller.js
        -> imports settlement calculation helpers from src/core/settlement-engine.js
        -> imports client/room identity helpers from src/room/identity.js
        -> imports player model helpers from src/core/player-model.js
@@ -55,6 +56,7 @@ poker-game.js
 The `src/` tree is organized by responsibility, not by extraction history:
 
 - `src/core/`: pure poker/game calculations and data helpers. These modules should be the easiest to unit test and reuse from a future backend command validator.
+- `src/game/`: DOM-free game workflow state transitions. These modules may compose `src/core/` helpers, but should not render UI or write Firebase.
 - `src/room/`: room identity, permissions, room payload normalization, lobby/claim data transforms, and the Realtime Database room adapter.
 - `src/ui/`: DOM builders and reusable UI shells. These modules receive prepared values and callbacks; they do not own room/game state.
 - `src/table/`: visual table layout preferences and table-management draft logic.
@@ -358,6 +360,18 @@ Owns pure, DOM-free hand-flow transitions:
 
 Keep this module parameter-driven. It can import pure rule helpers from `src/core/game-rules.js`, but it should not read app globals, render DOM, write Firebase, show dialogs, or decide remote conflict behavior.
 
+### `src/game/hand-controller.js`
+
+Owns DOM-free hand lifecycle state transitions:
+
+- Dealer normalization and next-hand dealer advancement
+- Seat position labels for Dealer, small blind, big blind, heads-up, and inactive seats
+- Opening-round reset, blind posting, and opening deal-prompt creation
+- Later-street bet/acted reset and first actionable player lookup
+- Next-hand base-state reset after settlement
+
+This module composes `src/core/game-rules.js`, `src/core/deal-prompts.js`, and `src/core/hand-flow-controller.js`. It returns next state objects for `src/main.js` to apply. It should not show dialogs, write logs, render DOM, call Firebase, or decide remote conflict messages.
+
 ### `src/ui/ui-dom.js`
 
 Owns tiny shared DOM factories:
@@ -444,7 +458,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, hand lifecycle transitions to `src/game/hand-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/ui/guide.js`
 
@@ -715,6 +729,7 @@ Implemented:
 - Firebase CLI, Realtime Database rules, and Cloud Functions command-processing scaffold
 - All-required-player confirmation for settlement preview and next-hand start
 - Extracted pure hand-flow transitions in `src/core/hand-flow-controller.js`
+- Extracted hand lifecycle state transitions in `src/game/hand-controller.js`
 
 Needs more validation:
 

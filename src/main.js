@@ -89,12 +89,15 @@ import {
 } from "./room/game-state-snapshot.js";
 import {
   applyBettingAction,
-  commitChipsToPlayer,
   findNextActionableIndex as findNextActionableIndexData,
   getAutomaticHandEndState,
-  getMaxStreetBet as getMaxStreetBetData,
   isBettingRoundComplete as isBettingRoundCompleteData
 } from "./core/hand-flow-controller.js";
+import {
+  getFirstActionIndexForRound as getFirstActionIndexForRoundData,
+  prepareNextHandResetState,
+  prepareRoundStartState
+} from "./game/hand-controller.js";
 import {
   createInviteToken,
   generateRoomId,
@@ -175,19 +178,14 @@ import {
   getCallAmount as calculateCallAmount,
   getChipStep as calculateChipStep,
   getDefaultRaiseTarget as calculateDefaultRaiseTarget,
-  getEligibleOrderFrom as buildEligibleOrderFrom,
   getEligiblePlayerIndices as collectEligiblePlayerIndices,
-  getHandLayout as buildHandLayout,
   getMaximumRaiseTarget as calculateMaximumRaiseTarget,
   getMinimumRaiseTarget as calculateMinimumRaiseTarget,
-  getNextEligibleIndexAfter,
-  getNextEligibleIndexFrom,
   getPotSizedRaiseTarget as calculatePotSizedRaiseTarget,
   getRaiseUnavailableMessage as getRaiseUnavailableMessageForState,
   getRaiseValidation as validateRaiseTarget,
   getSeatStatusLabel,
-  isEligibleForNextHand,
-  normalizeSeatStatus
+  isEligibleForNextHand
 } from "./core/game-rules.js";
 import { initGuidePanels } from "./ui/guide.js";
 import { initChipRiffle } from "./riffle/riffle.js";
@@ -1980,128 +1978,47 @@ startGameBtn.addEventListener("click", async () => {
   }
 });
 
-// ----------------------
-// 开局与轮次逻辑
-// ----------------------
-function commitChips(player, requestedAmount) {
-  const result = commitChipsToPlayer(player, requestedAmount);
-  Object.assign(player, result.player);
-  pot += result.committed;
-  return result.committed;
-}
-
-function getEligibleOrderFrom(startIndex, eligibleIndices = getEligiblePlayerIndices()) {
-  return buildEligibleOrderFrom(startIndex, eligibleIndices);
-}
-
-function getHandLayout(dealerIndex, list = players) {
-  return buildHandLayout(dealerIndex, list);
-}
-
-function setDealer(index) {
-  players.forEach((player, playerIndex) => {
-    player.dealer = playerIndex === index;
-  });
-}
-
-function normalizeDealerForHand() {
-  const eligibleIndices = getEligiblePlayerIndices();
-  if (eligibleIndices.length === 0) {
-    players.forEach(player => {
-      player.dealer = false;
-    });
-    return -1;
-  }
-
-  const currentDealerIndex = players.findIndex(player => player.dealer);
-  const dealerIndex = currentDealerIndex >= 0
-    ? getNextEligibleIndexFrom(currentDealerIndex, eligibleIndices)
-    : eligibleIndices[0];
-  setDealer(dealerIndex);
-  return dealerIndex;
-}
-
-function assignPositions(dealerIndex) {
-  players.forEach(player => {
-    player.position = getSeatStatusLabel(player.seatStatus);
-  });
-
-  const layout = getHandLayout(dealerIndex);
-  if (layout.order.length === 0) return;
-
-  if (layout.order.length === 1) {
-    players[layout.dealerIndex].position = "等待对手";
-    return;
-  }
-
-  layout.order.forEach((index, offset) => {
-    if (layout.order.length === 2) {
-      players[index].position = offset === 0 ? "Dealer / 小盲" : "大盲";
-    } else if (offset === 0) {
-      players[index].position = "Dealer";
-    } else if (offset === 1) {
-      players[index].position = "小盲";
-    } else if (offset === 2) {
-      players[index].position = "大盲";
-    } else {
-      players[index].position = "普通玩家";
-    }
-  });
-}
-
 function findNextActionableIndex(startIndex, includeStart = false) {
   return findNextActionableIndexData(players, startIndex, includeStart);
 }
 
-function getMaxStreetBet() {
-  return getMaxStreetBetData(players);
+function getFirstActionIndexForRound(round = currentRound) {
+  return getFirstActionIndexForRoundData(players, round);
 }
 
-function getFirstActionIndexForRound(round = currentRound) {
-  const dealerIndex = normalizeDealerForHand();
-  const layout = getHandLayout(dealerIndex);
-  return round === 0 ? layout.preflopFirstIndex : layout.postflopFirstIndex;
+function applyRoundStartState(roundState) {
+  players = roundState.players;
+  room.players = players;
+  currentBet = roundState.currentBet;
+  lastRaiseSize = roundState.lastRaiseSize;
+  selectedWinnersByPot = roundState.selectedWinnersByPot;
+  pendingDealPrompt = roundState.pendingDealPrompt;
+  settlementPreview = roundState.settlementPreview;
+  nextHandApprovals = roundState.nextHandApprovals;
+  if (roundState.pendingPots !== undefined) pendingPots = roundState.pendingPots;
+  if (roundState.awaitingShowdown !== undefined) awaitingShowdown = roundState.awaitingShowdown;
+  gameOver = roundState.gameOver;
+  handStatus = roundState.handStatus;
+  currentPlayerIndex = roundState.currentPlayerIndex;
+  pot = roundState.pot;
 }
 
 function startRound() {
-  currentBet = 0;
-  lastRaiseSize = bigBlind;
-  selectedWinnersByPot = {};
-  pendingDealPrompt = null;
-  settlementPreview = null;
-  nextHandApprovals = {};
   hideShowdownPanel();
   hideDealPromptPanel();
   hideSettlementPreviewPanel();
 
-  if (currentRound === 0) {
-    pot = 0;
-    pendingPots = [];
-    awaitingShowdown = false;
-    players.forEach(player => {
-      player.bet = 0;
-      player.totalBet = 0;
-      player.seatStatus = normalizeSeatStatus(player.seatStatus, player.chips, false);
-      if (player.chips <= 0 && player.seatStatus === "seated") {
-        player.seatStatus = "busted";
-      }
-      player.folded = !isEligibleForNextHand(player);
-      player.acted = false;
-      player.allIn = false;
-    });
-  } else {
-    players.forEach(player => {
-      player.bet = 0;
-      player.acted = false;
-    });
-  }
+  const roundState = prepareRoundStartState({
+    players,
+    currentRound,
+    pot,
+    bigBlind,
+    smallBlind,
+    handId
+  });
+  applyRoundStartState(roundState);
 
-  const eligibleIndices = getEligiblePlayerIndices();
-  if (currentRound === 0 && eligibleIndices.length < 2) {
-    currentPlayerIndex = -1;
-    gameOver = true;
-    handStatus = "settled";
-    assignPositions(normalizeDealerForHand());
+  if (roundState.outcome === "insufficientPlayers") {
     updateGameInfo();
     updatePlayerBoxes();
     updateGameLog("至少需要 2 名已入座且有筹码的玩家才能开始下一局。");
@@ -2110,31 +2027,17 @@ function startRound() {
     return;
   }
 
-  const dealerIndex = normalizeDealerForHand();
-  const layout = getHandLayout(dealerIndex);
-  assignPositions(dealerIndex);
-
-  let firstToActIndex;
-  if (currentRound === 0) {
-    const smallBlindPosted = commitChips(players[layout.smallBlindIndex], smallBlind);
-    const bigBlindPosted = commitChips(players[layout.bigBlindIndex], bigBlind);
-    firstToActIndex = layout.preflopFirstIndex;
-    currentBet = getMaxStreetBet();
-    pendingDealPrompt = createDealPrompt(0, { handId });
-    handStatus = "waitingDeal";
-    currentPlayerIndex = -1;
+  if (roundState.outcome === "waitingDeal") {
+    const blindPosts = roundState.blindPosts;
     updateGameInfo();
     updatePlayerBoxes();
-    updateGameLog(`盲注已自动下入：${getPlayerIdentityLabel(players[layout.smallBlindIndex])} ${smallBlindPosted}，${getPlayerIdentityLabel(players[layout.bigBlindIndex])} ${bigBlindPosted}。请发两张底牌。`);
+    updateGameLog(`盲注已自动下入：${getPlayerIdentityLabel(players[blindPosts.smallBlindIndex])} ${blindPosts.smallBlindPosted}，${getPlayerIdentityLabel(players[blindPosts.bigBlindIndex])} ${blindPosts.bigBlindPosted}。请发两张底牌。`);
     renderDealPromptPanel();
     clearHandActions();
     updateFirebaseState();
     return;
-  } else {
-    firstToActIndex = layout.postflopFirstIndex;
   }
 
-  currentPlayerIndex = findNextActionableIndex(firstToActIndex, true);
   updateGameInfo();
   updatePlayerBoxes();
   updateGameLog(`进入 ${rounds[currentRound]} 轮，奖池：${pot}`);
@@ -3238,36 +3141,36 @@ async function resetHand(expectedHandId = handId) {
   }
 
   batchingStateUpdate = true;
-  currentRound = 0;
-  currentBet = 0;
-  lastRaiseSize = bigBlind;
-  pot = 0;
-  currentPlayerIndex = -1;
-  pendingPots = [];
-  selectedWinnersByPot = {};
-  pendingDealPrompt = null;
-  settlementPreview = null;
-  nextHandApprovals = {};
-  awaitingShowdown = false;
-  gameOver = false;
-  handId = expectedHandId + 1;
-  handStatus = "playing";
-
-  players.forEach(player => {
-    player.bet = 0;
-    player.totalBet = 0;
-    player.folded = false;
-    player.acted = false;
-    player.allIn = false;
+  const resetState = prepareNextHandResetState({
+    players,
+    expectedHandId,
+    bigBlind
   });
-
-  if (!rotateDealer()) {
+  if (!resetState.ok) {
     batchingStateUpdate = false;
     setMutationInProgress(false);
     showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
     renderNextHandButton();
     return;
   }
+
+  players = resetState.players;
+  room.players = players;
+  currentRound = resetState.currentRound;
+  currentBet = resetState.currentBet;
+  lastRaiseSize = resetState.lastRaiseSize;
+  pot = resetState.pot;
+  currentPlayerIndex = resetState.currentPlayerIndex;
+  pendingPots = resetState.pendingPots;
+  selectedWinnersByPot = resetState.selectedWinnersByPot;
+  pendingDealPrompt = resetState.pendingDealPrompt;
+  settlementPreview = resetState.settlementPreview;
+  nextHandApprovals = resetState.nextHandApprovals;
+  awaitingShowdown = resetState.awaitingShowdown;
+  gameOver = resetState.gameOver;
+  handId = resetState.handId;
+  handStatus = resetState.handStatus;
+
   clearGameLog();
   clearHandActions();
   hideShowdownPanel();
@@ -3292,18 +3195,6 @@ async function resetHand(expectedHandId = handId) {
   if (!saved) {
     showAppAlert("下一局没有同步成功，已恢复到最新远端状态");
   }
-}
-
-function rotateDealer() {
-  const eligibleIndices = getEligiblePlayerIndices();
-  if (eligibleIndices.length < 2) return false;
-
-  let dealerIndex = players.findIndex(player => player.dealer);
-  if (dealerIndex === -1) dealerIndex = eligibleIndices[eligibleIndices.length - 1];
-
-  const nextIndex = getNextEligibleIndexAfter(dealerIndex, eligibleIndices);
-  setDealer(nextIndex);
-  return true;
 }
 
 function renderNextHandButton() {
