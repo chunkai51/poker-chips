@@ -106,6 +106,17 @@ import {
   createLocalModeRoom
 } from "./room-lobby-controller.js";
 import {
+  applyLocalPlayerClaimState,
+  buildApproveSeatRequestRoomUpdate,
+  buildClaimPlayerRoomUpdate,
+  buildDeclineSeatRequestRoomUpdate,
+  buildReleasePlayerRoomUpdate,
+  createSeatOwnershipRequest,
+  getClaimAuthForPlayer as getClaimAuthForPlayerData,
+  getSetupClaimLabel as getSetupClaimLabelData,
+  isClaimedByOtherDevice as isClaimedByOtherDeviceData
+} from "./room-claims-controller.js";
+import {
   createPlayerId as createPlayerModelId,
   createSetupPlayer as createSetupPlayerData,
   getPlayerCompactIdentityLabel as formatPlayerCompactIdentityLabel,
@@ -1426,65 +1437,46 @@ function createSetupPlayer(overrides = {}) {
 }
 
 function isClaimedByOtherDevice(player) {
-  const ownerClientId = normalizePlayerOwnerId(player?.ownerClientId);
-  return Boolean(ownerClientId && ownerClientId !== clientId);
+  return isClaimedByOtherDeviceData(player, clientId);
 }
 
 function getSetupClaimLabel(player) {
-  if (!isRoomMode()) return "本地";
-  if (isCurrentDevicePlayer(player)) return "我的座位";
-  const currentRequest = getJoinRequestForClient();
-  if (currentRequest?.playerId === player.id) return "待批准";
-  if (isClaimedByOtherDevice(player)) return "已有人入座";
-  return canCurrentClientManageRoom() ? "绑定到我" : "请求坐下";
-}
-
-function setCurrentMemberClaim(playerId, extra = {}) {
-  const members = normalizeMembers(room.members);
-  const currentMember = members[clientId] || {};
-  room.members = {
-    ...members,
-    [clientId]: {
-      ...currentMember,
-      ...extra,
-      clientId,
-      claimedPlayerId: playerId || "",
-      lastSeenAt: Date.now()
-    }
-  };
+  return getSetupClaimLabelData({
+    player,
+    roomMode: isRoomMode(),
+    currentRequest: getJoinRequestForClient(),
+    isCurrentDevicePlayer: isCurrentDevicePlayer(player),
+    claimedByOtherDevice: isClaimedByOtherDevice(player),
+    canManageRoom: canCurrentClientManageRoom()
+  });
 }
 
 function applyLocalPlayerClaim(playerId, shouldClaim) {
-  players.forEach(player => {
-    if (normalizePlayerOwnerId(player.ownerClientId) === clientId) {
-      player.ownerClientId = "";
-    }
+  const result = applyLocalPlayerClaimState({
+    players,
+    members: room.members,
+    clientId,
+    playerId,
+    shouldClaim,
+    handStatus
   });
-  const player = players.find(item => item.id === playerId);
-  if (shouldClaim && !player) return false;
-  if (shouldClaim) {
-    player.ownerClientId = clientId;
-    setCurrentMemberClaim(playerId);
-  } else {
-    setCurrentMemberClaim("");
-  }
-  if (handStatus === "settled") nextHandApprovals = {};
+  if (!result.ok) return false;
+  players = result.players;
+  room.members = result.members;
+  if (result.resetNextHandApprovals) nextHandApprovals = {};
   room.players = players;
   return true;
 }
 
 function getClaimAuthForPlayer(player, code = "", forceAdmin = false) {
-  const normalizedCode = normalizeAccessCode(code) || getRememberedPlayerCode(player?.id);
-  const canForce = forceAdmin && canCurrentClientManageRoom();
-  const canUseCode = Boolean(player?.playerKeyHash && isPlayerCodeValid(player, normalizedCode));
-  const firstClaim = !player?.playerKeyHash && canCurrentClientManageRoom();
-  return {
-    code: normalizedCode,
-    canForce,
-    canUseCode,
-    firstClaim,
-    allowed: canForce || canUseCode || firstClaim
-  };
+  return getClaimAuthForPlayerData({
+    player,
+    code,
+    rememberedCode: getRememberedPlayerCode(player?.id),
+    forceAdmin,
+    canManageRoom: canCurrentClientManageRoom(),
+    isPlayerCodeValid
+  });
 }
 
 async function claimPlayerIdentity(playerId, { code = "", forceAdmin = false, announceCode = true } = {}) {
@@ -1513,63 +1505,22 @@ async function claimPlayerIdentity(playerId, { code = "", forceAdmin = false, an
   setMutationInProgress(true);
   try {
     const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
-      const currentStatus = String(currentRoom.gameState?.handStatus || inferHandStatus(currentRoom.gameState || {}));
-      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
-      const target = remotePlayers.find(item => item.id === playerId);
-      if (!target) return undefined;
-
-      const adminForce = forceAdmin && canClientManageRoomData(clientId, currentRoom);
-      const remoteCanUseCode = Boolean(target.playerKeyHash && isPlayerCodeValid(target, auth.code, currentRoom));
-      const remoteFirstClaim = !target.playerKeyHash && auth.firstClaim;
-      if (!adminForce && !remoteCanUseCode && !remoteFirstClaim) return undefined;
-
-      remotePlayers.forEach(item => {
-        if (normalizePlayerOwnerId(item.ownerClientId) === clientId) {
-          item.ownerClientId = "";
-        }
+      return buildClaimPlayerRoomUpdate({
+        currentRoom,
+        room,
+        playerId,
+        clientId,
+        auth,
+        forceAdmin,
+        generatedHash,
+        currentDisplayName: getPreferredDisplayName(),
+        canClientManageRoom: canClientManageRoomData,
+        isPlayerCodeValid,
+        inferHandStatus,
+        getRoomHostId,
+        normalizeRoomMode,
+        touchMember
       });
-      target.ownerClientId = clientId;
-      const currentDisplayName = getPreferredDisplayName();
-      if (currentDisplayName && shouldUseRequestNameForSeat(target, remotePlayers.indexOf(target))) {
-        target.name = currentDisplayName;
-      }
-      if (remoteFirstClaim && generatedHash) {
-        target.playerKeyHash = generatedHash;
-      }
-      const nextGameState = currentRoom.gameState || {};
-      const resetNextHandApprovals = currentStatus === "settled";
-      const members = touchMember(currentRoom.members || room.members, clientId);
-      Object.entries(members).forEach(([memberId, member]) => {
-        if (memberId !== clientId && String(member.claimedPlayerId || "") === playerId) {
-          members[memberId] = {
-            ...member,
-            claimedPlayerId: ""
-          };
-        }
-      });
-      members[clientId] = {
-        ...members[clientId],
-        displayName: currentDisplayName || members[clientId]?.displayName || "",
-        claimedPlayerId: playerId
-      };
-
-      const nextRoom = {
-        ...currentRoom,
-        mode: normalizeRoomMode(currentRoom.mode, room.roomId),
-        hostClientId: getRoomHostId(currentRoom, room.hostClientId || clientId),
-        members,
-        players: remotePlayers
-      };
-      if (resetNextHandApprovals) {
-        nextRoom.gameState = {
-          ...nextGameState,
-          nextHandApprovals: {},
-          stateVersion: toNonNegativeNumber(nextGameState.stateVersion, 0) + 1,
-          updatedBy: clientId
-        };
-      }
-      return nextRoom;
     }, { applyLocally: false });
 
     if (!result.committed) {
@@ -1606,23 +1557,12 @@ async function releaseCurrentPlayerIdentity() {
   setMutationInProgress(true);
   try {
     const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
-      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
-      remotePlayers.forEach(player => {
-        if (normalizePlayerOwnerId(player.ownerClientId) === clientId) {
-          player.ownerClientId = "";
-        }
+      return buildReleasePlayerRoomUpdate({
+        currentRoom,
+        room,
+        clientId,
+        touchMember
       });
-      const members = touchMember(currentRoom.members || room.members, clientId);
-      members[clientId] = {
-        ...members[clientId],
-        claimedPlayerId: ""
-      };
-      return {
-        ...currentRoom,
-        members,
-        players: remotePlayers
-      };
     }, { applyLocally: false });
     if (!result.committed) {
       showAppAlert("退出绑定没有成功，请等待同步后重试。");
@@ -1674,14 +1614,13 @@ async function requestSeatOwnership(playerId) {
     return;
   }
   rememberPreferredDisplayName(displayName);
-  const request = {
+  const request = createSeatOwnershipRequest({
     clientId,
     playerId,
     displayName,
-    type: isClaimedByOtherDevice(player) ? "reclaim" : "join",
-    inviteToken: room.inviteToken || "",
-    requestedAt: Date.now()
-  };
+    claimedByOtherDevice: isClaimedByOtherDevice(player),
+    inviteToken: room.inviteToken || ""
+  });
   setMutationInProgress(true);
   try {
     await updateJoinRequest(room.roomId, clientId, request);
@@ -1712,62 +1651,16 @@ async function approveSeatRequest(requestClientId) {
   setMutationInProgress(true);
   try {
     const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (!currentRoom || !Array.isArray(currentRoom.players)) return undefined;
-      if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
-      const requests = normalizeJoinRequests(currentRoom.joinRequests);
-      const remoteRequest = requests[requestClientId];
-      if (!remoteRequest || remoteRequest.playerId !== request.playerId) return undefined;
-      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
-      const remoteTarget = remotePlayers.find(player => player.id === remoteRequest.playerId);
-      if (!remoteTarget) return undefined;
-      const remoteTargetIndex = remotePlayers.indexOf(remoteTarget);
-      const requestDisplayName = getRequestDisplayName(remoteRequest);
-      remotePlayers.forEach(player => {
-        if (normalizePlayerOwnerId(player.ownerClientId) === requestClientId) {
-          player.ownerClientId = "";
-        }
+      return buildApproveSeatRequestRoomUpdate({
+        currentRoom,
+        room,
+        clientId,
+        requestClientId,
+        expectedPlayerId: request.playerId,
+        canClientManageRoom: canClientManageRoomData,
+        inferHandStatus,
+        touchMember
       });
-      remoteTarget.ownerClientId = requestClientId;
-      remoteTarget.playerKeyHash = "";
-      if (requestDisplayName && shouldUseRequestNameForSeat(remoteTarget, remoteTargetIndex)) {
-        remoteTarget.name = requestDisplayName;
-      }
-      delete requests[requestClientId];
-
-      const members = touchMember(currentRoom.members || room.members, clientId);
-      Object.entries(members).forEach(([memberId, member]) => {
-        if (String(member.claimedPlayerId || "") === remoteRequest.playerId) {
-          members[memberId] = {
-            ...member,
-            claimedPlayerId: ""
-          };
-        }
-      });
-      members[requestClientId] = {
-        ...(members[requestClientId] || {}),
-        clientId: requestClientId,
-        displayName: requestDisplayName,
-        claimedPlayerId: remoteRequest.playerId,
-        lastSeenAt: Date.now()
-      };
-
-      const nextGameState = currentRoom.gameState || {};
-      const currentStatus = String(nextGameState.handStatus || inferHandStatus(nextGameState));
-      const nextRoom = {
-        ...currentRoom,
-        joinRequests: requests,
-        members,
-        players: remotePlayers
-      };
-      if (currentStatus === "settled") {
-        nextRoom.gameState = {
-          ...nextGameState,
-          nextHandApprovals: {},
-          stateVersion: toNonNegativeNumber(nextGameState.stateVersion, 0) + 1,
-          updatedBy: clientId
-        };
-      }
-      return nextRoom;
     }, { applyLocally: false });
     if (!result.committed) {
       showAppAlert("批准请求失败，房间状态可能已变化。");
@@ -1790,16 +1683,14 @@ async function declineSeatRequest(requestClientId) {
   setMutationInProgress(true);
   try {
     const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (!currentRoom) return undefined;
-      if (!canClientManageRoomData(clientId, currentRoom)) return undefined;
-      const requests = normalizeJoinRequests(currentRoom.joinRequests);
-      if (!requests[normalizedRequestClientId]) return undefined;
-      delete requests[normalizedRequestClientId];
-      return {
-        ...currentRoom,
-        joinRequests: requests,
-        members: touchMember(currentRoom.members || room.members, clientId)
-      };
+      return buildDeclineSeatRequestRoomUpdate({
+        currentRoom,
+        room,
+        clientId,
+        requestClientId: normalizedRequestClientId,
+        canClientManageRoom: canClientManageRoomData,
+        touchMember
+      });
     }, { applyLocally: false });
     if (!result.committed) {
       showAppAlert("拒绝请求失败，房间状态可能已变化。");

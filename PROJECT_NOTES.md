@@ -25,6 +25,7 @@ index.html
        -> imports player seat DOM builders from src/player-seat-ui.js
        -> imports raise action panel DOM builders from src/raise-ui.js
        -> imports room database adapter helpers from src/room-sync.js
+       -> imports room claim/request helpers from src/room-claims-controller.js
        -> imports room entry/link/request helpers from src/room-entry.js
        -> imports room lobby state helpers from src/room-lobby-controller.js
        -> imports room permission helpers from src/room-permissions.js
@@ -160,6 +161,19 @@ Owns DOM-free lobby-state helpers:
 - Room transaction payload construction for lobby sync
 
 This module should receive dependencies explicitly through parameters, such as `createMembersMap`, `touchMemberWithProfile`, `canClientManageRoom`, `mergePlayerIdentityFields`, and normalizers. It should not read module-level app state, render DOM, start listeners, or call Firebase directly.
+
+### `src/room-claims-controller.js`
+
+Owns DOM-free player identity binding helpers:
+
+- Current-device claim labels
+- Local claim/release state transforms
+- Claim-auth decision data
+- Claim/release room transaction payloads
+- Seat ownership request creation
+- Seat request approval and decline transaction payloads
+
+This module intentionally does not call Firebase, show dialogs, focus inputs, or refresh UI. Transaction helpers receive `currentRoom`, `room`, `clientId`, and dependencies such as `canClientManageRoom`, `inferHandStatus`, `getRoomHostId`, `normalizeRoomMode`, and `touchMember` through parameters, then return the next room payload or `undefined` to reject the transaction.
 
 ### `src/access-codes.js`
 
@@ -377,7 +391,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room lobby data helpers to `src/room-lobby-controller.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room lobby data helpers to `src/room-lobby-controller.js`, room claim/request helpers to `src/room-claims-controller.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 
