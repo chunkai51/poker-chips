@@ -143,11 +143,15 @@ import {
   shouldUseRequestNameForSeat as shouldUseRequestNameForPlayerSeat
 } from "./core/player-model.js";
 import {
-  buildSettlementPlan as buildSettlementPlanData,
-  buildSidePots as buildSidePotsData,
-  createSettlementPreview as createSettlementPreviewData,
-  getSettlementReportLines as getSettlementReportLinesData
-} from "./core/settlement-engine.js";
+  awardRemainingPotState,
+  cancelSettlementPreviewState,
+  createSettlementPlanState,
+  createSettlementPreviewState,
+  createShowdownState,
+  finalizeSettlementPreviewState,
+  getSettlementReport,
+  toggleWinnerSelection
+} from "./game/settlement-controller.js";
 import {
   canClientControlPlayerInRoom as canClientControlPlayerInRoomData,
   canClientManageRoomData as canClientManageRoomPayload,
@@ -2276,28 +2280,21 @@ async function confirmDealPrompt() {
 }
 
 function awardRemainingPot(winner) {
-  const wonAmount = pot;
-  if (winner) {
-    winner.chips += wonAmount;
-  }
-
-  pot = 0;
-  currentBet = 0;
-  lastRaiseSize = bigBlind;
-  currentPlayerIndex = -1;
-  awaitingShowdown = false;
-  pendingPots = [];
-  selectedWinnersByPot = {};
-  pendingDealPrompt = null;
-  settlementPreview = null;
-  nextHandApprovals = {};
-  const bustedNames = markZeroChipPlayersBusted();
-  gameOver = true;
-  handStatus = "settled";
+  const settlementState = awardRemainingPotState({
+    players,
+    winnerId: winner?.id || "",
+    pot,
+    bigBlind
+  });
+  const winnerLabel = settlementState.winnerId
+    ? getPlayerIdentityLabelById(settlementState.winnerId, settlementState.players)
+    : "无人";
+  applySettlementFlowState(settlementState);
+  const bustedNames = getPlayerIdentityLabelsByIds(settlementState.bustedPlayerIds);
 
   updateGameInfo();
   updatePlayerBoxes();
-  updateGameLog(`${winner ? getPlayerIdentityLabel(winner) : "无人"} 赢得奖池 ${wonAmount}`);
+  updateGameLog(`${winnerLabel} 赢得奖池 ${settlementState.wonAmount}`);
   if (bustedNames.length > 0) {
     updateGameLog(`${bustedNames.join("、")} 筹码归零，已设为待补码，下一手将跳过。`);
   }
@@ -2310,28 +2307,10 @@ function awardRemainingPot(winner) {
 // ----------------------
 // 摊牌与边池结算
 // ----------------------
-function buildSidePots() {
-  return buildSidePotsData(players, pot);
-}
-
 function beginShowdown() {
   if (awaitingShowdown) return;
 
-  awaitingShowdown = true;
-  gameOver = true;
-  handStatus = "showdown";
-  currentPlayerIndex = -1;
-  pendingPots = buildSidePots();
-  selectedWinnersByPot = {};
-  pendingDealPrompt = null;
-  settlementPreview = null;
-  nextHandApprovals = {};
-
-  pendingPots.forEach((sidePot, index) => {
-    if (sidePot.contenders.length === 1) {
-      selectedWinnersByPot[index] = new Set(sidePot.contenders);
-    }
-  });
+  applySettlementFlowState(createShowdownState({ players, pot }));
 
   updateGameInfo();
   updatePlayerBoxes();
@@ -2377,18 +2356,20 @@ function renderShowdownPanel() {
 function toggleWinner(potIndex, playerId) {
   if (isInteractionLocked() || handStatus !== "showdown") return;
 
-  const selected = selectedWinnersByPot[potIndex] || new Set();
-  if (selected.has(playerId)) {
-    selected.delete(playerId);
-  } else {
-    selected.add(playerId);
-  }
-  selectedWinnersByPot[potIndex] = selected;
+  selectedWinnersByPot = toggleWinnerSelection({
+    selectedWinnersByPot,
+    potIndex,
+    playerId
+  });
   renderShowdownPanel();
 }
 
 function buildSettlementPlan() {
-  const { settlementPlan, error } = buildSettlementPlanData(pendingPots, players, selectedWinnersByPot);
+  const { settlementPlan, error } = createSettlementPlanState({
+    pendingPots,
+    players,
+    selectedWinnersByPot
+  });
   if (error) {
     showAppAlert(error);
     return null;
@@ -2396,37 +2377,39 @@ function buildSettlementPlan() {
   return settlementPlan;
 }
 
-function createSettlementPreview(settlementPlan) {
-  return createSettlementPreviewData(settlementPlan, { handId });
-}
-
 function getSettlementReportLines(preview) {
-  return getSettlementReportLinesData(preview, {
+  return getSettlementReport(preview, {
     getPlayerLabel: playerId => getPlayerIdentityLabel(getPlayerById(playerId))
   });
 }
 
-function applySettlementPreviewPayouts(preview) {
-  preview.pots.forEach(previewPot => {
-    previewPot.payouts.forEach(payout => {
-      const winner = getPlayerById(payout.playerId);
-      if (winner) {
-        winner.chips += payout.amount;
-      }
-    });
-  });
+function getPlayerIdentityLabelById(playerId, list = players) {
+  const index = list.findIndex(player => String(player.id) === String(playerId));
+  return index >= 0 ? getPlayerIdentityLabel(list[index], index, list) : `玩家 ${playerId}`;
 }
 
-function markZeroChipPlayersBusted() {
-  const bustedNames = [];
-  players.forEach(player => {
-    if (player.chips <= 0 && player.seatStatus === "seated") {
-      player.chips = 0;
-      player.seatStatus = "busted";
-      bustedNames.push(getPlayerIdentityLabel(player));
-    }
-  });
-  return bustedNames;
+function getPlayerIdentityLabelsByIds(playerIds = [], list = players) {
+  return playerIds.map(playerId => getPlayerIdentityLabelById(playerId, list));
+}
+
+function applySettlementFlowState(nextState) {
+  if (!nextState) return;
+  if ("players" in nextState) {
+    players = nextState.players;
+    room.players = players;
+  }
+  if ("pot" in nextState) pot = nextState.pot;
+  if ("currentBet" in nextState) currentBet = nextState.currentBet;
+  if ("lastRaiseSize" in nextState) lastRaiseSize = nextState.lastRaiseSize;
+  if ("currentPlayerIndex" in nextState) currentPlayerIndex = nextState.currentPlayerIndex;
+  if ("awaitingShowdown" in nextState) awaitingShowdown = nextState.awaitingShowdown;
+  if ("pendingPots" in nextState) pendingPots = nextState.pendingPots;
+  if ("selectedWinnersByPot" in nextState) selectedWinnersByPot = nextState.selectedWinnersByPot;
+  if ("pendingDealPrompt" in nextState) pendingDealPrompt = nextState.pendingDealPrompt;
+  if ("settlementPreview" in nextState) settlementPreview = nextState.settlementPreview;
+  if ("nextHandApprovals" in nextState) nextHandApprovals = nextState.nextHandApprovals;
+  if ("gameOver" in nextState) gameOver = nextState.gameOver;
+  if ("handStatus" in nextState) handStatus = nextState.handStatus;
 }
 
 async function confirmShowdown() {
@@ -2437,8 +2420,16 @@ async function confirmShowdown() {
     return;
   }
 
-  const settlementPlan = buildSettlementPlan();
-  if (!settlementPlan) return;
+  const previewState = createSettlementPreviewState({
+    pendingPots,
+    players,
+    selectedWinnersByPot,
+    handId
+  });
+  if (!previewState.ok) {
+    showAppAlert(previewState.error);
+    return;
+  }
 
   setMutationInProgress(true);
   const canSettle = await isRemoteHandStill(expectedHandId, ["showdown"]);
@@ -2449,12 +2440,7 @@ async function confirmShowdown() {
   }
 
   batchingStateUpdate = true;
-  settlementPreview = createSettlementPreview(settlementPlan);
-  selectedWinnersByPot = normalizeSelectedWinnersByPot(settlementPreview.winnersByPot);
-  handStatus = "settlementPreview";
-  awaitingShowdown = true;
-  gameOver = true;
-  currentPlayerIndex = -1;
+  applySettlementFlowState(previewState);
 
   hideShowdownPanel();
   renderSettlementPreviewPanel();
@@ -2485,12 +2471,7 @@ async function cancelSettlementPreview() {
 
   setMutationInProgress(true);
   batchingStateUpdate = true;
-  selectedWinnersByPot = normalizeSelectedWinnersByPot(preview.winnersByPot);
-  settlementPreview = null;
-  awaitingShowdown = true;
-  gameOver = true;
-  handStatus = "showdown";
-  currentPlayerIndex = -1;
+  applySettlementFlowState(cancelSettlementPreviewState(preview));
 
   hideSettlementPreviewPanel();
   renderShowdownPanel();
@@ -2620,21 +2601,13 @@ async function finalizeSettlementPreview() {
   setMutationInProgress(true);
   batchingStateUpdate = true;
   const reportLines = getSettlementReportLines(preview);
-  applySettlementPreviewPayouts(preview);
-
-  pot = 0;
-  currentBet = 0;
-  lastRaiseSize = bigBlind;
-  currentPlayerIndex = -1;
-  awaitingShowdown = false;
-  pendingPots = [];
-  selectedWinnersByPot = {};
-  pendingDealPrompt = null;
-  settlementPreview = null;
-  nextHandApprovals = {};
-  const bustedNames = markZeroChipPlayersBusted();
-  gameOver = true;
-  handStatus = "settled";
+  const settlementState = finalizeSettlementPreviewState({
+    players,
+    preview,
+    bigBlind
+  });
+  applySettlementFlowState(settlementState);
+  const bustedNames = getPlayerIdentityLabelsByIds(settlementState.bustedPlayerIds);
 
   hideShowdownPanel();
   hideSettlementPreviewPanel();
