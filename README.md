@@ -102,11 +102,14 @@ http://localhost:8000/
 │   ├── guide.js
 │   ├── identity.js
 │   ├── main.js
+│   ├── player-model.js
 │   ├── player-seat-ui.js
 │   ├── raise-ui.js
+│   ├── room-entry.js
 │   ├── room-state.js
 │   ├── room-sync.js
 │   ├── room-permissions.js
+│   ├── settlement-engine.js
 │   ├── riffle.js
 │   ├── riffle-sound.js
 │   ├── table-center-ui.js
@@ -129,6 +132,7 @@ http://localhost:8000/
 - `index.html`: 页面结构和主要 DOM 容器。
 - `styles.css`: 全站视觉主题、响应式布局、游戏控件样式和 Chip Riffle 外观皮肤。
 - `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
+- `src/player-model.js`: 玩家 ID、开局玩家字段归一化和重复昵称显示标签等数据层工具。
 - `src/approvals.js`: 结算确认、下一局确认等多人审批进度的纯逻辑。
 - `src/deal-prompts.js`: 开局手牌、翻牌、转牌、河牌发牌提示的纯逻辑。
 - `src/dialogs.js`: 通用确认弹窗和牌桌操作浮层的 DOM 组装。
@@ -138,9 +142,11 @@ http://localhost:8000/
 - `src/guide.js`: 初始页和游戏页折叠玩家手册的内容与渲染。
 - `src/player-seat-ui.js`: 牌桌玩家标签、位置徽章和座位详情浮窗的 DOM 渲染。
 - `src/raise-ui.js`: Raise 加注面板的预设、微调、输入和实时预览 DOM 渲染。
+- `src/room-entry.js`: 房间 ID、邀请链接、昵称本地记忆和入座请求归一化工具。
 - `src/room-state.js`: 房间/牌局 payload 的玩家、奖池、赢家选择和结算预览归一化。
 - `src/room-sync.js`: Firebase Realtime Database 房间读写、监听、事务和局部更新外壳。
 - `src/room-permissions.js`: 房主、协管、玩家控制权和房间管理权的纯判断逻辑。
+- `src/settlement-engine.js`: 边池构建、赢家结算计划、派奖和结算报告的纯计算逻辑。
 - `src/riffle.js`: 页眉 Chip Riffle 浮窗、换肤按钮、真实顺序洗筹动画和交互状态。
 - `src/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
 - `src/table-center-ui.js`: 牌桌中央状态区、等待提示、赢家选择和结算预览的 DOM 渲染。
@@ -199,7 +205,7 @@ python3 -m http.server 8000
 
 - All In、边池和复杂多人结算逻辑已有实现，但仍需要更多真实牌局场景验证。
 - 当前没有自动化测试套件。
-- 核心规则、身份工具、权限判断、玩家座位 UI、加注面板 UI、牌桌坐标、牌桌中央 UI、牌桌管理逻辑/UI、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
+- 核心规则、身份工具、玩家模型、房间入口工具、权限判断、边池结算计算、玩家座位 UI、加注面板 UI、牌桌坐标、牌桌中央 UI、牌桌管理逻辑/UI、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
 - 权限层正在从前端体验级限制迁移到 Auth/Rules/Functions 模型；当前仍有部分牌局写入由前端直接完成。
 - 房间同步依赖 Firebase CDN 和 Realtime Database；离线或网络受限时可能无法正常同步。
 - 本工具只负责筹码和下注流程，不判断牌型大小。
