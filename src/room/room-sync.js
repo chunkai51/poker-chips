@@ -1,4 +1,4 @@
-// src/room-sync.js
+// src/room/room-sync.js
 // Thin Firebase Realtime Database adapter for room-level reads, writes, and transactions.
 
 import {
@@ -8,7 +8,7 @@ import {
   ref,
   runTransaction,
   update
-} from "./firebase.js";
+} from "../services/firebase.js";
 
 function getRoomRef(roomId) {
   return roomId ? ref(db, `rooms/${roomId}`) : null;

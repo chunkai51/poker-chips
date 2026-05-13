@@ -1,4 +1,4 @@
-// src/deal-prompts.js
+// src/core/deal-prompts.js
 // Pure helpers for synchronized dealer prompts between betting rounds.
 
 const DEAL_PROMPTS = {

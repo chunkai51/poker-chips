@@ -1,4 +1,4 @@
-// src/identity.js
+// src/room/identity.js
 // Client and room identity helpers for the multiplayer collaboration roadmap.
 
 export const CLIENT_ID_KEY = "pokerChipsClientId";

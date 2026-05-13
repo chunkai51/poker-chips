@@ -1,4 +1,4 @@
-// src/access-codes.js
+// src/room/access-codes.js
 // Legacy local recovery-code persistence and validation helpers.
 
 import {

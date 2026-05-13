@@ -1,4 +1,4 @@
-// src/table-layout.js
+// src/table/table-layout.js
 // Visual seat slots for the table. Slot 0 is the bottom-center anchor.
 
 function createSeatPoint(left, top, side, mobileLeft = left, mobileTop = top) {

@@ -48,7 +48,7 @@ const SAMPLE_DEFINITIONS = [...new Set(
   Object.values(SAMPLE_GROUPS).flat().map(sample => sample.id)
 )].map(id => ({
   id,
-  url: new URL(`../assets/audio/riffle/${id}.mp3`, import.meta.url).href
+  url: new URL(`../../assets/audio/riffle/${id}.mp3`, import.meta.url).href
 }));
 
 export function createRiffleSound() {

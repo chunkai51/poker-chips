@@ -12,7 +12,7 @@ The app is intentionally lightweight:
 - No framework
 - No package manager metadata
 - Native browser ES modules
-- Firebase SDK loaded from the official CDN in `src/firebase.js`
+- Firebase SDK loaded from the official CDN in `src/services/firebase.js`
 
 ## Current Architecture
 
@@ -20,35 +20,61 @@ The app is intentionally lightweight:
 index.html
   -> loads styles.css
   -> loads src/main.js as a module
-       -> imports Firebase Auth/Database helpers from src/firebase.js
-       -> imports legacy access-code helpers from src/access-codes.js
-       -> imports player seat DOM builders from src/player-seat-ui.js
-       -> imports raise action panel DOM builders from src/raise-ui.js
-       -> imports room database adapter helpers from src/room-sync.js
-       -> imports room claim/request helpers from src/room-claims-controller.js
-       -> imports room entry/link/request helpers from src/room-entry.js
-       -> imports room lobby state helpers from src/room-lobby-controller.js
-       -> imports room permission helpers from src/room-permissions.js
-       -> imports room/game-state normalizers from src/room-state.js
-       -> imports game-state sync snapshot helpers from src/game-state-snapshot.js
-       -> imports hand-flow state transition helpers from src/hand-flow-controller.js
-       -> imports settlement calculation helpers from src/settlement-engine.js
-       -> imports client/room identity helpers from src/identity.js
-       -> imports player model helpers from src/player-model.js
-       -> imports pure table and betting rules from src/game-rules.js
-       -> imports visual table coordinates from src/table-layout.js
-       -> imports local table-view preferences from src/table-view-preferences.js
-       -> imports table center DOM builders from src/table-center-ui.js
-       -> imports table manager draft helpers from src/table-manager-controller.js
-       -> imports table manager DOM builders from src/table-manager-ui.js
-       -> imports shared dialog and DOM factories from src/dialogs.js and src/ui-dom.js
-       -> imports collapsible player manual rendering from src/guide.js
-       -> imports chip riffle popover behavior from src/riffle.js
-            -> imports sampled chip audio from src/riffle-sound.js
+       -> imports Firebase Auth/Database helpers from src/services/firebase.js
+       -> imports legacy access-code helpers from src/room/access-codes.js
+       -> imports player seat DOM builders from src/ui/player-seat-ui.js
+       -> imports raise action panel DOM builders from src/ui/raise-ui.js
+       -> imports room database adapter helpers from src/room/room-sync.js
+       -> imports room claim/request helpers from src/room/room-claims-controller.js
+       -> imports room entry/link/request helpers from src/room/room-entry.js
+       -> imports room lobby state helpers from src/room/room-lobby-controller.js
+       -> imports room permission helpers from src/room/room-permissions.js
+       -> imports room/game-state normalizers from src/room/room-state.js
+       -> imports game-state sync snapshot helpers from src/room/game-state-snapshot.js
+       -> imports hand-flow state transition helpers from src/core/hand-flow-controller.js
+       -> imports settlement calculation helpers from src/core/settlement-engine.js
+       -> imports client/room identity helpers from src/room/identity.js
+       -> imports player model helpers from src/core/player-model.js
+       -> imports pure table and betting rules from src/core/game-rules.js
+       -> imports visual table coordinates from src/table/table-layout.js
+       -> imports local table-view preferences from src/table/table-view-preferences.js
+       -> imports table center DOM builders from src/ui/table-center-ui.js
+       -> imports table manager draft helpers from src/table/table-manager-controller.js
+       -> imports table manager DOM builders from src/ui/table-manager-ui.js
+       -> imports shared dialog and DOM factories from src/ui/dialogs.js and src/ui/ui-dom.js
+       -> imports collapsible player manual rendering from src/ui/guide.js
+       -> imports chip riffle popover behavior from src/riffle/riffle.js
+            -> imports sampled chip audio from src/riffle/riffle-sound.js
 
 poker-game.js
   -> compatibility entrypoint that imports src/main.js
 ```
+
+## Module Structure
+
+The `src/` tree is organized by responsibility, not by extraction history:
+
+- `src/core/`: pure poker/game calculations and data helpers. These modules should be the easiest to unit test and reuse from a future backend command validator.
+- `src/room/`: room identity, permissions, room payload normalization, lobby/claim data transforms, and the Realtime Database room adapter.
+- `src/ui/`: DOM builders and reusable UI shells. These modules receive prepared values and callbacks; they do not own room/game state.
+- `src/table/`: visual table layout preferences and table-management draft logic.
+- `src/riffle/`: optional chip-riffle interaction and sound. It must stay isolated from the hand flow.
+- `src/services/`: third-party service initialization or very thin service wrappers.
+- `src/main.js`: current composition root and legacy orchestrator. It still owns module-level app state, event wiring, and many workflows until those workflows are moved as complete responsibilities.
+
+## Refactor Rules
+
+Use these rules to avoid duplicate or overly fine-grained splits:
+
+- Split by ownership sentence first. A new module should be explainable as "owns X state/flow/rendering", not "contains functions removed from `main.js`".
+- Do not create a controller that only wraps another helper. If the old helper already owns the behavior, keep the caller in `main.js` until a complete workflow can move.
+- Prefer a few complete workflow modules over many tiny orchestration files. A controller should own a user-visible flow such as hand lifecycle, settlement, room session, or seat identity.
+- Keep pure logic small and separate when it has test value. `src/core/` modules may stay focused because they have no DOM/Firebase side effects.
+- Keep UI modules callback-driven. They may create DOM, but should not decide permissions, mutate `players`, or write Firebase.
+- Keep Firebase access in `src/room/room-sync.js` unless deliberately building a larger room-session workflow module.
+- Passing explicit dependencies is good; passing a dozen unrelated callbacks is a smell. If that happens, either move a larger workflow together or leave the code in `main.js` for now.
+- A file under about 40 lines needs a clear reason to exist, such as being pure, reused, or isolating a browser/service boundary.
+- After directory moves or mechanical import edits, run syntax checks. After workflow moves, also run a targeted smoke script or stop for manual browser testing.
 
 ### `index.html`
 
@@ -112,7 +138,7 @@ Desktop and mobile share the same DOM. The layout switches mainly through CSS br
 - Mobile uses the same seat-label DOM on a taller vertical oval table and keeps active controls in `#hand-actions` above the table.
 - The player cap is 10, matching a full-ring Texas Hold'em table and keeping future seat/oval-table layouts bounded.
 
-### `src/firebase.js`
+### `src/services/firebase.js`
 
 Initializes Firebase and exports the small API surface used by the app:
 
@@ -128,7 +154,7 @@ Initializes Firebase and exports the small API surface used by the app:
 
 The Firebase config is client-side config. It is not treated like a private secret in normal Firebase web apps, but real deployments still need Firebase Auth, Realtime Database Security Rules, App Check, and eventually Cloud Functions command validation.
 
-### `src/room-sync.js`
+### `src/room/room-sync.js`
 
 Thin Realtime Database adapter for room-level network access:
 
@@ -140,7 +166,7 @@ Thin Realtime Database adapter for room-level network access:
 
 Keep Firebase `ref/get/update/onValue/runTransaction` usage here instead of spreading low-level database calls across UI and game-flow code. Business transaction bodies still live in `src/main.js` for now; a later split can move command-specific mutations behind a cleaner room command layer.
 
-### `src/room-entry.js`
+### `src/room/room-entry.js`
 
 Owns room-entry and invitation helpers:
 
@@ -152,7 +178,7 @@ Owns room-entry and invitation helpers:
 
 This module may touch browser storage and URL parsing, but it should not render DOM, write Firebase, or decide game permissions.
 
-### `src/room-lobby-controller.js`
+### `src/room/room-lobby-controller.js`
 
 Owns DOM-free lobby-state helpers:
 
@@ -164,7 +190,7 @@ Owns DOM-free lobby-state helpers:
 
 This module should receive dependencies explicitly through parameters, such as `createMembersMap`, `touchMemberWithProfile`, `canClientManageRoom`, `mergePlayerIdentityFields`, and normalizers. It should not read module-level app state, render DOM, start listeners, or call Firebase directly.
 
-### `src/room-claims-controller.js`
+### `src/room/room-claims-controller.js`
 
 Owns DOM-free player identity binding helpers:
 
@@ -178,7 +204,7 @@ Owns DOM-free player identity binding helpers:
 
 This module intentionally does not call Firebase, show dialogs, focus inputs, or refresh UI. Transaction helpers receive `currentRoom`, `room`, `clientId`, and dependencies such as `canClientManageRoom`, `inferHandStatus`, `getRoomHostId`, `normalizeRoomMode`, and `touchMember` through parameters, then return the next room payload or `undefined` to reject the transaction.
 
-### `src/access-codes.js`
+### `src/room/access-codes.js`
 
 Owns legacy recovery-code helpers:
 
@@ -189,7 +215,7 @@ Owns legacy recovery-code helpers:
 
 The normal UX now uses invite-link + seat request approval, but these helpers remain for old rooms and recovery paths. Keep this module free of DOM rendering, Firebase writes, and room permission decisions.
 
-### `src/room-state.js`
+### `src/room/room-state.js`
 
 Owns DOM-free room/game-state payload helpers:
 
@@ -200,7 +226,7 @@ Owns DOM-free room/game-state payload helpers:
 
 This module is intentionally about data shape only. It should not render UI, write Firebase, or decide permissions.
 
-### `src/game-state-snapshot.js`
+### `src/room/game-state-snapshot.js`
 
 Owns DOM-free sync payload helpers:
 
@@ -211,7 +237,7 @@ Owns DOM-free sync payload helpers:
 
 This module should receive dependencies explicitly through parameters, such as `normalizeRoomMode`, `getRoomHostId`, `normalizeAdminPlayerIds`, `normalizeJoinRequests`, `normalizeMembers`, and `mergePlayerIdentityFields`. It should not call Firebase, mutate app globals, render UI, or decide what user message should be shown after conflicts.
 
-### `src/settlement-engine.js`
+### `src/core/settlement-engine.js`
 
 Owns DOM-free settlement calculations:
 
@@ -223,7 +249,7 @@ Owns DOM-free settlement calculations:
 
 Keep this module pure and testable. It should not mutate `players`, show dialogs, render UI, or write Firebase.
 
-### `src/room-permissions.js`
+### `src/room/room-permissions.js`
 
 Owns DOM-free room permission helpers:
 
@@ -235,7 +261,7 @@ Owns DOM-free room permission helpers:
 
 `src/main.js` keeps thin wrappers because it still owns `clientId`, current `room`, remembered admin-code checks, and local fallback state.
 
-### `src/player-seat-ui.js`
+### `src/ui/player-seat-ui.js`
 
 Owns DOM builders for player seats around the visual poker table:
 
@@ -248,7 +274,7 @@ Owns DOM builders for player seats around the visual poker table:
 
 `src/main.js` still computes labels, permissions, active seat state, and claim callbacks. Keep this module focused on rendering the seat UI from prepared values.
 
-### `src/player-model.js`
+### `src/core/player-model.js`
 
 Owns DOM-free player data helpers:
 
@@ -260,7 +286,7 @@ Owns DOM-free player data helpers:
 
 Keep this module about player object shape and labels. It should not decide room permissions, render player seats, write Firebase, or mutate the global `players` array.
 
-### `src/raise-ui.js`
+### `src/ui/raise-ui.js`
 
 Owns the Raise action panel DOM:
 
@@ -271,9 +297,9 @@ Owns the Raise action panel DOM:
 - Live validation preview
 - Confirm button text/disabled state
 
-`src/main.js` still computes legal raise targets and supplies the validation callback. Keep betting rules in `src/game-rules.js` / `src/main.js`, not in this UI module.
+`src/main.js` still computes legal raise targets and supplies the validation callback. Keep betting rules in `src/core/game-rules.js` / `src/main.js`, not in this UI module.
 
-### `src/approvals.js`
+### `src/core/approvals.js`
 
 Owns DOM-free approval progress helpers used by room-mode settlement confirmation and next-hand readiness:
 
@@ -281,7 +307,7 @@ Owns DOM-free approval progress helpers used by room-mode settlement confirmatio
 - Computes approved/required counts and completion state.
 - Keep label rendering in `src/main.js`; this module should stay pure enough to reuse from a future backend command validator.
 
-### `src/deal-prompts.js`
+### `src/core/deal-prompts.js`
 
 Owns DOM-free synchronized dealer prompt metadata:
 
@@ -291,7 +317,7 @@ Owns DOM-free synchronized dealer prompt metadata:
 
 The module intentionally does not decide who may confirm a prompt; that remains in room/identity flow code for now.
 
-### `src/identity.js`
+### `src/room/identity.js`
 
 Owns the compatibility identity layer for the multiplayer-by-player roadmap:
 
@@ -305,7 +331,7 @@ Owns the compatibility identity layer for the multiplayer-by-player roadmap:
 
 Important: this layer is still partly frontend-enforced. The app now uses Anonymous Auth when available, but complete malicious-client resistance depends on finishing Security Rules and moving critical game mutations behind Cloud Functions command processing. Unbound players (`ownerClientId === ""`) are controlled by the room manager proxy so rooms do not become stuck.
 
-### `src/game-rules.js`
+### `src/core/game-rules.js`
 
 Owns pure, DOM-free poker table rules:
 
@@ -319,7 +345,7 @@ Owns pure, DOM-free poker table rules:
 
 Keep this module side-effect-free. It should be the first place to add unit tests for betting, all-in, side-pot-adjacent, and seat-rotation behavior.
 
-### `src/hand-flow-controller.js`
+### `src/core/hand-flow-controller.js`
 
 Owns pure, DOM-free hand-flow transitions:
 
@@ -330,9 +356,9 @@ Owns pure, DOM-free hand-flow transitions:
 - Betting-round completion checks
 - Next actionable player and street max-bet lookup
 
-Keep this module parameter-driven. It can import pure rule helpers from `src/game-rules.js`, but it should not read app globals, render DOM, write Firebase, show dialogs, or decide remote conflict behavior.
+Keep this module parameter-driven. It can import pure rule helpers from `src/core/game-rules.js`, but it should not read app globals, render DOM, write Firebase, show dialogs, or decide remote conflict behavior.
 
-### `src/ui-dom.js`
+### `src/ui/ui-dom.js`
 
 Owns tiny shared DOM factories:
 
@@ -341,7 +367,7 @@ Owns tiny shared DOM factories:
 
 Keep this module generic. It should not know about poker rules, room state, Firebase, or app-specific permission logic.
 
-### `src/dialogs.js`
+### `src/ui/dialogs.js`
 
 Owns shared modal shells:
 
@@ -350,7 +376,7 @@ Owns shared modal shells:
 
 Business flows still live in `src/main.js`; this module only creates the reusable dialog frame and delegates content construction through callbacks.
 
-### `src/table-layout.js`
+### `src/table/table-layout.js`
 
 Owns the visual seat-slot coordinates for the poker table:
 
@@ -360,7 +386,7 @@ Owns the visual seat-slot coordinates for the poker table:
 
 This is the preferred file for hand-tuning player label placement. Keep it DOM-free so layout experiments are easy to review and eventually test.
 
-### `src/table-view-preferences.js`
+### `src/table/table-view-preferences.js`
 
 Owns local-only table-view preferences:
 
@@ -369,7 +395,7 @@ Owns local-only table-view preferences:
 
 These preferences are intentionally not written to Firebase. Each browser/device can rotate the visual table independently.
 
-### `src/table-center-ui.js`
+### `src/ui/table-center-ui.js`
 
 Owns DOM builders for table-center UI:
 
@@ -381,7 +407,7 @@ Owns DOM builders for table-center UI:
 
 `src/main.js` still decides which state is active, which actions are allowed, and what callbacks run. Keep this module UI-focused and callback-driven.
 
-### `src/table-manager-controller.js`
+### `src/table/table-manager-controller.js`
 
 Owns draft-state logic for the table management workflow:
 
@@ -393,7 +419,7 @@ Owns draft-state logic for the table management workflow:
 
 It does not save to Firebase and does not render DOM. Persistence, permissions, and conflict guards remain in `src/main.js` for now.
 
-### `src/table-manager-ui.js`
+### `src/ui/table-manager-ui.js`
 
 Owns DOM builders for the seat and identity management panel:
 
@@ -418,9 +444,9 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room lobby data helpers to `src/room-lobby-controller.js`, room claim/request helpers to `src/room-claims-controller.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, sync snapshot helpers to `src/game-state-snapshot.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, betting action transitions to `src/hand-flow-controller.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
-### `src/guide.js`
+### `src/ui/guide.js`
 
 Owns the generated player manual shown in collapsible panels on both the setup screen and game screen. It keeps usage guidance, beginner-friendly Texas Hold'em rules, and hand rankings in one structured source so the two UI placements stay synchronized.
 
@@ -437,9 +463,9 @@ Contains generated site icon assets and sampled chip riffle audio:
 - `assets/audio/riffle/*.mp3`: CC0 poker-chip samples from Kenney Casino Audio and BigSoundBank
 - `assets/audio/riffle/LICENSES.md`: source and license notes for bundled audio
 
-### `src/riffle.js` and `src/riffle-sound.js`
+### `src/riffle/riffle.js` and `src/riffle/riffle-sound.js`
 
-`src/riffle.js` owns the optional Chip Riffle popover opened from the header chip icon. It is intentionally isolated from the core game flow so the animation can run without blocking Firebase updates or normal hand actions.
+`src/riffle/riffle.js` owns the optional Chip Riffle popover opened from the header chip icon. It is intentionally isolated from the core game flow so the animation can run without blocking Firebase updates or normal hand actions.
 
 Riffle behavior is modeled as real chip identity plus current stack order:
 
@@ -453,7 +479,7 @@ The popover has a skin switcher. Skin selection is saved in `localStorage` under
 
 Chip side decoration is CSS-only. The default/dual-color skins use repeated SVG crown marks; the orange/green skin uses a decorative letter `C`. These are embedded as CSS data URIs in `styles.css` so no extra assets or DOM nodes are required. Keep the crown/letter repeat aligned with the chip width: the 126px chip side currently uses two 63px pattern cells, yielding exactly two visible marks per chip.
 
-`src/riffle-sound.js` owns the Web Audio sampler. It preloads only the MP3 files referenced by `SAMPLE_GROUPS`, decodes them after the first user gesture, and triggers short samples for split, riffle progress, reverse movement, scrape, and settle sounds. The current samples come from Kenney Casino Audio and BigSoundBank Poker Chips; source pages and licenses are documented in `assets/audio/riffle/LICENSES.md`. Keep audio assets small and mobile-safe; MP3 is used here for better Safari/iOS compatibility than OGG.
+`src/riffle/riffle-sound.js` owns the Web Audio sampler. It preloads only the MP3 files referenced by `SAMPLE_GROUPS`, decodes them after the first user gesture, and triggers short samples for split, riffle progress, reverse movement, scrape, and settle sounds. The current samples come from Kenney Casino Audio and BigSoundBank Poker Chips; source pages and licenses are documented in `assets/audio/riffle/LICENSES.md`. Keep audio assets small and mobile-safe; MP3 is used here for better Safari/iOS compatibility than OGG.
 
 ## State Model
 
@@ -683,12 +709,12 @@ Implemented:
 - Next-hand reset and dealer rotation
 - Firebase room sync with optimistic conflict checks
 - Custom in-app alert/confirm dialog UI instead of native browser dialogs
-- Extracted pure game/table rules in `src/game-rules.js`
-- Compatibility identity layer in `src/identity.js` with `clientId`, `mode`, `hostClientId`, `members`, access-code compatibility helpers, admin-player ids, and player `ownerClientId`
+- Extracted pure game/table rules in `src/core/game-rules.js`
+- Compatibility identity layer in `src/room/identity.js` with `clientId`, `mode`, `hostClientId`, `members`, access-code compatibility helpers, admin-player ids, and player `ownerClientId`
 - Frontend permission layer for room mode: host/cohost setup/table management, own-player actions, Dealer-only deal confirmation with manager proxy for unbound players
 - Firebase CLI, Realtime Database rules, and Cloud Functions command-processing scaffold
 - All-required-player confirmation for settlement preview and next-hand start
-- Extracted pure hand-flow transitions in `src/hand-flow-controller.js`
+- Extracted pure hand-flow transitions in `src/core/hand-flow-controller.js`
 
 Needs more validation:
 
@@ -729,7 +755,7 @@ http://localhost:8000/
 Syntax checks:
 
 ```bash
-for f in src/*.js functions/*.js; do node --check "$f" || exit 1; done
+for f in $(find src functions -name "*.js" | sort); do node --check "$f" || exit 1; done
 git diff --check
 ```
 
@@ -779,14 +805,14 @@ Browser validation checklist:
 ## Safe Change Guidelines
 
 - Preserve DOM IDs used by `src/main.js`.
-- Keep game-rule changes small, prefer pure helpers in `src/game-rules.js`, and manually test several betting flows.
+- Keep game-rule changes small, prefer pure helpers in `src/core/game-rules.js`, and manually test several betting flows.
 - If changing player object shape, update:
   - local creation
   - `normalizeIncomingPlayer()`
   - `createTableDraft()` / `normalizeDraftPlayer()`
   - Firebase write/read paths
   - `updatePlayerBoxes()`
-- If changing room identity shape, update `src/identity.js`, `room` defaults, `applyRoomData()`, `updateFirebaseState()`, and docs together.
+- If changing room identity shape, update `src/room/identity.js`, `room` defaults, `applyRoomData()`, `updateFirebaseState()`, and docs together.
 - If changing side-pot behavior, add manual test notes or automated tests first.
 - If changing Firebase sync, keep guarded writes around action/settlement/reset flows.
 - Avoid adding a framework unless the user asks for a larger refactor.
@@ -797,5 +823,5 @@ Browser validation checklist:
 1. Move `playerAction`, deal confirmation, settlement preview confirmation, table saves, and next-hand approval to command writes processed by Cloud Functions.
 2. Tighten `database.rules.json` after command coverage so clients cannot directly write `players` or `gameState`.
 3. Enable Firebase Anonymous Auth, App Check, API key restrictions, and budget alerts in the Firebase console.
-4. Add unit tests for `src/game-rules.js`, `src/identity.js`, and the Cloud Functions command validator.
+4. Add unit tests for `src/core/game-rules.js`, `src/room/identity.js`, and the Cloud Functions command validator.
 5. Consider room lifecycle controls: leave room, reset room, archive hand log.

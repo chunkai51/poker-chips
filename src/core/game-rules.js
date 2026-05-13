@@ -1,4 +1,4 @@
-// src/game-rules.js
+// src/core/game-rules.js
 // Pure poker table helpers shared by UI, sync, and future permission gates.
 
 export const SEAT_STATUS_LABELS = {

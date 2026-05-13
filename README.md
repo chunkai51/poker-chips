@@ -94,35 +94,41 @@ http://localhost:8000/
 │   ├── favicon.png
 │   └── poker-chip-icon.png
 ├── src/
-│   ├── access-codes.js
-│   ├── approvals.js
-│   ├── deal-prompts.js
-│   ├── dialogs.js
-│   ├── firebase.js
-│   ├── game-state-snapshot.js
-│   ├── game-rules.js
-│   ├── guide.js
-│   ├── hand-flow-controller.js
-│   ├── identity.js
+│   ├── core/
+│   │   ├── approvals.js
+│   │   ├── deal-prompts.js
+│   │   ├── game-rules.js
+│   │   ├── hand-flow-controller.js
+│   │   ├── player-model.js
+│   │   └── settlement-engine.js
 │   ├── main.js
-│   ├── player-model.js
-│   ├── player-seat-ui.js
-│   ├── raise-ui.js
-│   ├── room-claims-controller.js
-│   ├── room-entry.js
-│   ├── room-lobby-controller.js
-│   ├── room-state.js
-│   ├── room-sync.js
-│   ├── room-permissions.js
-│   ├── settlement-engine.js
-│   ├── riffle.js
-│   ├── riffle-sound.js
-│   ├── table-center-ui.js
-│   ├── table-manager-controller.js
-│   ├── table-manager-ui.js
-│   ├── table-layout.js
-│   ├── table-view-preferences.js
-│   └── ui-dom.js
+│   ├── riffle/
+│   │   ├── riffle.js
+│   │   └── riffle-sound.js
+│   ├── room/
+│   │   ├── access-codes.js
+│   │   ├── game-state-snapshot.js
+│   │   ├── identity.js
+│   │   ├── room-claims-controller.js
+│   │   ├── room-entry.js
+│   │   ├── room-lobby-controller.js
+│   │   ├── room-permissions.js
+│   │   ├── room-state.js
+│   │   └── room-sync.js
+│   ├── services/
+│   │   └── firebase.js
+│   ├── table/
+│   │   ├── table-layout.js
+│   │   ├── table-manager-controller.js
+│   │   └── table-view-preferences.js
+│   └── ui/
+│       ├── dialogs.js
+│       ├── guide.js
+│       ├── player-seat-ui.js
+│       ├── raise-ui.js
+│       ├── table-center-ui.js
+│       ├── table-manager-ui.js
+│       └── ui-dom.js
 ├── functions/
 │   ├── index.js
 │   └── package.json
@@ -138,34 +144,40 @@ http://localhost:8000/
 - `index.html`: 页面结构和主要 DOM 容器。
 - `styles.css`: 全站视觉主题、响应式布局、游戏控件样式和 Chip Riffle 外观皮肤。
 - `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
-- `src/access-codes.js`: 旧版管理员/玩家恢复码的本地缓存、salt 和校验工具。
-- `src/player-model.js`: 玩家 ID、开局玩家字段归一化和重复昵称显示标签等数据层工具。
-- `src/approvals.js`: 结算确认、下一局确认等多人审批进度的纯逻辑。
-- `src/deal-prompts.js`: 开局手牌、翻牌、转牌、河牌发牌提示的纯逻辑。
-- `src/dialogs.js`: 通用确认弹窗和牌桌操作浮层的 DOM 组装。
-- `src/firebase.js`: Firebase SDK 初始化、Anonymous Auth 和 Realtime Database API 导出。
-- `src/game-state-snapshot.js`: 远端同步前的 gameState 快照、room payload 合并和乐观并发守卫。
-- `src/game-rules.js`: 座位资格、Button/盲注/行动顺序、跟注和加注规则等纯逻辑。
-- `src/hand-flow-controller.js`: 下注动作、筹码投入、自动结束判断和下一行动玩家查找等手牌流程纯逻辑。
-- `src/identity.js`: 本机客户端 ID fallback、房间模式、成员列表和玩家归属字段的兼容身份层。
-- `src/guide.js`: 初始页和游戏页折叠玩家手册的内容与渲染。
-- `src/player-seat-ui.js`: 牌桌玩家标签、位置徽章和座位详情浮窗的 DOM 渲染。
-- `src/raise-ui.js`: Raise 加注面板的预设、微调、输入和实时预览 DOM 渲染。
-- `src/room-claims-controller.js`: 玩家入座/接管、释放绑定、请求批准/拒绝和协管授权的纯数据变换。
-- `src/room-entry.js`: 房间 ID、邀请链接、昵称本地记忆和入座请求归一化工具。
-- `src/room-lobby-controller.js`: 本地/房间模式切换、创建/加入房间数据草稿和准备页同步 payload。
-- `src/room-state.js`: 房间/牌局 payload 的玩家、奖池、赢家选择和结算预览归一化。
-- `src/room-sync.js`: Firebase Realtime Database 房间读写、监听、事务和局部更新外壳。
-- `src/room-permissions.js`: 房主、协管、玩家控制权和房间管理权的纯判断逻辑。
-- `src/settlement-engine.js`: 边池构建、赢家结算计划、派奖和结算报告的纯计算逻辑。
-- `src/riffle.js`: 页眉 Chip Riffle 浮窗、换肤按钮、真实顺序洗筹动画和交互状态。
-- `src/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
-- `src/table-center-ui.js`: 牌桌中央状态区、等待提示、赢家选择和结算预览的 DOM 渲染。
-- `src/table-manager-controller.js`: 席位管理 draft 的座次、筹码、状态、摘要和归一化逻辑。
-- `src/table-manager-ui.js`: 席位与身份管理窗口的 DOM 渲染。
-- `src/table-layout.js`: 牌桌玩家标签的可调座位坐标和本地旋转计算。
-- `src/table-view-preferences.js`: 本机牌桌视角旋转等不会同步到房间的偏好存储。
-- `src/ui-dom.js`: 小型 DOM 工厂，如按钮和段落元素。
+- `src/core/`: 牌桌规则、手牌流程、玩家模型、审批进度、发牌提示和结算计算等可测试纯逻辑。
+- `src/room/`: 房间身份、权限、同步 payload、Firebase 房间读写和准备页/席位请求数据变换。
+- `src/ui/`: 通用弹窗、按钮工厂、玩家标签、加注面板、中央操作区、席位管理窗口和玩家手册 DOM。
+- `src/table/`: 牌桌布局坐标、本地视角偏好和席位管理 draft 逻辑。
+- `src/riffle/`: 页眉 Chip Riffle 浮窗、洗筹动画和采样音效播放器。
+- `src/services/`: 第三方服务初始化和薄封装，目前只有 Firebase。
+- `src/room/access-codes.js`: 旧版管理员/玩家恢复码的本地缓存、salt 和校验工具。
+- `src/core/player-model.js`: 玩家 ID、开局玩家字段归一化和重复昵称显示标签等数据层工具。
+- `src/core/approvals.js`: 结算确认、下一局确认等多人审批进度的纯逻辑。
+- `src/core/deal-prompts.js`: 开局手牌、翻牌、转牌、河牌发牌提示的纯逻辑。
+- `src/ui/dialogs.js`: 通用确认弹窗和牌桌操作浮层的 DOM 组装。
+- `src/services/firebase.js`: Firebase SDK 初始化、Anonymous Auth 和 Realtime Database API 导出。
+- `src/room/game-state-snapshot.js`: 远端同步前的 gameState 快照、room payload 合并和乐观并发守卫。
+- `src/core/game-rules.js`: 座位资格、Button/盲注/行动顺序、跟注和加注规则等纯逻辑。
+- `src/core/hand-flow-controller.js`: 下注动作、筹码投入、自动结束判断和下一行动玩家查找等手牌流程纯逻辑。
+- `src/room/identity.js`: 本机客户端 ID fallback、房间模式、成员列表和玩家归属字段的兼容身份层。
+- `src/ui/guide.js`: 初始页和游戏页折叠玩家手册的内容与渲染。
+- `src/ui/player-seat-ui.js`: 牌桌玩家标签、位置徽章和座位详情浮窗的 DOM 渲染。
+- `src/ui/raise-ui.js`: Raise 加注面板的预设、微调、输入和实时预览 DOM 渲染。
+- `src/room/room-claims-controller.js`: 玩家入座/接管、释放绑定、请求批准/拒绝和协管授权的纯数据变换。
+- `src/room/room-entry.js`: 房间 ID、邀请链接、昵称本地记忆和入座请求归一化工具。
+- `src/room/room-lobby-controller.js`: 本地/房间模式切换、创建/加入房间数据草稿和准备页同步 payload。
+- `src/room/room-state.js`: 房间/牌局 payload 的玩家、奖池、赢家选择和结算预览归一化。
+- `src/room/room-sync.js`: Firebase Realtime Database 房间读写、监听、事务和局部更新外壳。
+- `src/room/room-permissions.js`: 房主、协管、玩家控制权和房间管理权的纯判断逻辑。
+- `src/core/settlement-engine.js`: 边池构建、赢家结算计划、派奖和结算报告的纯计算逻辑。
+- `src/riffle/riffle.js`: 页眉 Chip Riffle 浮窗、换肤按钮、真实顺序洗筹动画和交互状态。
+- `src/riffle/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
+- `src/ui/table-center-ui.js`: 牌桌中央状态区、等待提示、赢家选择和结算预览的 DOM 渲染。
+- `src/table/table-manager-controller.js`: 席位管理 draft 的座次、筹码、状态、摘要和归一化逻辑。
+- `src/ui/table-manager-ui.js`: 席位与身份管理窗口的 DOM 渲染。
+- `src/table/table-layout.js`: 牌桌玩家标签的可调座位坐标和本地旋转计算。
+- `src/table/table-view-preferences.js`: 本机牌桌视角旋转等不会同步到房间的偏好存储。
+- `src/ui/ui-dom.js`: 小型 DOM 工厂，如按钮和段落元素。
 - `poker-game.js`: 兼容入口，转发到 `src/main.js`。
 - `assets/`: favicon、站点品牌图标和 Chip Riffle 音频采样。音频授权见 `assets/audio/riffle/LICENSES.md`。
 - `database.rules.json`: 过渡期 Realtime Database 规则草案，要求认证并约束成员/请求/命令写入。
@@ -188,8 +200,7 @@ Chip Riffle 音效使用真实筹码采样，不再使用程序化合成作为�
 常用检查：
 
 ```bash
-for f in src/*.js; do node --check "$f" || exit 1; done
-for f in src/*.js functions/*.js; do node --check "$f" || exit 1; done
+for f in $(find src functions -name "*.js" | sort); do node --check "$f" || exit 1; done
 git diff --check
 ```
 
@@ -201,12 +212,12 @@ python3 -m http.server 8000
 
 ## Firebase Notes
 
-`src/firebase.js` 中包含客户端 Firebase 配置。Firebase Web 配置本身通常不是密钥；生产环境必须依赖 Firebase Auth、Realtime Database Security Rules、App Check 和后端命令校验控制读写权限。
+`src/services/firebase.js` 中包含客户端 Firebase 配置。Firebase Web 配置本身通常不是密钥；生产环境必须依赖 Firebase Auth、Realtime Database Security Rules、App Check 和后端命令校验控制读写权限。
 
 如果你 fork 或部署自己的实例，建议：
 
 - 创建自己的 Firebase 项目
-- 替换 `src/firebase.js` 中的配置
+- 替换 `src/services/firebase.js` 中的配置
 - 启用 Anonymous Authentication
 - 部署或调整 `database.rules.json`
 - 部署 `functions/` 后，把关键牌局操作逐步迁移到 command 写入模型
@@ -227,7 +238,7 @@ python3 -m http.server 8000
 欢迎提交 Issue 或 Pull Request。比较适合优先改进的方向：
 
 - 为下注和边池逻辑补充单元测试
-- 为 `src/game-rules.js` 和 `src/identity.js` 补充单元测试
+- 为 `src/core/game-rules.js` 和 `src/room/identity.js` 补充单元测试
 - 继续拆分 Firebase 写入编排和 DOM 渲染，降低 `src/main.js` 复杂度
 - 改进 Firebase 安全规则和房间生命周期
 - 完成 Cloud Functions 命令处理，把下注、发牌确认、结算和下一局写入迁出前端

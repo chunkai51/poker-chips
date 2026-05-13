@@ -1,8 +1,8 @@
-// src/room-state.js
+// src/room/room-state.js
 // Normalizers and serializers for room/game-state payloads.
 
-import { normalizeApprovalMap } from "./approvals.js";
-import { normalizeSeatStatus } from "./game-rules.js";
+import { normalizeApprovalMap } from "../core/approvals.js";
+import { normalizeSeatStatus } from "../core/game-rules.js";
 import { normalizePlayerOwnerId } from "./identity.js";
 
 function toNonNegativeNumber(value, fallback = 0) {

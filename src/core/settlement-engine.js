@@ -1,4 +1,4 @@
-// src/settlement-engine.js
+// src/core/settlement-engine.js
 // Pure settlement helpers for side-pot construction, winner plans, payouts, and reports.
 
 function toNonNegativeNumber(value, fallback = 0) {

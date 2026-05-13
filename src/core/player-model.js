@@ -1,8 +1,8 @@
-// src/player-model.js
+// src/core/player-model.js
 // Player object creation, setup normalization, and display-label helpers.
 
 import { normalizeSeatStatus } from "./game-rules.js";
-import { normalizePlayerOwnerId } from "./identity.js";
+import { normalizePlayerOwnerId } from "../room/identity.js";
 
 function toNonNegativeNumber(value, fallback = 0) {
   const number = Number(value);

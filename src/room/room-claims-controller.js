@@ -1,4 +1,4 @@
-// src/room-claims-controller.js
+// src/room/room-claims-controller.js
 // Seat claim, release, join-request, and approval data helpers.
 
 import {
@@ -6,10 +6,10 @@ import {
   normalizeAdminPlayerIds,
   normalizeMembers,
   normalizePlayerOwnerId
-} from "./identity.js";
+} from "../room/identity.js";
 import { getRequestDisplayName, normalizeJoinRequests } from "./room-entry.js";
 import { normalizeIncomingPlayer } from "./room-state.js";
-import { shouldUseRequestNameForSeat } from "./player-model.js";
+import { shouldUseRequestNameForSeat } from "../core/player-model.js";
 
 function toNonNegativeNumber(value, fallback = 0) {
   const number = Number(value);

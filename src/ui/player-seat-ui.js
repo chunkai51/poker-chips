@@ -1,4 +1,4 @@
-// src/player-seat-ui.js
+// src/ui/player-seat-ui.js
 // DOM builders for visual player seats around the poker table.
 
 import { createButton } from "./ui-dom.js";

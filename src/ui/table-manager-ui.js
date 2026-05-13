@@ -1,8 +1,8 @@
-// src/table-manager-ui.js
+// src/ui/table-manager-ui.js
 // DOM builders for the seat and identity management panel.
 
-import { SEAT_STATUS_LABELS, isEligibleForNextHand } from "./game-rules.js";
-import { normalizeAdminPlayerIds, normalizePlayerOwnerId } from "./identity.js";
+import { SEAT_STATUS_LABELS, isEligibleForNextHand } from "../core/game-rules.js";
+import { normalizeAdminPlayerIds, normalizePlayerOwnerId } from "../room/identity.js";
 import { createButton, createParagraph } from "./ui-dom.js";
 
 export function renderTableManagerView({

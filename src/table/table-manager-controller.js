@@ -1,4 +1,4 @@
-// src/table-manager-controller.js
+// src/table/table-manager-controller.js
 // Draft-state helpers for the table/seat management workflow.
 
 import {
@@ -8,8 +8,8 @@ import {
   getSeatStatusLabel,
   isEligibleForNextHand,
   normalizeSeatStatus
-} from "./game-rules.js";
-import { normalizePlayerOwnerId } from "./identity.js";
+} from "../core/game-rules.js";
+import { normalizePlayerOwnerId } from "../room/identity.js";
 
 function toNonNegativeNumber(value, fallback = 0) {
   const number = Number(value);

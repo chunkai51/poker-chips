@@ -1,4 +1,4 @@
-// src/room-entry.js
+// src/room/room-entry.js
 // Helpers for room ids, invite links, display-name persistence, and join requests.
 
 import { normalizePlayerOwnerId } from "./identity.js";

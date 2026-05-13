@@ -1,4 +1,4 @@
-// src/table-view-preferences.js
+// src/table/table-view-preferences.js
 // Local-only table-view preferences. These values are intentionally not synced.
 
 const TABLE_VIEW_ROTATION_KEY_PREFIX = "pokerChipsTableViewRotation:";

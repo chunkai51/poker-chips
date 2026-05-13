@@ -1,4 +1,4 @@
-// src/ui-dom.js
+// src/ui/ui-dom.js
 // Small DOM factories shared by UI modules.
 
 export function createParagraph(text) {

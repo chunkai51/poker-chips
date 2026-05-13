@@ -1,7 +1,7 @@
-// src/approvals.js
+// src/core/approvals.js
 // Pure confirmation-progress helpers used by settlement and next-hand flows.
 
-import { normalizePlayerOwnerId } from "./identity.js";
+import { normalizePlayerOwnerId } from "../room/identity.js";
 
 export function normalizeApprovalMap(value = {}) {
   if (!value || typeof value !== "object") return {};

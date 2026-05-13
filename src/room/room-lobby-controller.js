@@ -1,4 +1,4 @@
-// src/room-lobby-controller.js
+// src/room/room-lobby-controller.js
 // Lobby-state helpers for local/room mode, room creation/joining, and setup sync payloads.
 
 export function createLocalModeRoom({

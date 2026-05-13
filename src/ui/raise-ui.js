@@ -1,4 +1,4 @@
-// src/raise-ui.js
+// src/ui/raise-ui.js
 // DOM builder for the raise action panel.
 
 import { createButton } from "./ui-dom.js";

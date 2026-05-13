@@ -1,4 +1,4 @@
-// src/room-permissions.js
+// src/room/room-permissions.js
 // Pure room permission and player-control helpers.
 
 import {
@@ -8,7 +8,7 @@ import {
   normalizeMembers,
   normalizePlayerOwnerId,
   normalizeRoomMode
-} from "./identity.js";
+} from "../room/identity.js";
 import { normalizeIncomingPlayers } from "./room-state.js";
 
 function toNonNegativeNumber(value, fallback = 0) {

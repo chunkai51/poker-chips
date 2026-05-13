@@ -1,4 +1,4 @@
-// src/hand-flow-controller.js
+// src/core/hand-flow-controller.js
 // Pure helpers for betting actions and hand-flow decisions.
 
 import {

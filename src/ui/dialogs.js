@@ -1,4 +1,4 @@
-// src/dialogs.js
+// src/ui/dialogs.js
 // Shared modal/dialog helpers. Business flows provide content and callbacks.
 
 import { createButton, createParagraph } from "./ui-dom.js";

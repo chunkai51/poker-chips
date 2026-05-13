@@ -1,4 +1,4 @@
-// src/game-state-snapshot.js
+// src/room/game-state-snapshot.js
 // Pure helpers for preparing game-state and room payloads before remote sync.
 
 import { serializeSelectedWinnersByPot } from "./room-state.js";

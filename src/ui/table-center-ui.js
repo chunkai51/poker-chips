@@ -1,4 +1,4 @@
-// src/table-center-ui.js
+// src/ui/table-center-ui.js
 // DOM builders for the poker table center area and table-action dialog bodies.
 
 import { createButton, createParagraph } from "./ui-dom.js";
