@@ -31,6 +31,7 @@ index.html
        -> imports room permission helpers from src/room-permissions.js
        -> imports room/game-state normalizers from src/room-state.js
        -> imports game-state sync snapshot helpers from src/game-state-snapshot.js
+       -> imports hand-flow state transition helpers from src/hand-flow-controller.js
        -> imports settlement calculation helpers from src/settlement-engine.js
        -> imports client/room identity helpers from src/identity.js
        -> imports player model helpers from src/player-model.js
@@ -318,6 +319,19 @@ Owns pure, DOM-free poker table rules:
 
 Keep this module side-effect-free. It should be the first place to add unit tests for betting, all-in, side-pot-adjacent, and seat-rotation behavior.
 
+### `src/hand-flow-controller.js`
+
+Owns pure, DOM-free hand-flow transitions:
+
+- Chip commitment calculation for a single player
+- Check / call / raise / fold state changes
+- Current-bet, last-raise-size, and pot updates
+- Automatic hand-end decisions when everyone is all-in or only one player remains
+- Betting-round completion checks
+- Next actionable player and street max-bet lookup
+
+Keep this module parameter-driven. It can import pure rule helpers from `src/game-rules.js`, but it should not read app globals, render DOM, write Firebase, show dialogs, or decide remote conflict behavior.
+
 ### `src/ui-dom.js`
 
 Owns tiny shared DOM factories:
@@ -404,7 +418,7 @@ Still orchestrates most of the app:
 - Firebase sync and conflict guards
 - DOM rendering
 
-It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room lobby data helpers to `src/room-lobby-controller.js`, room claim/request helpers to `src/room-claims-controller.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, sync snapshot helpers to `src/game-state-snapshot.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room-sync.js`, room-entry helpers to `src/room-entry.js`, room lobby data helpers to `src/room-lobby-controller.js`, room claim/request helpers to `src/room-claims-controller.js`, legacy access-code helpers to `src/access-codes.js`, room payload normalization to `src/room-state.js`, sync snapshot helpers to `src/game-state-snapshot.js`, room permission checks to `src/room-permissions.js`, identity normalization to `src/identity.js`, player object helpers to `src/player-model.js`, approval progress to `src/approvals.js`, dealer prompt metadata to `src/deal-prompts.js`, betting action transitions to `src/hand-flow-controller.js`, settlement calculations to `src/settlement-engine.js`, player-seat DOM rendering to `src/player-seat-ui.js`, raise panel DOM rendering to `src/raise-ui.js`, visual seat coordinates to `src/table-layout.js`, local table-view preferences to `src/table-view-preferences.js`, table-center DOM rendering to `src/table-center-ui.js`, table-manager draft logic to `src/table-manager-controller.js`, table-manager DOM rendering to `src/table-manager-ui.js`, shared dialog shells to `src/dialogs.js`, small DOM factories to `src/ui-dom.js`, and core table/betting calculations to `src/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/guide.js`
 
@@ -674,6 +688,7 @@ Implemented:
 - Frontend permission layer for room mode: host/cohost setup/table management, own-player actions, Dealer-only deal confirmation with manager proxy for unbound players
 - Firebase CLI, Realtime Database rules, and Cloud Functions command-processing scaffold
 - All-required-player confirmation for settlement preview and next-hand start
+- Extracted pure hand-flow transitions in `src/hand-flow-controller.js`
 
 Needs more validation:
 

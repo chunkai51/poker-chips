@@ -88,6 +88,14 @@ import {
   prepareRoomDataForGameSync
 } from "./game-state-snapshot.js";
 import {
+  applyBettingAction,
+  commitChipsToPlayer,
+  findNextActionableIndex as findNextActionableIndexData,
+  getAutomaticHandEndState,
+  getMaxStreetBet as getMaxStreetBetData,
+  isBettingRoundComplete as isBettingRoundCompleteData
+} from "./hand-flow-controller.js";
+import {
   createInviteToken,
   generateRoomId,
   getClientShortId as formatClientShortId,
@@ -1976,17 +1984,10 @@ startGameBtn.addEventListener("click", async () => {
 // 开局与轮次逻辑
 // ----------------------
 function commitChips(player, requestedAmount) {
-  const amount = Math.min(toNonNegativeNumber(requestedAmount, 0), player.chips);
-  if (amount <= 0) return 0;
-
-  player.chips -= amount;
-  player.bet += amount;
-  player.totalBet += amount;
-  pot += amount;
-  if (player.chips === 0) {
-    player.allIn = true;
-  }
-  return amount;
+  const result = commitChipsToPlayer(player, requestedAmount);
+  Object.assign(player, result.player);
+  pot += result.committed;
+  return result.committed;
 }
 
 function getEligibleOrderFrom(startIndex, eligibleIndices = getEligiblePlayerIndices()) {
@@ -2049,19 +2050,11 @@ function assignPositions(dealerIndex) {
 }
 
 function findNextActionableIndex(startIndex, includeStart = false) {
-  if (players.length === 0) return -1;
-  const firstOffset = includeStart ? 0 : 1;
-
-  for (let offset = firstOffset; offset < players.length + firstOffset; offset += 1) {
-    const index = (startIndex + offset + players.length) % players.length;
-    if (canAct(players[index])) return index;
-  }
-
-  return -1;
+  return findNextActionableIndexData(players, startIndex, includeStart);
 }
 
 function getMaxStreetBet() {
-  return players.reduce((max, player) => Math.max(max, player.bet), 0);
+  return getMaxStreetBetData(players);
 }
 
 function getFirstActionIndexForRound(round = currentRound) {
@@ -2219,85 +2212,31 @@ async function playerAction(action, index, amount = 0) {
     }
   }
 
-  let logAction = action;
   batchingStateUpdate = true;
 
-  switch (action) {
-    case "check":
-      if (player.bet < currentBet) {
-        showAppAlert("已有下注，不能选择 Check！");
-        batchingStateUpdate = false;
-        setMutationInProgress(false);
-        return;
-      }
-      player.acted = true;
-      logAction = "Check";
-      break;
-
-    case "call": {
-      const callAmount = Math.max(0, currentBet - player.bet);
-      if (callAmount === 0) {
-        showAppAlert("当前无需跟注，可以选择 Check");
-        batchingStateUpdate = false;
-        setMutationInProgress(false);
-        return;
-      }
-      const committed = commitChips(player, callAmount);
-      player.acted = true;
-      logAction = committed < callAmount ? `All In 跟注 ${committed}` : `Call ${committed}`;
-      break;
-    }
-
-    case "raise": {
-      const targetBet = toPositiveInteger(amount, 0);
-      const validation = getRaiseValidation(player, targetBet);
-      if (!validation.valid) {
-        showAppAlert(validation.message);
-        batchingStateUpdate = false;
-        setMutationInProgress(false);
-        return;
-      }
-
-      const previousBet = currentBet;
-      const committed = validation.commitAmount;
-      commitChips(player, committed);
-      player.acted = true;
-
-      if (player.bet > previousBet) {
-        const raiseSize = player.bet - previousBet;
-        const isFullRaise = player.bet >= validation.minimumTarget;
-        currentBet = player.bet;
-        if (isFullRaise) {
-          lastRaiseSize = raiseSize;
-          players.forEach((otherPlayer, otherIndex) => {
-            if (otherIndex !== index && !otherPlayer.folded && !otherPlayer.allIn) {
-              otherPlayer.acted = false;
-            }
-          });
-        }
-        logAction = player.allIn
-          ? `All In 加到 ${player.bet}${isFullRaise ? "" : "（未达到完整最小加注）"}`
-          : `Raise 到 ${player.bet}`;
-      } else {
-        logAction = `All In 跟注 ${committed}`;
-      }
-      break;
-    }
-
-    case "fold":
-      player.folded = true;
-      player.acted = true;
-      logAction = "Fold";
-      break;
-
-    default:
-      showAppAlert("无效操作！");
-      batchingStateUpdate = false;
-      setMutationInProgress(false);
-      return;
+  const actionResult = applyBettingAction({
+    players,
+    index,
+    action,
+    amount,
+    currentBet,
+    lastRaiseSize,
+    pot,
+    raiseState: getRaiseState()
+  });
+  if (!actionResult.ok) {
+    showAppAlert(actionResult.message);
+    batchingStateUpdate = false;
+    setMutationInProgress(false);
+    return;
   }
+  players = actionResult.players;
+  room.players = players;
+  currentBet = actionResult.currentBet;
+  lastRaiseSize = actionResult.lastRaiseSize;
+  pot = actionResult.pot;
 
-  updateGameLog(`${getPlayerIdentityLabel(player)} 选择了 ${logAction}，奖池：${pot}`);
+  updateGameLog(`${getPlayerIdentityLabel(players[index])} 选择了 ${actionResult.logAction}，奖池：${pot}`);
   nextPlayer();
   updateGameInfo();
   updatePlayerBoxes();
@@ -2322,33 +2261,20 @@ async function playerAction(action, index, amount = 0) {
 // nextPlayer 与轮次结束逻辑
 // ----------------------
 function handleAutomaticHandEnd() {
-  const active = getActivePlayers();
-  if (active.length <= 1) {
-    awardRemainingPot(active[0] || null);
+  const endState = getAutomaticHandEndState(players, currentBet);
+  if (endState.type === "awardRemainingPot") {
+    awardRemainingPot(endState.winnerId ? getPlayerById(endState.winnerId) : null);
     return true;
   }
-
-  if (active.every(player => player.allIn)) {
+  if (endState.type === "showdown") {
     beginShowdown();
     return true;
   }
-
-  const activeNotAllIn = active.filter(player => !player.allIn);
-  const hasAllInPlayer = active.length !== activeNotAllIn.length;
-  const obligationsSettled = activeNotAllIn.every(player => player.bet === currentBet);
-  if (hasAllInPlayer && activeNotAllIn.length <= 1 && obligationsSettled) {
-    beginShowdown();
-    return true;
-  }
-
   return false;
 }
 
 function isBettingRoundComplete() {
-  const active = getActivePlayers();
-  return active.length > 1 && active.every(player => {
-    return player.allIn || (player.acted && player.bet === currentBet);
-  });
+  return isBettingRoundCompleteData(players, currentBet);
 }
 
 function nextPlayer() {
