@@ -83,6 +83,34 @@ function createIdentityManagerPanel(identity, callbacks) {
   summary.append(title, detail);
   panel.appendChild(summary);
 
+  const nameForm = document.createElement("form");
+  nameForm.className = "identity-name-form";
+  const nameLabel = document.createElement("label");
+  nameLabel.textContent = "昵称";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.maxLength = 24;
+  nameInput.value = identity.displayName || "";
+  nameInput.placeholder = identity.displayNamePlaceholder || "你的昵称";
+  nameInput.setAttribute("aria-label", "当前设备昵称");
+  nameInput.disabled = identity.displayNameDisabled;
+  nameLabel.appendChild(nameInput);
+  const saveNameButton = createButton("保存", () => {
+    callbacks.onSaveDisplayName?.(nameInput.value);
+  }, identity.displayNameDisabled, "table-chip-button");
+  nameInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveNameButton.click();
+    }
+  });
+  nameForm.addEventListener("submit", event => {
+    event.preventDefault();
+    saveNameButton.click();
+  });
+  nameForm.append(nameLabel, saveNameButton);
+  panel.appendChild(nameForm);
+
   const actions = document.createElement("div");
   actions.className = "identity-manager-actions";
   if (identity.hasCurrentPlayer) {

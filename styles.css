@@ -1742,7 +1742,7 @@ h3 {
 .identity-manager-panel {
   grid-row: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 260px) auto;
   gap: 8px;
   align-items: center;
   border-bottom: 1px solid rgba(244, 234, 210, 0.1);
@@ -1818,6 +1818,63 @@ h3 {
   color: rgba(244, 234, 210, 0.66);
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.identity-name-form {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) auto;
+  gap: 6px;
+  align-items: end;
+}
+
+.identity-name-form label {
+  display: grid;
+  gap: 3px;
+  color: rgba(244, 234, 210, 0.64);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.identity-name-form input {
+  min-height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 234, 210, 0.16);
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--ivory-50);
+  font-size: 0.82rem;
+  font-weight: 900;
+  padding: 5px 10px;
+}
+
+.identity-name-dialog-form {
+  display: grid;
+  gap: 12px;
+}
+
+.identity-name-dialog-form label {
+  display: grid;
+  gap: 6px;
+  color: rgba(244, 234, 210, 0.72);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.identity-name-dialog-form input {
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid rgba(244, 234, 210, 0.18);
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--ivory-50);
+  font-size: 1rem;
+  font-weight: 900;
+  padding: 8px 11px;
+}
+
+.identity-name-dialog-error {
+  min-height: 1em;
+  color: #ffb1a7;
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 .identity-manager-actions,
@@ -3026,6 +3083,10 @@ h3 {
   .identity-manager-panel {
     grid-template-columns: minmax(0, 1fr);
     padding: 8px 12px;
+  }
+
+  .identity-name-form {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .seat-requests-panel {

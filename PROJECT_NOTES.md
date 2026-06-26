@@ -797,6 +797,8 @@ Browser validation checklist:
 - Creating a room writes a setup room, generates an invite link, and copies/shows it from the room controls.
 - Joining from an invite URL fills the room id automatically and loads setup players when the remote room is still in setup.
 - A non-host device can enter a display name and request a seat; it is not bound until host/cohost approval.
+- A device that joins an in-progress room can set or edit its display name from "席位与身份管理" before requesting a seat.
+- If a room client without a display name clicks request/reclaim, a custom display-name dialog appears and the request continues after saving.
 - Approving a join/reclaim request marks only one player as that device's seat and clears any previous binding for that requester.
 - Non-admin room clients cannot add/delete setup players, edit setup stacks, save table management, or start the first hand.
 - Non-admin room clients can still open "席位与身份管理" to inspect their identity and pending requests.

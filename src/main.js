@@ -345,6 +345,42 @@ function rememberPreferredDisplayName(name, roomId = room.roomId) {
   storePreferredDisplayName(name, roomId);
 }
 
+function normalizeDisplayName(name = "") {
+  return String(name || "").trim().slice(0, 24);
+}
+
+function getCurrentMemberDisplayName(actorClientId = clientId) {
+  return normalizeDisplayName(normalizeMembers(room.members)[actorClientId]?.displayName);
+}
+
+function getCurrentDisplayName() {
+  return normalizeDisplayName(playerAliasInput?.value || getPreferredDisplayName() || getCurrentMemberDisplayName());
+}
+
+function getGuestDisplayName(actorClientId = clientId) {
+  return `访客 ${getClientShortId(actorClientId)}`;
+}
+
+async function saveCurrentDisplayName(rawName, { announce = true } = {}) {
+  const safeName = normalizeDisplayName(rawName);
+  if (!safeName) {
+    if (announce) showAppAlert("请输入昵称。");
+    return "";
+  }
+
+  rememberPreferredDisplayName(safeName);
+  if (playerAliasInput) playerAliasInput.value = safeName;
+  if (isRoomMode() && room.roomId) {
+    const saved = await updateRoomMemberPresence({ displayName: safeName });
+    if (!saved && announce) {
+      showAppAlert("昵称已保存在本机，但暂时没有同步到房间。请检查网络后重试。");
+    }
+  }
+  renderIdentityControls();
+  if (tableManagerOpen) renderTableManager();
+  return safeName;
+}
+
 function getInviteUrl(roomId = room.roomId, inviteToken = room.inviteToken) {
   return buildInviteUrl(window.location.href, roomId, inviteToken);
 }
@@ -802,7 +838,7 @@ function renderIdentityControls() {
   if (joinRoomBtn) joinRoomBtn.disabled = gameStarted || syncWriteInProgress || roomAuthPending;
   if (copyInviteBtn) copyInviteBtn.disabled = !isRoomMode() || !room.roomId;
   if (playerAliasInput && document.activeElement !== playerAliasInput) {
-    playerAliasInput.value = getPreferredDisplayName();
+    playerAliasInput.value = getCurrentDisplayName();
   }
   if (!deviceIdentityEl) return;
 
@@ -1270,7 +1306,7 @@ function createRoom({ announce = true } = {}) {
     window.history.replaceState({}, "", url.toString());
   }
   if (announce) {
-    showAppAlert(`房间 ${room.roomId} 已创建。\n分享邀请链接后，玩家输入昵称并请求坐下，由你批准。`, "房间已创建");
+    showAppAlert(`房间 ${room.roomId} 已创建。\n分享邀请链接后，玩家可设置昵称并请求坐下，由你批准。`, "房间已创建");
   }
 }
 
@@ -1301,7 +1337,7 @@ async function createRoomIfAvailable({ announce = true } = {}) {
 
   setSyncStatus("房间已创建", "ok");
   if (announce) {
-    showAppAlert(`房间 ${room.roomId} 已创建。\n分享邀请链接后，玩家输入昵称并请求坐下，由你批准。`, "房间已创建");
+    showAppAlert(`房间 ${room.roomId} 已创建。\n分享邀请链接后，玩家可设置昵称并请求坐下，由你批准。`, "房间已创建");
   }
   return true;
 }
@@ -1335,16 +1371,9 @@ function syncRoomFromInput() {
 }
 
 if (playerAliasInput) {
-  playerAliasInput.value = getPreferredDisplayName();
+  playerAliasInput.value = getCurrentDisplayName();
   playerAliasInput.addEventListener("change", async () => {
-    const safeName = playerAliasInput.value.trim().slice(0, 24);
-    playerAliasInput.value = safeName;
-    rememberPreferredDisplayName(safeName);
-    if (isRoomMode() && room.roomId) {
-      await updateRoomMemberPresence({ displayName: safeName });
-      renderIdentityControls();
-      if (tableManagerOpen) renderTableManager();
-    }
+    await saveCurrentDisplayName(playerAliasInput.value, { announce: false });
   });
 }
 
@@ -1358,7 +1387,7 @@ if (copyInviteBtn) {
     if (!inviteUrl) return;
     try {
       await navigator.clipboard.writeText(inviteUrl);
-      showAppAlert("邀请链接已复制。朋友打开后输入昵称，请求坐下即可。", "已复制邀请");
+      showAppAlert("邀请链接已复制。朋友打开后可设置昵称，并请求坐下。", "已复制邀请");
     } catch (_) {
       showAppAlert(inviteUrl, "邀请链接");
     }
@@ -1580,21 +1609,88 @@ async function togglePlayerClaim(playerId) {
   await requestSeatOwnership(playerId);
 }
 
+function openDisplayNameRequestDialog({ playerId, title = "设置昵称后请求入座" } = {}) {
+  const player = players.find(item => item.id === playerId);
+  if (!player) return;
+
+  openTableActionDialog({
+    title,
+    description: `你将以这个昵称请求绑定 ${getPlayerIdentityLabel(player)}。昵称只用于显示，不影响设备身份。`,
+    className: "identity-name-dialog",
+    buildContent(body, closeDialog) {
+      const form = document.createElement("form");
+      form.className = "identity-name-dialog-form";
+
+      const label = document.createElement("label");
+      label.textContent = "你的昵称";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.maxLength = 24;
+      input.placeholder = getGuestDisplayName();
+      input.value = getCurrentDisplayName();
+      input.setAttribute("aria-label", "你的昵称");
+      label.appendChild(input);
+      form.appendChild(label);
+
+      const error = document.createElement("span");
+      error.className = "identity-name-dialog-error";
+      form.appendChild(error);
+
+      const actions = document.createElement("div");
+      actions.className = "table-center-action-buttons";
+      actions.appendChild(createButton("取消", closeDialog, false, "prompt-secondary"));
+      actions.appendChild(createButton("保存并请求", async () => {
+        const displayName = normalizeDisplayName(input.value);
+        if (!displayName) {
+          error.textContent = "请输入昵称后再请求入座。";
+          input.focus();
+          return;
+        }
+        closeDialog();
+        const savedName = await saveCurrentDisplayName(displayName, { announce: false });
+        if (savedName) {
+          await submitSeatOwnershipRequest(playerId, savedName);
+        }
+      }, false, "prompt-primary"));
+      form.appendChild(actions);
+
+      form.addEventListener("submit", event => {
+        event.preventDefault();
+        actions.querySelector(".prompt-primary")?.click();
+      });
+
+      body.appendChild(form);
+      requestAnimationFrame(() => input.focus());
+    }
+  });
+}
+
 async function requestSeatOwnership(playerId) {
   if (!isRoomMode() || !room.roomId) return;
   const player = players.find(item => item.id === playerId);
   if (!player) return;
-  const displayName = String(playerAliasInput?.value || getPreferredDisplayName()).trim().slice(0, 24);
+  const displayName = getCurrentDisplayName();
   if (!displayName) {
-    showAppAlert("请先输入你的昵称，再请求坐下。");
-    playerAliasInput?.focus();
+    openDisplayNameRequestDialog({ playerId });
     return;
   }
-  rememberPreferredDisplayName(displayName);
+  await submitSeatOwnershipRequest(playerId, displayName);
+}
+
+async function submitSeatOwnershipRequest(playerId, displayName) {
+  if (!isRoomMode() || !room.roomId) return;
+  const player = players.find(item => item.id === playerId);
+  if (!player) return;
+  const safeDisplayName = normalizeDisplayName(displayName);
+  if (!safeDisplayName) {
+    openDisplayNameRequestDialog({ playerId });
+    return;
+  }
+  rememberPreferredDisplayName(safeDisplayName);
   const request = createSeatOwnershipRequest({
     clientId,
     playerId,
-    displayName,
+    displayName: safeDisplayName,
     claimedByOtherDevice: isClaimedByOtherDevice(player),
     inviteToken: room.inviteToken || ""
   });
@@ -1605,7 +1701,7 @@ async function requestSeatOwnership(playerId) {
       ...normalizeJoinRequests(room.joinRequests),
       [clientId]: request
     };
-    await updateRoomMemberPresence({ displayName });
+    await updateRoomMemberPresence({ displayName: safeDisplayName });
     showAppAlert("请求已发送。房主或协管批准后，这个座位会绑定到当前设备。", "等待批准");
     setSyncStatus("等待批准", "ok");
   } catch (_) {
@@ -2722,7 +2818,8 @@ function renderTableManager() {
   const currentPlayer = getCurrentDevicePlayer();
   const currentIndex = currentPlayer ? players.indexOf(currentPlayer) : -1;
   const isAdmin = canCurrentClientManageRoom();
-  const displayName = getPreferredDisplayName() || "未填写昵称";
+  const savedDisplayName = getCurrentDisplayName();
+  const displayName = savedDisplayName || getGuestDisplayName();
   const pendingRequestCount = getPendingJoinRequestCount();
   const identity = isRoomMode()
     ? {
@@ -2731,7 +2828,10 @@ function renderTableManager() {
         : isAdmin
           ? `当前身份：${getCurrentRoomRoleLabel()}旁观`
           : "当前身份：旁观",
-      detailText: `房间 ${room.roomId || "-"} · ${displayName} · 设备 ${getClientShortId()}`,
+      detailText: `房间 ${room.roomId || "-"} · 昵称 ${displayName}${savedDisplayName ? "" : "（未设置）"} · 设备 ${getClientShortId()}`,
+      displayName: savedDisplayName,
+      displayNamePlaceholder: getGuestDisplayName(),
+      displayNameDisabled: isSharedPromptActionLocked(),
       hasCurrentPlayer: Boolean(currentPlayer),
       isAdmin,
       isActionLocked,
@@ -2781,6 +2881,10 @@ function renderTableManager() {
       onSave: saveTableDraft,
       onReleaseCurrentPlayer: releaseCurrentPlayerIdentity,
       onCopyInvite: copyInviteLink,
+      onSaveDisplayName: async value => {
+        const savedName = await saveCurrentDisplayName(value);
+        if (savedName) setSyncStatus("昵称已保存", "ok");
+      },
       onShowPendingRequests: count => {
         showAppAlert(`当前有 ${count} 个待处理请求。请在下方列表批准或拒绝。`);
       },
