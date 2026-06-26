@@ -1,7 +1,7 @@
 import { getSeatStatusLabel } from "../core/game-rules.js";
 import {
-  getPlayerRawName,
-  shouldUseRequestNameForPlayerSeat
+  getRawPlayerName,
+  shouldUseRequestNameForSeat
 } from "../core/player-model.js";
 import { getRequestDisplayName, normalizeJoinRequests } from "../room/room-entry.js";
 import { normalizeIncomingPlayers } from "../room/room-state.js";
@@ -71,8 +71,8 @@ export function createTableManagerFlow({
     tableDraft.forEach((draftPlayer, index) => {
       const source = sourceById.get(String(draftPlayer.id || ""));
       if (!source) return;
-      const sourceName = getPlayerRawName(source);
-      if (sourceName && shouldUseRequestNameForPlayerSeat(draftPlayer, index)) {
+      const sourceName = getRawPlayerName(source);
+      if (sourceName && shouldUseRequestNameForSeat(draftPlayer, index)) {
         draftPlayer.name = sourceName;
       }
       draftPlayer.ownerClientId = normalizePlayerOwnerId(source.ownerClientId);
