@@ -20,14 +20,9 @@ import {
   createDealPrompt,
   normalizeIncomingDealPrompt as normalizeDealPrompt
 } from "./core/deal-prompts.js";
-import { renderRaisePanelContent } from "./ui/raise-ui.js";
-import {
-  closeSeatDetailPopovers,
-  createPlayerSeatBox
-} from "./ui/player-seat-ui.js";
+import { createTableScreenController } from "./table/table-screen-controller.js";
 import { createTableManagerFlow } from "./table/table-manager-flow.js";
 import {
-  closeTableActionDialog,
   openTableActionDialog,
   showAppAlert,
   showAppConfirm
@@ -36,21 +31,11 @@ import {
   createButton,
   createParagraph
 } from "./ui/ui-dom.js";
-import {
-  getVisualSeatCoordinates,
-  normalizeRotationOffset
-} from "./table/table-layout.js";
+import { normalizeRotationOffset } from "./table/table-layout.js";
 import {
   loadTableViewRotation as loadStoredTableViewRotation,
   saveTableViewRotation as saveStoredTableViewRotation
 } from "./table/table-view-preferences.js";
-import {
-  createCenterOperationHeader,
-  createTableCenterPanel as createTableCenterPanelView,
-  createWaitingNotice,
-  renderSettlementPreviewContent,
-  renderShowdownSelection
-} from "./ui/table-center-ui.js";
 import {
   listenRoom,
   readRoom,
@@ -90,7 +75,6 @@ import {
   getClientShortId as formatClientShortId,
   getInviteUrl as buildInviteUrl,
   getPreferredDisplayName as readPreferredDisplayName,
-  getRequestDisplayName,
   getRoomLinkParams as parseRoomLinkParams,
   normalizeInviteToken,
   normalizeJoinRequests,
@@ -337,6 +321,86 @@ const tableManagerFlow = createTableManagerFlow({
     isCurrentDevicePlayer,
     getClientShortId,
     getJoinRequestsForPlayer
+  }
+});
+
+const tableScreen = createTableScreenController({
+  elements: {
+    handActions,
+    showdownPanel,
+    dealPromptPanel,
+    settlementPreviewPanel
+  },
+  maxPlayers: MAX_PLAYERS,
+  getState: () => ({
+    players,
+    currentPlayerIndex,
+    pot,
+    currentBet,
+    bigBlind,
+    currentRound,
+    rounds,
+    gameOver,
+    awaitingShowdown,
+    pendingPots,
+    selectedWinnersByPot,
+    pendingDealPrompt,
+    settlementPreview,
+    nextHandApprovals,
+    handId,
+    handStatus,
+    tableViewRotationOffset,
+    clientId
+  }),
+  modes: {
+    isLocalMode,
+    isRoomMode
+  },
+  permissions: {
+    isInteractionLocked,
+    isSharedPromptActionLocked,
+    canCurrentClientControlPlayer,
+    canCurrentClientConfirmDeal,
+    canCurrentClientManageRoom,
+    getCurrentDevicePlayerIndex,
+    isCurrentDevicePlayer,
+    canCurrentClientModifyClaims
+  },
+  labels: {
+    getPlayerIdentityLabel,
+    getPlayerCompactIdentityLabel,
+    getSetupClaimLabel
+  },
+  betting: {
+    getCallAmount,
+    getCallButtonLabel,
+    canPlayerRaise,
+    getMinimumRaiseTarget,
+    getMaximumRaiseTarget,
+    getDefaultRaiseTarget,
+    getPotSizedRaiseTarget,
+    getRaiseValidation,
+    getChipStep,
+    getEligiblePlayerIndices
+  },
+  approvals: {
+    getSettlementApproverIds,
+    getNextHandApproverIds,
+    getApprovalStatusText,
+    getApprovalWaitingText
+  },
+  actions: {
+    playerAction,
+    confirmDealPrompt,
+    openTableManager,
+    approveNextHandStart,
+    togglePlayerClaim,
+    getPlayerById,
+    toggleWinner,
+    buildSettlementPlan,
+    confirmShowdown,
+    cancelSettlementPreview,
+    confirmSettlementPreview
   }
 });
 
@@ -2439,34 +2503,27 @@ function beginShowdown() {
 }
 
 function hideShowdownPanel() {
-  showdownPanel.hidden = true;
-  showdownPanel.replaceChildren();
+  tableScreen.hideShowdownPanel();
 }
 
 function hideDealPromptPanel() {
-  if (!dealPromptPanel) return;
-  dealPromptPanel.hidden = true;
-  dealPromptPanel.replaceChildren();
+  tableScreen.hideDealPromptPanel();
 }
 
 function renderDealPromptPanel() {
-  if (!dealPromptPanel) return;
-  hideDealPromptPanel();
+  tableScreen.renderDealPromptPanel();
 }
 
 function hideSettlementPreviewPanel() {
-  if (!settlementPreviewPanel) return;
-  settlementPreviewPanel.hidden = true;
-  settlementPreviewPanel.replaceChildren();
+  tableScreen.hideSettlementPreviewPanel();
 }
 
 function renderSettlementPreviewPanel() {
-  if (!settlementPreviewPanel) return;
-  hideSettlementPreviewPanel();
+  tableScreen.renderSettlementPreviewPanel();
 }
 
 function renderShowdownPanel() {
-  hideShowdownPanel();
+  tableScreen.renderShowdownPanel();
 }
 
 function toggleWinner(potIndex, playerId) {
@@ -2758,9 +2815,7 @@ async function finalizeSettlementPreview() {
 // 牌桌管理
 // ----------------------
 document.addEventListener("click", (event) => {
-  if (!event.target.closest?.(".player-box")) {
-    closeSeatDetailPopovers();
-  }
+  tableScreen.closeSeatPopoversOnOutsideClick(event);
 });
 
 function canEditTableNow() {
@@ -3082,20 +3137,15 @@ async function resetHand(expectedHandId = handId) {
 }
 
 function renderNextHandButton() {
-  if (!handActions) return;
-  clearHandActions();
+  tableScreen.renderNextHandButton();
 }
 
 function clearHandActions() {
-  if (!handActions) return;
-  handActions.replaceChildren();
-  handActions.classList.remove("is-current-action");
-  handActions.hidden = true;
+  tableScreen.clearHandActions();
 }
 
 function showNextHandButton() {
-  renderNextHandButton();
-  updatePlayerBoxes();
+  tableScreen.showNextHandButton();
 }
 
 function inferHandStatus(gameState) {
@@ -3111,320 +3161,15 @@ function inferHandStatus(gameState) {
 // UI 更新
 // ----------------------
 function getRoundDisplayText() {
-  let roundText = `当前轮次: ${rounds[currentRound] || "-"}`;
-  if (handStatus === "waitingDeal" && pendingDealPrompt) {
-    roundText = `等待发牌: ${pendingDealPrompt.cardText}`;
-  } else if (handStatus === "settlementPreview") {
-    roundText = "等待结算确认";
-  } else if (handStatus === "showdown") {
-    roundText = "摊牌结算";
-  }
-  return roundText;
+  return tableScreen.getRoundDisplayText();
 }
 
 function updateGameInfo() {
-  const roundEl = document.getElementById("current-round");
-  const potEl = document.getElementById("pot-amount");
-  if (roundEl) roundEl.textContent = getRoundDisplayText();
-  if (potEl) potEl.textContent = `奖池: ${pot}`;
-}
-
-function createRaisePanel(player, index, actionDisabled) {
-  const raiseDisabled = actionDisabled || !canPlayerRaise(player);
-  const callAmount = getCallAmount(player);
-  const minimumTarget = getMinimumRaiseTarget(player);
-  const maximumTarget = getMaximumRaiseTarget(player);
-
-  return {
-    open() {
-      openTableActionDialog({
-        title: `${getPlayerIdentityLabel(player)} 加注`,
-        description: `需跟 ${callAmount}，最小加注 ${minimumTarget}，当前奖池 ${pot}。`,
-        className: "raise-action-dialog",
-        buildContent(body, closeDialog) {
-          const step = getChipStep();
-          renderRaisePanelContent(body, {
-            infoItems: [
-              `需跟 ${callAmount}`,
-              `最小加到 ${minimumTarget}`,
-              `奖池 ${pot}`
-            ],
-            presets: [
-              ["最小", () => getDefaultRaiseTarget(player)],
-              ["1/2池", () => getPotSizedRaiseTarget(player, 0.5)],
-              ["2/3池", () => getPotSizedRaiseTarget(player, 2 / 3)],
-              ["一池", () => getPotSizedRaiseTarget(player, 1)],
-              ["All In", () => maximumTarget]
-            ].map(([label, getTarget]) => ({
-              label,
-              target: getTarget()
-            })),
-            nudges: [
-              [`-${bigBlind}`, -bigBlind],
-              [`-${step}`, -step],
-              [`+${step}`, step],
-              [`+${bigBlind}`, bigBlind]
-            ].map(([label, delta]) => ({ label, delta })),
-            defaultTarget: getDefaultRaiseTarget(player),
-            maximumTarget,
-            step,
-            disabled: raiseDisabled,
-            getValidation: rawTarget => getRaiseValidation(player, rawTarget),
-            onConfirm: rawTarget => {
-              closeDialog();
-              playerAction("raise", index, rawTarget);
-            }
-          });
-        }
-      });
-    }
-  };
-}
-
-function shouldShowCurrentActionPanel() {
-  return !gameOver &&
-    !awaitingShowdown &&
-    handStatus === "playing" &&
-    currentPlayerIndex >= 0 &&
-    canAct(players[currentPlayerIndex]);
-}
-
-function createActionControls(player, index, actionDisabled, className = "") {
-  const actions = document.createElement("div");
-  actions.className = className ? `actions ${className}` : "actions";
-  const permissionDisabled = !canCurrentClientControlPlayer(player);
-  const disabled = actionDisabled || permissionDisabled;
-
-  actions.appendChild(createButton("Check", () => playerAction("check", index), disabled || player.bet < currentBet, "action-btn action-check"));
-  actions.appendChild(createButton(getCallButtonLabel(player), () => playerAction("call", index), disabled || player.bet >= currentBet, "action-btn action-call"));
-
-  const raiseWidget = createRaisePanel(player, index, disabled);
-  actions.appendChild(createButton("Raise", () => {
-    raiseWidget.open();
-  }, disabled || !canPlayerRaise(player), "action-btn action-raise"));
-  actions.appendChild(createButton("Fold", () => playerAction("fold", index), disabled, "action-btn action-fold danger"));
-  return actions;
+  tableScreen.updateGameInfo();
 }
 
 function renderCurrentActionPanel() {
-  if (!handActions) return;
-  clearHandActions();
-}
-
-function openShowdownDialog() {
-  if (!awaitingShowdown || handStatus !== "showdown") return;
-
-  openTableActionDialog({
-    title: "选择赢家",
-    description: "每个奖池可选择一个或多个赢家；多人平分时，余数给第一个被选中的赢家。",
-    className: "showdown-action-dialog",
-    buildContent(body, closeDialog) {
-      renderShowdownDialogBody(body, closeDialog);
-    }
-  });
-}
-
-function renderShowdownDialogBody(body, closeDialog) {
-  const pots = pendingPots.map((sidePot, potIndex) => {
-    const contenderNames = sidePot.contenders
-      .map(id => getPlayerById(id))
-      .filter(Boolean)
-      .map(player => getPlayerIdentityLabel(player))
-      .join("、");
-    if (!selectedWinnersByPot[potIndex]) {
-      selectedWinnersByPot[potIndex] = new Set();
-    }
-    if (sidePot.contenders.length === 1) {
-      selectedWinnersByPot[potIndex].add(sidePot.contenders[0]);
-    }
-
-    return {
-      index: potIndex,
-      amount: sidePot.amount,
-      contenderNames,
-      options: sidePot.contenders
-        .map(playerId => {
-          const player = getPlayerById(playerId);
-          if (!player) return null;
-          return {
-            playerId,
-            label: getPlayerIdentityLabel(player),
-            selected: selectedWinnersByPot[potIndex].has(playerId),
-            disabled: isInteractionLocked() || sidePot.contenders.length === 1
-          };
-        })
-        .filter(Boolean)
-    };
-  });
-
-  renderShowdownSelection(body, {
-    pots,
-    onToggleWinner: (potIndex, playerId) => {
-      const selectedSet = selectedWinnersByPot[potIndex] || new Set();
-      if (selectedSet.has(playerId)) {
-        selectedSet.delete(playerId);
-      } else {
-        selectedSet.add(playerId);
-      }
-      selectedWinnersByPot[potIndex] = selectedSet;
-      renderShowdownDialogBody(body, closeDialog);
-    },
-    onConfirm: () => {
-      if (!buildSettlementPlan()) return;
-      closeDialog();
-      confirmShowdown();
-    },
-    confirmDisabled: isInteractionLocked() || handStatus !== "showdown"
-  });
-}
-
-function openSettlementPreviewDialog() {
-  if (handStatus !== "settlementPreview" || !settlementPreview) return;
-  const requiredApprovers = getSettlementApproverIds();
-  const progress = getApprovalProgress(settlementPreview.approvals, requiredApprovers);
-  const canApprove = !isRoomMode() || requiredApprovers.includes(clientId);
-  const alreadyApproved = Boolean(progress.approved[clientId]);
-
-  openTableActionDialog({
-    title: "确认结算",
-    description: isRoomMode()
-      ? getApprovalStatusText(settlementPreview.approvals, requiredApprovers)
-      : "请检查本手筹码分配。",
-    className: "settlement-action-dialog",
-    buildContent(body, closeDialog) {
-      const confirmLabel = isRoomMode() && alreadyApproved && !progress.complete ? "已确认" : "确认结算";
-      const showWaiting = isRoomMode() && requiredApprovers.length > 0 && !progress.complete && (alreadyApproved || !canApprove);
-      renderSettlementPreviewContent(body, {
-        preview: settlementPreview,
-        getPlayerLabel: playerId => getPlayerIdentityLabel(getPlayerById(playerId)),
-        showWaiting,
-        waitingText: showWaiting
-          ? getApprovalWaitingText(settlementPreview.approvals, requiredApprovers, "确认结算")
-          : "",
-        cancelDisabled: isSharedPromptActionLocked(),
-        confirmDisabled: isSharedPromptActionLocked() || !canApprove || (alreadyApproved && !progress.complete),
-        confirmLabel,
-        onCancel: () => {
-          closeDialog();
-          cancelSettlementPreview();
-        },
-        onConfirm: () => {
-          closeDialog();
-          confirmSettlementPreview();
-        }
-      });
-    }
-  });
-}
-
-function createTableCenterOperations() {
-  const operations = document.createElement("div");
-  operations.className = "table-center-action-slot";
-
-  if (shouldShowCurrentActionPanel()) {
-    const index = currentPlayerIndex;
-    const player = players[index];
-    const actionDisabled = isInteractionLocked();
-    operations.appendChild(createCenterOperationHeader(`${getPlayerIdentityLabel(player)} 行动`, [
-      `筹码 ${player.chips}`,
-      `需跟 ${getCallAmount(player)}`,
-      `本轮下注 ${player.bet}`
-    ]));
-    if (!canCurrentClientControlPlayer(player)) {
-      operations.appendChild(createWaitingNotice(`等待 ${getPlayerIdentityLabel(player)} 操作`));
-      return operations;
-    }
-    operations.appendChild(createActionControls(player, index, actionDisabled, "table-center-action-buttons"));
-    return operations;
-  }
-
-  if (handStatus === "waitingDeal" && pendingDealPrompt) {
-    const canConfirmDeal = canCurrentClientConfirmDeal();
-    operations.appendChild(createCenterOperationHeader(pendingDealPrompt.title, [
-      pendingDealPrompt.cardText,
-      pendingDealPrompt.detail,
-      canConfirmDeal ? "你可确认发牌" : "等待 Dealer 确认"
-    ].filter(Boolean)));
-    if (!canConfirmDeal) {
-      operations.appendChild(createWaitingNotice("等待 Dealer 确认发牌"));
-      return operations;
-    }
-    const confirmLabel = pendingDealPrompt.nextRound === 0 ? "手牌已发，开始行动" : "已发牌，继续";
-    operations.appendChild(createButton(confirmLabel, confirmDealPrompt, isSharedPromptActionLocked(), "prompt-primary"));
-    return operations;
-  }
-
-  if (handStatus === "showdown") {
-    operations.appendChild(createCenterOperationHeader("摊牌结算", [
-      `${pendingPots.length || 1} 个奖池`
-    ]));
-    operations.appendChild(createButton("选择赢家", openShowdownDialog, isInteractionLocked(), "prompt-primary"));
-    return operations;
-  }
-
-  if (handStatus === "settlementPreview") {
-    const requiredApprovers = getSettlementApproverIds();
-    const settlementProgress = getApprovalProgress(settlementPreview?.approvals, requiredApprovers);
-    const canApproveSettlement = isLocalMode() || requiredApprovers.includes(clientId);
-    const alreadyApprovedSettlement = Boolean(settlementProgress.approved[clientId]);
-    operations.appendChild(createCenterOperationHeader("等待结算确认", [
-      `总额 ${settlementPreview?.total || pot}`,
-      getApprovalStatusText(settlementPreview?.approvals, requiredApprovers)
-    ]));
-    if (isRoomMode() && requiredApprovers.length > 0 && !settlementProgress.complete && (alreadyApprovedSettlement || !canApproveSettlement)) {
-      operations.appendChild(createWaitingNotice(getApprovalWaitingText(
-        settlementPreview?.approvals,
-        requiredApprovers,
-        "确认结算"
-      )));
-    }
-    const settlementButtonLabel = isRoomMode() && requiredApprovers.length > 0 && !settlementProgress.complete && (alreadyApprovedSettlement || !canApproveSettlement)
-      ? "查看结算"
-      : "查看并确认";
-    operations.appendChild(createButton(settlementButtonLabel, openSettlementPreviewDialog, isSharedPromptActionLocked(), "prompt-primary"));
-    return operations;
-  }
-
-  if (handStatus === "settled") {
-    const eligibleCount = getEligiblePlayerIndices().length;
-    const buttonHandId = handId;
-    const nextHandApprovers = getNextHandApproverIds();
-    const nextHandProgress = getApprovalProgress(nextHandApprovals, nextHandApprovers);
-    const canApproveNextHand = isLocalMode() || nextHandApprovers.includes(clientId);
-    const alreadyApprovedNextHand = Boolean(nextHandProgress.approved[clientId]);
-    operations.appendChild(createCenterOperationHeader("本手已结算", [
-      `下一局可参与 ${eligibleCount} 人`,
-      isRoomMode() ? getApprovalStatusText(nextHandApprovals, nextHandApprovers) : "本地可直接开始"
-    ]));
-    if (isRoomMode() && nextHandApprovers.length > 0 && !nextHandProgress.complete && (alreadyApprovedNextHand || !canApproveNextHand)) {
-      operations.appendChild(createWaitingNotice(getApprovalWaitingText(
-        nextHandApprovals,
-        nextHandApprovers,
-        "确认下一局"
-      )));
-    }
-    const group = document.createElement("div");
-    group.className = "table-center-action-buttons table-center-next-buttons";
-    group.appendChild(createButton("席位管理", openTableManager, isInteractionLocked() || (isLocalMode() && !canCurrentClientManageRoom()), "table-manager-button"));
-    const nextHandLabel = isRoomMode() && alreadyApprovedNextHand && !nextHandProgress.complete ? "已确认" : "确认下一局";
-    group.appendChild(createButton(isLocalMode() ? "开始下一局" : nextHandLabel, () => {
-      approveNextHandStart(buttonHandId);
-    }, isInteractionLocked() || eligibleCount < 2 || !canApproveNextHand || (alreadyApprovedNextHand && !nextHandProgress.complete), "next-hand-button"));
-    operations.appendChild(group);
-    return operations;
-  }
-
-  operations.textContent = "操作区";
-  return operations;
-}
-
-function getCompactPlayerStatus(player) {
-  if (player.seatStatus !== "seated") return getSeatStatusLabel(player.seatStatus);
-  if (player.folded) return "弃牌";
-  if (player.allIn) return "All In";
-  if (players.indexOf(player) === currentPlayerIndex) return "行动中";
-  if (player.acted) return "已行动";
-  return "等待";
+  tableScreen.renderCurrentActionPanel();
 }
 
 function getApprovalPlayerLabelForClient(approverId, list = players, roomData = room) {
@@ -3480,78 +3225,8 @@ function getApprovalWaitingText(approvals, requiredIds, actionLabel, list = play
     : `等待同步${actionLabel}`;
 }
 
-function createTableCenterPanel() {
-  return createTableCenterPanelView({
-    pot,
-    metaItems: [getRoundDisplayText(), `最高下注 ${currentBet}`],
-    operations: createTableCenterOperations()
-  });
-}
-
 function updatePlayerBoxes() {
-  const boxes = document.getElementById("player-boxes");
-  boxes.replaceChildren();
-  boxes.className = "player-boxes";
-  boxes.classList.add(`player-count-${Math.min(players.length, MAX_PLAYERS)}`);
-  boxes.style.setProperty("--player-count", players.length);
-  boxes.appendChild(createTableCenterPanel());
-
-  players.forEach((player, index) => {
-    const seat = getVisualSeatCoordinates({
-      playerIndex: index,
-      count: players.length,
-      currentDevicePlayerIndex: getCurrentDevicePlayerIndex(),
-      rotationOffset: tableViewRotationOffset,
-      roomMode: isRoomMode(),
-      maxSeats: MAX_PLAYERS
-    });
-
-    boxes.appendChild(createPlayerSeatBox({
-      index,
-      seat,
-      side: seat.side,
-      isMine: isCurrentDevicePlayer(player),
-      folded: player.folded,
-      allIn: player.allIn,
-      inactive: player.seatStatus !== "seated",
-      active: index === currentPlayerIndex,
-      ariaLabel: `${getPlayerIdentityLabel(player, index)}，筹码 ${player.chips}，本轮下注 ${player.bet}，${getPlayerStatus(player)}`,
-      identityLabel: getPlayerIdentityLabel(player, index),
-      compactIdentityLabel: getPlayerCompactIdentityLabel(player, index),
-      chips: player.chips,
-      bet: player.bet,
-      statusLabel: getPlayerStatus(player),
-      compactStatusLabel: getCompactPlayerStatus(player),
-      position: player.position,
-      detailRows: [
-        ["座位", String(index + 1)],
-        ["位置", player.position || "-"],
-        ["剩余筹码", String(player.chips)],
-        ["本轮下注", String(player.bet)],
-        ["本局投入", String(player.totalBet || 0)],
-        ["状态", getPlayerStatus(player)]
-      ],
-      claim: isRoomMode()
-        ? {
-          label: getSetupClaimLabel(player),
-          disabled: !canCurrentClientModifyClaims(),
-          claimed: isCurrentDevicePlayer(player),
-          onClick: () => togglePlayerClaim(player.id)
-        }
-        : null
-    }));
-  });
-
-  renderCurrentActionPanel();
-}
-
-function getPlayerStatus(player) {
-  if (player.seatStatus !== "seated") return getSeatStatusLabel(player.seatStatus);
-  if (player.folded) return "Folded";
-  if (player.allIn) return "All In";
-  if (players.indexOf(player) === currentPlayerIndex) return "行动中";
-  if (player.acted) return `已行动，Bet ${player.bet}`;
-  return "等待";
+  tableScreen.updatePlayerBoxes();
 }
 
 // 将核心函数导出到全局作用域，方便浏览器控制台调试
