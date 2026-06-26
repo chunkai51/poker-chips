@@ -25,20 +25,7 @@ import {
   closeSeatDetailPopovers,
   createPlayerSeatBox
 } from "./ui/player-seat-ui.js";
-import {
-  adjustDraftChips as adjustTableDraftChips,
-  appendDraftPlayer,
-  createTableDraft as createTableDraftFromPlayers,
-  deleteDraftPlayer as deleteTableDraftPlayer,
-  getPreviewDealerIndex as getTableDraftPreviewDealerIndex,
-  getTableDraftSummary as getTableDraftSummaryText,
-  moveDraftPlayer as moveTableDraftPlayer,
-  normalizeDraftPlayer as normalizeTableDraftPlayer,
-  normalizeTableDraftPlayers as normalizeTableDraftPlayerList,
-  returnDraftPlayerToTable as returnTableDraftPlayerToTable,
-  setDraftChips as setTableDraftChips,
-  setDraftStatus as setTableDraftStatus
-} from "./table/table-manager-controller.js";
+import { createTableManagerFlow } from "./table/table-manager-flow.js";
 import {
   closeTableActionDialog,
   openTableActionDialog,
@@ -64,7 +51,6 @@ import {
   renderSettlementPreviewContent,
   renderShowdownSelection
 } from "./ui/table-center-ui.js";
-import { renderTableManagerView } from "./ui/table-manager-ui.js";
 import {
   listenRoom,
   readRoom,
@@ -247,10 +233,6 @@ let selectedWinnersByPot = {};
 let pendingDealPrompt = null;
 let settlementPreview = null;
 let nextHandApprovals = {};
-let tableDraft = null;
-let tableManagerOpen = false;
-let tableDraftBaseHandId = null;
-let tableDraftBaseStateVersion = null;
 let unsubscribeRoom = null;
 let listenedRoomId = "";
 let stateVersion = 0;
@@ -303,6 +285,60 @@ let room = {
     updatedBy: clientId
   }
 };
+
+const tableManagerFlow = createTableManagerFlow({
+  elements: {
+    backdrop: tableManagerBackdrop,
+    panel: tableManagerPanel
+  },
+  maxPlayers: MAX_PLAYERS,
+  getState: () => ({
+    players,
+    room,
+    handStatus,
+    handId,
+    stateVersion
+  }),
+  getInitialChips: () => toPositiveInteger(initialChipsInput.value, 1000),
+  canEditTableNow,
+  isSharedPromptActionLocked,
+  isLocalMode,
+  isRoomMode,
+  getEligiblePlayerIndices,
+  labels: {
+    getPlayerIdentityLabel
+  },
+  identity: {
+    getCurrentDevicePlayer,
+    canCurrentClientManageRoom,
+    getCurrentDisplayName,
+    getGuestDisplayName,
+    getPendingJoinRequestCount,
+    getCurrentRoomRoleLabel,
+    getClientShortId
+  },
+  actions: {
+    releaseCurrentPlayerIdentity,
+    copyInviteLink,
+    saveCurrentDisplayName,
+    setSyncStatus,
+    approveSeatRequest,
+    declineSeatRequest,
+    togglePlayerClaim,
+    togglePlayerAdmin,
+    createPlayerId,
+    removeAdminPlayerId,
+    commitTableDraft,
+    approveNextHandStart
+  },
+  formatters: {
+    getPlayerName,
+    getSavedPlayer: playerId => players.find(item => item.id === playerId),
+    isCurrentDevicePlayer,
+    getClientShortId,
+    getJoinRequestsForPlayer
+  }
+});
 
 // ----------------------
 // 通用工具函数
@@ -377,7 +413,7 @@ async function saveCurrentDisplayName(rawName, { announce = true } = {}) {
     }
   }
   renderIdentityControls();
-  if (tableManagerOpen) renderTableManager();
+  tableManagerFlow.renderIfOpen();
   return safeName;
 }
 
@@ -916,7 +952,7 @@ function refreshInteractiveControls() {
   renderTableViewToolbar();
   renderDealPromptPanel();
   renderSettlementPreviewPanel();
-  if (tableManagerOpen) renderTableManager();
+  tableManagerFlow.renderIfOpen();
 
   if (handStatus === "waitingDeal") {
     hideShowdownPanel();
@@ -1160,22 +1196,6 @@ function mergePlayerIdentityFields(nextPlayers, sourcePlayers = players, { prese
   });
 }
 
-function syncTableDraftIdentityFromPlayers(sourcePlayers = players) {
-  if (!tableDraft) return;
-  const sourceById = new Map(normalizeIncomingPlayers(sourcePlayers)
-    .map(player => [player.id, player]));
-  tableDraft.forEach((draftPlayer, index) => {
-    const source = sourceById.get(String(draftPlayer.id || ""));
-    if (!source) return;
-    const sourceName = getRawPlayerName(source);
-    if (sourceName && shouldUseRequestNameForSeat(draftPlayer, index)) {
-      draftPlayer.name = sourceName;
-    }
-    draftPlayer.ownerClientId = normalizePlayerOwnerId(source.ownerClientId);
-    draftPlayer.playerKeyHash = String(source.playerKeyHash || "");
-  });
-}
-
 function applyRoomData(data) {
   const gameState = data.gameState;
   currentRound = toNonNegativeNumber(gameState.currentRound, 0);
@@ -1209,7 +1229,7 @@ function applyRoomData(data) {
     ? data.players.map(normalizeIncomingPlayer)
     : players;
   room.players = players;
-  syncTableDraftIdentityFromPlayers(players);
+  tableManagerFlow.syncIdentityFromPlayers(players);
 
   renderIdentityControls();
   renderGameLog(room.gameState.logs);
@@ -1710,7 +1730,7 @@ async function submitSeatOwnershipRequest(playerId, displayName) {
     setMutationInProgress(false);
     renderSetupPlayerInputs();
     updatePlayerBoxes();
-    if (tableManagerOpen) renderTableManager();
+    tableManagerFlow.renderIfOpen();
   }
 }
 
@@ -1745,7 +1765,7 @@ async function approveSeatRequest(requestClientId) {
     showAppAlert("批准请求失败，请稍后再试。");
   } finally {
     setMutationInProgress(false);
-    if (tableManagerOpen) renderTableManager();
+    tableManagerFlow.renderIfOpen();
   }
 }
 
@@ -1776,7 +1796,7 @@ async function declineSeatRequest(requestClientId) {
     showAppAlert("拒绝请求失败，请稍后再试。");
   } finally {
     setMutationInProgress(false);
-    if (tableManagerOpen) renderTableManager();
+    tableManagerFlow.renderIfOpen();
   }
 }
 
@@ -2737,39 +2757,11 @@ async function finalizeSettlementPreview() {
 // ----------------------
 // 牌桌管理
 // ----------------------
-if (tableManagerBackdrop) {
-  tableManagerBackdrop.addEventListener("click", (event) => {
-    if (event.target === tableManagerBackdrop) {
-      closeTableManager();
-    }
-  });
-}
-
 document.addEventListener("click", (event) => {
   if (!event.target.closest?.(".player-box")) {
     closeSeatDetailPopovers();
   }
 });
-
-function createTableDraft() {
-  return createTableDraftFromPlayers(players);
-}
-
-function normalizeDraftPlayer(draftPlayer, index) {
-  return normalizeTableDraftPlayer(draftPlayer, index);
-}
-
-function normalizeTableDraftPlayers() {
-  return normalizeTableDraftPlayerList(tableDraft);
-}
-
-function getPreviewDealerIndex(list = tableDraft) {
-  return getTableDraftPreviewDealerIndex(list);
-}
-
-function getTableDraftSummary() {
-  return getTableDraftSummaryText(tableDraft, { getPlayerIdentityLabel });
-}
 
 function canEditTableNow() {
   if (!canCurrentClientManageRoom()) return false;
@@ -2777,157 +2769,11 @@ function canEditTableNow() {
 }
 
 function openTableManager() {
-  if (isLocalMode() && handStatus !== "settled") {
-    showAppAlert("本地模式的牌桌管理只在本手结算完成后开放。");
-    return;
-  }
-  if (isRoomMode() && !room.roomId) {
-    showAppAlert("请先创建或加入房间。");
-    return;
-  }
-
-  tableDraft = createTableDraft();
-  tableDraftBaseHandId = handId;
-  tableDraftBaseStateVersion = stateVersion;
-  tableManagerOpen = true;
-  renderTableManager();
+  tableManagerFlow.open();
 }
 
 function closeTableManager() {
-  tableManagerOpen = false;
-  tableDraft = null;
-  tableDraftBaseHandId = null;
-  tableDraftBaseStateVersion = null;
-  if (tableManagerBackdrop) tableManagerBackdrop.hidden = true;
-  if (tableManagerPanel) tableManagerPanel.replaceChildren();
-}
-
-function renderTableManager() {
-  if (!tableManagerBackdrop || !tableManagerPanel || !tableManagerOpen || !tableDraft) return;
-
-  tableManagerBackdrop.hidden = false;
-  const canEdit = canEditTableNow();
-  const isActionLocked = isSharedPromptActionLocked();
-  let addButtonLabel = "添加玩家";
-  if (tableDraft.length >= MAX_PLAYERS) {
-    addButtonLabel = `最多 ${MAX_PLAYERS} 人`;
-  } else if (!canEdit) {
-    addButtonLabel = "当前阶段不可加人";
-  }
-
-  const currentPlayer = getCurrentDevicePlayer();
-  const currentIndex = currentPlayer ? players.indexOf(currentPlayer) : -1;
-  const isAdmin = canCurrentClientManageRoom();
-  const savedDisplayName = getCurrentDisplayName();
-  const displayName = savedDisplayName || getGuestDisplayName();
-  const pendingRequestCount = getPendingJoinRequestCount();
-  const identity = isRoomMode()
-    ? {
-      titleText: currentPlayer
-        ? `当前身份：${getPlayerIdentityLabel(currentPlayer, currentIndex)}${isAdmin ? ` · ${getCurrentRoomRoleLabel()}` : ""}`
-        : isAdmin
-          ? `当前身份：${getCurrentRoomRoleLabel()}旁观`
-          : "当前身份：旁观",
-      detailText: `房间 ${room.roomId || "-"} · 昵称 ${displayName}${savedDisplayName ? "" : "（未设置）"} · 设备 ${getClientShortId()}`,
-      displayName: savedDisplayName,
-      displayNamePlaceholder: getGuestDisplayName(),
-      displayNameDisabled: isSharedPromptActionLocked(),
-      hasCurrentPlayer: Boolean(currentPlayer),
-      isAdmin,
-      isActionLocked,
-      roomId: room.roomId,
-      pendingRequestCount
-    }
-    : null;
-
-  const requests = Object.values(normalizeJoinRequests(room.joinRequests))
-    .sort((left, right) => left.requestedAt - right.requestedAt)
-    .map(request => {
-      const targetIndex = players.findIndex(player => player.id === request.playerId);
-      const targetPlayer = targetIndex >= 0 ? players[targetIndex] : null;
-      return {
-        clientId: request.clientId,
-        text: `${getRequestDisplayName(request) || "未填写昵称"} 请求${request.type === "reclaim" ? "接管" : "坐下"} ${targetPlayer ? getPlayerIdentityLabel(targetPlayer, targetIndex) : "未知座位"}`
-      };
-    });
-
-  renderTableManagerView({
-    panel: tableManagerPanel,
-    context: {
-      isRoomMode: isRoomMode(),
-      description: isRoomMode()
-        ? "玩家在这里查看身份与请求；房主/协管可批准入座，并在开局前或两手牌之间调整牌桌。"
-        : "调整座次、筹码和离桌/回桌状态；保存后只影响下一手。",
-      summaryText: canEdit
-        ? getTableDraftSummary()
-        : "身份绑定可随时调整；筹码、座次、删除玩家只在开局前或两手牌之间开放。",
-      canEdit,
-      canManageRoom: isAdmin,
-      isActionLocked,
-      tableDraft,
-      maxPlayers: MAX_PLAYERS,
-      adminPlayerIds: room.adminPlayerIds,
-      normalizeDraftPlayer,
-      addButtonLabel,
-      addDisabled: isActionLocked || !canEdit || tableDraft.length >= MAX_PLAYERS,
-      saveDisabled: isActionLocked || !canEdit,
-      saveAndStartDisabled: isActionLocked || !canEdit || handStatus !== "settled" || getEligiblePlayerIndices(tableDraft.map(normalizeDraftPlayer)).length < 2
-    },
-    identity,
-    requests,
-    callbacks: {
-      onClose: closeTableManager,
-      onAddPlayer: addDraftPlayer,
-      onSave: saveTableDraft,
-      onReleaseCurrentPlayer: releaseCurrentPlayerIdentity,
-      onCopyInvite: copyInviteLink,
-      onSaveDisplayName: async value => {
-        const savedName = await saveCurrentDisplayName(value);
-        if (savedName) setSyncStatus("昵称已保存", "ok");
-      },
-      onShowPendingRequests: count => {
-        showAppAlert(`当前有 ${count} 个待处理请求。请在下方列表批准或拒绝。`);
-      },
-      onApproveSeatRequest: approveSeatRequest,
-      onDeclineSeatRequest: declineSeatRequest,
-      onMoveDraftPlayer: moveDraftPlayer,
-      onDraftNameInput: (index, value) => {
-        tableDraft[index].name = value;
-      },
-      onSetDraftChips: setDraftChips,
-      onAdjustDraftChips: adjustDraftChips,
-      onSetDraftStatus: setDraftStatus,
-      onReturnSeat: returnDraftPlayerToTable,
-      onDeleteDraftPlayer: deleteDraftPlayer,
-      onTogglePlayerClaim: async playerId => {
-        await togglePlayerClaim(playerId);
-        renderTableManager();
-      },
-      onTogglePlayerAdmin: togglePlayerAdmin
-    },
-    formatters: {
-      getPlayerName,
-      getSavedPlayer: playerId => players.find(item => item.id === playerId),
-      isCurrentDevicePlayer,
-      getClientShortId,
-      getJoinRequestsForPlayer
-    }
-  });
-}
-
-function addDraftPlayer() {
-  if (tableDraft.length >= MAX_PLAYERS) {
-    showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
-    renderTableManager();
-    return;
-  }
-
-  appendDraftPlayer(tableDraft, {
-    createPlayerId,
-    initialChips: toPositiveInteger(initialChipsInput.value, 1000),
-    maxPlayers: MAX_PLAYERS
-  });
-  renderTableManager();
+  tableManagerFlow.close();
 }
 
 async function copyInviteLink() {
@@ -2941,16 +2787,9 @@ async function copyInviteLink() {
   }
 }
 
-function returnDraftPlayerToTable(index) {
-  returnTableDraftPlayerToTable(tableDraft, index, {
-    fallbackChips: toPositiveInteger(initialChipsInput.value, 1000)
-  });
-  renderTableManager();
-}
-
-function moveDraftPlayer(index, direction) {
-  moveTableDraftPlayer(tableDraft, index, direction);
-  renderTableManager();
+function removeAdminPlayerId(playerId) {
+  room.adminPlayerIds = normalizeAdminPlayerIds(room.adminPlayerIds)
+    .filter(id => id !== playerId);
 }
 
 async function togglePlayerAdmin(playerId, shouldGrant) {
@@ -2978,62 +2817,31 @@ async function togglePlayerAdmin(playerId, shouldGrant) {
     showAppAlert("协管权限更新失败，请稍后再试。");
   } finally {
     setMutationInProgress(false);
-    if (tableManagerOpen) renderTableManager();
+    tableManagerFlow.renderIfOpen();
   }
 }
 
-async function deleteDraftPlayer(index) {
-  if (!canEditTableNow() || tableDraft.length <= 2) return;
-  const target = tableDraft[index];
-  const confirmed = await showAppConfirm(`删除 ${getPlayerIdentityLabel(target, index, tableDraft)}？这只会在保存后生效。`, {
-    title: "确认删除玩家",
-    confirmLabel: "删除",
-    danger: true
-  });
-  if (!confirmed) return;
-  const removed = deleteTableDraftPlayer(tableDraft, index);
-  room.adminPlayerIds = normalizeAdminPlayerIds(room.adminPlayerIds).filter(id => id !== removed?.id);
-  renderTableManager();
-}
-
-function adjustDraftChips(index, delta) {
-  adjustTableDraftChips(tableDraft, index, delta);
-  renderTableManager();
-}
-
-function setDraftChips(index, value) {
-  setTableDraftChips(tableDraft, index, value);
-  renderTableManager();
-}
-
-function setDraftStatus(index, status) {
-  setTableDraftStatus(tableDraft, index, status, {
-    fallbackChips: toPositiveInteger(initialChipsInput.value, 1000)
-  });
-  renderTableManager();
-}
-
-async function saveTableDraft({ startNextHand = false } = {}) {
+async function commitTableDraft({
+  nextPlayers: draftPlayers,
+  startNextHand = false,
+  baseHandId,
+  baseStateVersion,
+  summaryText
+} = {}) {
   if (!canEditTableNow()) {
     showAppAlert("只有房主或协管可以保存牌桌管理设置。");
-    return;
-  }
-  if (!tableDraft) {
-    showAppAlert("当前不能保存牌桌管理设置");
-    return;
+    return { ok: false };
   }
 
-  let nextPlayers = mergePlayerIdentityFields(normalizeTableDraftPlayers(), players);
+  let nextPlayers = mergePlayerIdentityFields(draftPlayers, players);
   if (nextPlayers.length > MAX_PLAYERS) {
     showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
-    renderTableManager();
-    return;
+    return { ok: false };
   }
 
   if (startNextHand && getEligiblePlayerIndices(nextPlayers).length < 2) {
     showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
-    renderTableManager();
-    return;
+    return { ok: false };
   }
 
   if (handStatus === "setup") {
@@ -3054,16 +2862,15 @@ async function saveTableDraft({ startNextHand = false } = {}) {
     updateSetupActionState();
     updatePlayerBoxes();
     await syncLobbyState();
-    closeTableManager();
-    return;
+    return { ok: true };
   }
 
-  const expectedHandId = tableDraftBaseHandId;
-  const expectedStateVersion = tableDraftBaseStateVersion;
+  const expectedHandId = baseHandId;
+  const expectedStateVersion = baseStateVersion;
   if (expectedHandId !== handId || expectedStateVersion !== stateVersion) {
     showAppAlert("牌桌已被其他设备更新，请关闭后重新打开牌桌管理。");
     closeTableManager();
-    return;
+    return { ok: false };
   }
 
   setMutationInProgress(true);
@@ -3078,7 +2885,7 @@ async function saveTableDraft({ startNextHand = false } = {}) {
     player.position = getSeatStatusLabel(player.seatStatus);
   });
   updatePlayerBoxes();
-  updateGameLog(`牌桌已更新：${getTableDraftSummary()}`);
+  updateGameLog(`牌桌已更新：${summaryText}`);
 
   batchingStateUpdate = false;
   const saved = await updateFirebaseState({
@@ -3091,13 +2898,13 @@ async function saveTableDraft({ startNextHand = false } = {}) {
 
   if (!saved) {
     showAppAlert("牌桌管理没有保存成功，已恢复到最新远端状态");
-    return;
+    return { ok: false };
   }
 
-  closeTableManager();
-  if (startNextHand) {
-    await approveNextHandStart(expectedHandId);
-  }
+  return {
+    ok: true,
+    startNextHandExpectedHandId: startNextHand ? expectedHandId : null
+  };
 }
 
 // ----------------------
