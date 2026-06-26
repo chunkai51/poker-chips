@@ -20,10 +20,10 @@ import {
   createDealPrompt,
   normalizeIncomingDealPrompt as normalizeDealPrompt
 } from "./core/deal-prompts.js";
+import { createSeatIdentityFlow } from "./room/seat-identity-flow.js";
 import { createTableScreenController } from "./table/table-screen-controller.js";
 import { createTableManagerFlow } from "./table/table-manager-flow.js";
 import {
-  openTableActionDialog,
   showAppAlert,
   showAppConfirm
 } from "./ui/dialogs.js";
@@ -42,7 +42,6 @@ import {
   readRoomGameState,
   roomExists,
   transactRoom,
-  updateJoinRequest,
   updateRoomMember
 } from "./room/room-sync.js";
 import {
@@ -72,14 +71,11 @@ import {
 import {
   createInviteToken,
   generateRoomId,
-  getClientShortId as formatClientShortId,
   getInviteUrl as buildInviteUrl,
-  getPreferredDisplayName as readPreferredDisplayName,
   getRoomLinkParams as parseRoomLinkParams,
   normalizeInviteToken,
   normalizeJoinRequests,
-  normalizeRoomId,
-  rememberPreferredDisplayName as storePreferredDisplayName
+  normalizeRoomId
 } from "./room/room-entry.js";
 import {
   buildLobbyRoomForWrite,
@@ -89,16 +85,7 @@ import {
   createLocalModeRoom
 } from "./room/room-lobby-controller.js";
 import {
-  applyLocalPlayerClaimState,
-  buildApproveSeatRequestRoomUpdate,
-  buildClaimPlayerRoomUpdate,
-  buildDeclineSeatRequestRoomUpdate,
-  buildReleasePlayerRoomUpdate,
   buildTogglePlayerAdminRoomUpdate,
-  createSeatOwnershipRequest,
-  getClaimAuthForPlayer as getClaimAuthForPlayerData,
-  getSetupClaimLabel as getSetupClaimLabelData,
-  isClaimedByOtherDevice as isClaimedByOtherDeviceData
 } from "./room/room-claims-controller.js";
 import {
   createPlayerId as createPlayerModelId,
@@ -135,11 +122,9 @@ import {
 } from "./room/room-permissions.js";
 import {
   ROOM_MODES,
-  createAccessCode,
   createMembersMap,
   getClientId,
   getRoomHostId,
-  hashAccessCode,
   normalizeAdminPlayerIds,
   normalizeMembers,
   normalizePlayerOwnerId,
@@ -269,6 +254,68 @@ let room = {
     updatedBy: clientId
   }
 };
+
+const seatIdentityFlow = createSeatIdentityFlow({
+  getState: () => ({
+    players,
+    room,
+    clientId,
+    handStatus
+  }),
+  modes: {
+    isRoomMode
+  },
+  permissions: {
+    isCurrentDevicePlayer,
+    getCurrentDevicePlayer,
+    canCurrentClientManageRoom,
+    canClientManageRoomData
+  },
+  labels: {
+    getPlayerIdentityLabel
+  },
+  access: {
+    getRememberedPlayerCode,
+    rememberPlayerCode,
+    getPlayerCodeSalt,
+    isPlayerCodeValid
+  },
+  remote: {
+    updateRoomMemberPresence,
+    setMutationInProgress,
+    setSyncStatus,
+    refreshFromRemote,
+    setSyncReady: value => {
+      syncReady = Boolean(value);
+    },
+    inferHandStatus,
+    getRoomHostId,
+    normalizeRoomMode
+  },
+  applyLocalClaimResult: result => {
+    players = result.players;
+    room.members = result.members;
+    if (result.resetNextHandApprovals) nextHandApprovals = {};
+    room.players = players;
+  },
+  setLocalJoinRequest: (requestClientId, request) => {
+    room.joinRequests = {
+      ...normalizeJoinRequests(room.joinRequests),
+      [requestClientId]: request
+    };
+  },
+  refreshUi: {
+    getAliasInputValue: () => playerAliasInput?.value || "",
+    setAliasInputValue: value => {
+      if (playerAliasInput) playerAliasInput.value = value;
+    },
+    renderIdentityControls,
+    renderTableManagerIfOpen: () => tableManagerFlow.renderIfOpen(),
+    renderSetupPlayerInputs,
+    updatePlayerBoxes,
+    renderTableViewToolbar
+  }
+});
 
 const tableManagerFlow = createTableManagerFlow({
   elements: {
@@ -434,51 +481,35 @@ function shouldUseRequestNameForSeat(player, index = players.indexOf(player)) {
 }
 
 function getClientShortId(value = clientId) {
-  return formatClientShortId(value);
+  return seatIdentityFlow.getClientShortId(value);
 }
 
 function getPreferredDisplayName(roomId = room.roomId) {
-  return readPreferredDisplayName(roomId);
+  return seatIdentityFlow.getPreferredDisplayName(roomId);
 }
 
 function rememberPreferredDisplayName(name, roomId = room.roomId) {
-  storePreferredDisplayName(name, roomId);
+  seatIdentityFlow.rememberPreferredDisplayName(name, roomId);
 }
 
 function normalizeDisplayName(name = "") {
-  return String(name || "").trim().slice(0, 24);
+  return seatIdentityFlow.normalizeDisplayName(name);
 }
 
 function getCurrentMemberDisplayName(actorClientId = clientId) {
-  return normalizeDisplayName(normalizeMembers(room.members)[actorClientId]?.displayName);
+  return seatIdentityFlow.getCurrentMemberDisplayName(actorClientId);
 }
 
 function getCurrentDisplayName() {
-  return normalizeDisplayName(playerAliasInput?.value || getPreferredDisplayName() || getCurrentMemberDisplayName());
+  return seatIdentityFlow.getCurrentDisplayName();
 }
 
 function getGuestDisplayName(actorClientId = clientId) {
-  return `访客 ${getClientShortId(actorClientId)}`;
+  return seatIdentityFlow.getGuestDisplayName(actorClientId);
 }
 
 async function saveCurrentDisplayName(rawName, { announce = true } = {}) {
-  const safeName = normalizeDisplayName(rawName);
-  if (!safeName) {
-    if (announce) showAppAlert("请输入昵称。");
-    return "";
-  }
-
-  rememberPreferredDisplayName(safeName);
-  if (playerAliasInput) playerAliasInput.value = safeName;
-  if (isRoomMode() && room.roomId) {
-    const saved = await updateRoomMemberPresence({ displayName: safeName });
-    if (!saved && announce) {
-      showAppAlert("昵称已保存在本机，但暂时没有同步到房间。请检查网络后重试。");
-    }
-  }
-  renderIdentityControls();
-  tableManagerFlow.renderIfOpen();
-  return safeName;
+  return seatIdentityFlow.saveCurrentDisplayName(rawName, { announce });
 }
 
 function getInviteUrl(roomId = room.roomId, inviteToken = room.inviteToken) {
@@ -490,30 +521,19 @@ function getRoomLinkParams() {
 }
 
 function getJoinRequestForClient(actorClientId = clientId) {
-  return normalizeJoinRequests(room.joinRequests)[normalizePlayerOwnerId(actorClientId)] || null;
+  return seatIdentityFlow.getJoinRequestForClient(actorClientId);
 }
 
 function getJoinRequestsForPlayer(playerId) {
-  return Object.values(normalizeJoinRequests(room.joinRequests))
-    .filter(request => request.playerId === playerId);
+  return seatIdentityFlow.getJoinRequestsForPlayer(playerId);
 }
 
 function getPendingJoinRequestCount() {
-  return Object.keys(normalizeJoinRequests(room.joinRequests)).length;
+  return seatIdentityFlow.getPendingJoinRequestCount();
 }
 
 function touchMemberWithProfile(existingMembers = room.members, actorClientId = clientId, overrides = {}) {
-  const members = touchMember(existingMembers, actorClientId);
-  const currentMember = members[actorClientId] || {};
-  const displayName = String(overrides.displayName || currentMember.displayName || getPreferredDisplayName()).trim().slice(0, 24);
-  members[actorClientId] = {
-    ...currentMember,
-    ...overrides,
-    clientId: actorClientId,
-    displayName,
-    lastSeenAt: Date.now()
-  };
-  return members;
+  return seatIdentityFlow.touchMemberWithProfile(existingMembers, actorClientId, overrides);
 }
 
 function getRememberedAdminCode(roomId = room.roomId) {
@@ -1527,341 +1547,51 @@ function createSetupPlayer(overrides = {}) {
 }
 
 function isClaimedByOtherDevice(player) {
-  return isClaimedByOtherDeviceData(player, clientId);
+  return seatIdentityFlow.isClaimedByOtherDevice(player);
 }
 
 function getSetupClaimLabel(player) {
-  return getSetupClaimLabelData({
-    player,
-    roomMode: isRoomMode(),
-    currentRequest: getJoinRequestForClient(),
-    isCurrentDevicePlayer: isCurrentDevicePlayer(player),
-    claimedByOtherDevice: isClaimedByOtherDevice(player),
-    canManageRoom: canCurrentClientManageRoom()
-  });
+  return seatIdentityFlow.getSetupClaimLabel(player);
 }
 
 function applyLocalPlayerClaim(playerId, shouldClaim) {
-  const result = applyLocalPlayerClaimState({
-    players,
-    members: room.members,
-    clientId,
-    playerId,
-    shouldClaim,
-    handStatus
-  });
-  if (!result.ok) return false;
-  players = result.players;
-  room.members = result.members;
-  if (result.resetNextHandApprovals) nextHandApprovals = {};
-  room.players = players;
-  return true;
+  return seatIdentityFlow.applyLocalPlayerClaim(playerId, shouldClaim);
 }
 
 function getClaimAuthForPlayer(player, code = "", forceAdmin = false) {
-  return getClaimAuthForPlayerData({
-    player,
-    code,
-    rememberedCode: getRememberedPlayerCode(player?.id),
-    forceAdmin,
-    canManageRoom: canCurrentClientManageRoom(),
-    isPlayerCodeValid
-  });
+  return seatIdentityFlow.getClaimAuthForPlayer(player, code, forceAdmin);
 }
 
 async function claimPlayerIdentity(playerId, { code = "", forceAdmin = false, announceCode = true } = {}) {
-  if (!isRoomMode()) return;
-  const player = players.find(item => item.id === playerId);
-  if (!player) return;
-
-  if (!room.roomId) {
-    applyLocalPlayerClaim(playerId, true);
-    renderSetupPlayerInputs();
-    updatePlayerBoxes();
-    renderTableViewToolbar();
-    return;
-  }
-
-  const auth = getClaimAuthForPlayer(player, code, forceAdmin);
-  if (!auth.allowed) {
-    showAppAlert("请输入该玩家的玩家码，或由管理员重置/接管。");
-    return;
-  }
-  const generatedCode = auth.firstClaim && !auth.canForce ? createAccessCode() : "";
-  const generatedHash = generatedCode
-    ? hashAccessCode(generatedCode, getPlayerCodeSalt(playerId))
-    : "";
-
-  setMutationInProgress(true);
-  try {
-    const result = await transactRoom(room.roomId, (currentRoom) => {
-      return buildClaimPlayerRoomUpdate({
-        currentRoom,
-        room,
-        playerId,
-        clientId,
-        auth,
-        forceAdmin,
-        generatedHash,
-        currentDisplayName: getPreferredDisplayName(),
-        canClientManageRoom: canClientManageRoomData,
-        isPlayerCodeValid,
-        inferHandStatus,
-        getRoomHostId,
-        normalizeRoomMode,
-        touchMember
-      });
-    }, { applyLocally: false });
-
-    if (!result.committed) {
-      showAppAlert("绑定没有成功，请检查玩家码或等待同步后重试。");
-      const refreshed = await refreshFromRemote();
-      if (!refreshed) syncReady = false;
-      return;
-    }
-
-    if (generatedCode) {
-      rememberPlayerCode(playerId, generatedCode);
-      if (announceCode) {
-        showAppAlert(`${getPlayerIdentityLabel(player)} 已绑定到当前设备。\n玩家码：${generatedCode}\n请保存，换设备时可用它重新接管。`, "玩家码已生成");
-      }
-    } else if (auth.code) {
-      rememberPlayerCode(playerId, auth.code);
-    }
-    applyLocalPlayerClaim(playerId, true);
-    setSyncStatus("已同步", "ok");
-  } catch (_) {
-    showAppAlert("绑定同步失败，请稍后再试。");
-  } finally {
-    setMutationInProgress(false);
-    renderSetupPlayerInputs();
-    updatePlayerBoxes();
-    renderTableViewToolbar();
-  }
+  await seatIdentityFlow.claimPlayerIdentity(playerId, { code, forceAdmin, announceCode });
 }
 
 async function releaseCurrentPlayerIdentity() {
-  if (!isRoomMode() || !room.roomId) return;
-  const currentPlayer = getCurrentDevicePlayer();
-  if (!currentPlayer) return;
-  setMutationInProgress(true);
-  try {
-    const result = await transactRoom(room.roomId, (currentRoom) => {
-      return buildReleasePlayerRoomUpdate({
-        currentRoom,
-        room,
-        clientId,
-        touchMember
-      });
-    }, { applyLocally: false });
-    if (!result.committed) {
-      showAppAlert("退出绑定没有成功，请等待同步后重试。");
-      await refreshFromRemote();
-      return;
-    }
-    applyLocalPlayerClaim(currentPlayer.id, false);
-    setSyncStatus("已同步", "ok");
-  } catch (_) {
-    showAppAlert("退出绑定同步失败，请稍后再试。");
-  } finally {
-    setMutationInProgress(false);
-    renderSetupPlayerInputs();
-    updatePlayerBoxes();
-    renderTableViewToolbar();
-  }
+  await seatIdentityFlow.releaseCurrentPlayerIdentity();
 }
 
 async function togglePlayerClaim(playerId) {
-  const player = players.find(item => item.id === playerId);
-  if (!player) return;
-  if (isCurrentDevicePlayer(player)) {
-    await releaseCurrentPlayerIdentity();
-    return;
-  }
-  if (isClaimedByOtherDevice(player)) {
-    const confirmed = await showAppConfirm(`${getPlayerIdentityLabel(player)} 已绑定到另一台设备。${canCurrentClientManageRoom() ? "确认要把这个座位接管到当前设备吗？" : "要向房主/协管提交接管请求吗？"}`, {
-      title: "确认接管座位",
-      confirmLabel: canCurrentClientManageRoom() ? "确认接管" : "提交请求",
-      danger: canCurrentClientManageRoom()
-    });
-    if (!confirmed) return;
-  }
-  if (canCurrentClientManageRoom()) {
-    await claimPlayerIdentity(playerId, { forceAdmin: true, announceCode: false });
-    return;
-  }
-  await requestSeatOwnership(playerId);
+  await seatIdentityFlow.togglePlayerClaim(playerId);
 }
 
 function openDisplayNameRequestDialog({ playerId, title = "设置昵称后请求入座" } = {}) {
-  const player = players.find(item => item.id === playerId);
-  if (!player) return;
-
-  openTableActionDialog({
-    title,
-    description: `你将以这个昵称请求绑定 ${getPlayerIdentityLabel(player)}。昵称只用于显示，不影响设备身份。`,
-    className: "identity-name-dialog",
-    buildContent(body, closeDialog) {
-      const form = document.createElement("form");
-      form.className = "identity-name-dialog-form";
-
-      const label = document.createElement("label");
-      label.textContent = "你的昵称";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.maxLength = 24;
-      input.placeholder = getGuestDisplayName();
-      input.value = getCurrentDisplayName();
-      input.setAttribute("aria-label", "你的昵称");
-      label.appendChild(input);
-      form.appendChild(label);
-
-      const error = document.createElement("span");
-      error.className = "identity-name-dialog-error";
-      form.appendChild(error);
-
-      const actions = document.createElement("div");
-      actions.className = "table-center-action-buttons";
-      actions.appendChild(createButton("取消", closeDialog, false, "prompt-secondary"));
-      actions.appendChild(createButton("保存并请求", async () => {
-        const displayName = normalizeDisplayName(input.value);
-        if (!displayName) {
-          error.textContent = "请输入昵称后再请求入座。";
-          input.focus();
-          return;
-        }
-        closeDialog();
-        const savedName = await saveCurrentDisplayName(displayName, { announce: false });
-        if (savedName) {
-          await submitSeatOwnershipRequest(playerId, savedName);
-        }
-      }, false, "prompt-primary"));
-      form.appendChild(actions);
-
-      form.addEventListener("submit", event => {
-        event.preventDefault();
-        actions.querySelector(".prompt-primary")?.click();
-      });
-
-      body.appendChild(form);
-      requestAnimationFrame(() => input.focus());
-    }
-  });
+  seatIdentityFlow.openDisplayNameRequestDialog({ playerId, title });
 }
 
 async function requestSeatOwnership(playerId) {
-  if (!isRoomMode() || !room.roomId) return;
-  const player = players.find(item => item.id === playerId);
-  if (!player) return;
-  const displayName = getCurrentDisplayName();
-  if (!displayName) {
-    openDisplayNameRequestDialog({ playerId });
-    return;
-  }
-  await submitSeatOwnershipRequest(playerId, displayName);
+  await seatIdentityFlow.requestSeatOwnership(playerId);
 }
 
 async function submitSeatOwnershipRequest(playerId, displayName) {
-  if (!isRoomMode() || !room.roomId) return;
-  const player = players.find(item => item.id === playerId);
-  if (!player) return;
-  const safeDisplayName = normalizeDisplayName(displayName);
-  if (!safeDisplayName) {
-    openDisplayNameRequestDialog({ playerId });
-    return;
-  }
-  rememberPreferredDisplayName(safeDisplayName);
-  const request = createSeatOwnershipRequest({
-    clientId,
-    playerId,
-    displayName: safeDisplayName,
-    claimedByOtherDevice: isClaimedByOtherDevice(player),
-    inviteToken: room.inviteToken || ""
-  });
-  setMutationInProgress(true);
-  try {
-    await updateJoinRequest(room.roomId, clientId, request);
-    room.joinRequests = {
-      ...normalizeJoinRequests(room.joinRequests),
-      [clientId]: request
-    };
-    await updateRoomMemberPresence({ displayName: safeDisplayName });
-    showAppAlert("请求已发送。房主或协管批准后，这个座位会绑定到当前设备。", "等待批准");
-    setSyncStatus("等待批准", "ok");
-  } catch (_) {
-    showAppAlert("请求发送失败，请检查房间连接后重试。");
-  } finally {
-    setMutationInProgress(false);
-    renderSetupPlayerInputs();
-    updatePlayerBoxes();
-    tableManagerFlow.renderIfOpen();
-  }
+  await seatIdentityFlow.submitSeatOwnershipRequest(playerId, displayName);
 }
 
 async function approveSeatRequest(requestClientId) {
-  if (!canCurrentClientManageRoom() || !room.roomId) return;
-  const request = normalizeJoinRequests(room.joinRequests)[requestClientId];
-  if (!request) return;
-  const target = players.find(player => player.id === request.playerId);
-  if (!target) return;
-
-  setMutationInProgress(true);
-  try {
-    const result = await transactRoom(room.roomId, (currentRoom) => {
-      return buildApproveSeatRequestRoomUpdate({
-        currentRoom,
-        room,
-        clientId,
-        requestClientId,
-        expectedPlayerId: request.playerId,
-        canClientManageRoom: canClientManageRoomData,
-        inferHandStatus,
-        touchMember
-      });
-    }, { applyLocally: false });
-    if (!result.committed) {
-      showAppAlert("批准请求失败，房间状态可能已变化。");
-      await refreshFromRemote();
-      return;
-    }
-    await refreshFromRemote();
-  } catch (_) {
-    showAppAlert("批准请求失败，请稍后再试。");
-  } finally {
-    setMutationInProgress(false);
-    tableManagerFlow.renderIfOpen();
-  }
+  await seatIdentityFlow.approveSeatRequest(requestClientId);
 }
 
 async function declineSeatRequest(requestClientId) {
-  if (!canCurrentClientManageRoom() || !room.roomId) return;
-  const normalizedRequestClientId = normalizePlayerOwnerId(requestClientId);
-  if (!normalizedRequestClientId) return;
-  setMutationInProgress(true);
-  try {
-    const result = await transactRoom(room.roomId, (currentRoom) => {
-      return buildDeclineSeatRequestRoomUpdate({
-        currentRoom,
-        room,
-        clientId,
-        requestClientId: normalizedRequestClientId,
-        canClientManageRoom: canClientManageRoomData,
-        touchMember
-      });
-    }, { applyLocally: false });
-    if (!result.committed) {
-      showAppAlert("拒绝请求失败，房间状态可能已变化。");
-      await refreshFromRemote();
-      return;
-    }
-    await refreshFromRemote();
-    setSyncStatus("已同步", "ok");
-  } catch (_) {
-    showAppAlert("拒绝请求失败，请稍后再试。");
-  } finally {
-    setMutationInProgress(false);
-    tableManagerFlow.renderIfOpen();
-  }
+  await seatIdentityFlow.declineSeatRequest(requestClientId);
 }
 
 function scheduleLobbySync() {
