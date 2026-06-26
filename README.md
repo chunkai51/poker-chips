@@ -146,12 +146,12 @@ http://localhost:8000/
 
 - `index.html`: 页面结构和主要 DOM 容器。
 - `styles.css`: 全站视觉主题、响应式布局、游戏控件样式和 Chip Riffle 外观皮肤。
-- `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步和 DOM 渲染。
+- `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步、模块组合和事件接线。
 - `src/core/`: 牌桌规则、手牌流程、玩家模型、审批进度、发牌提示和结算计算等可测试纯逻辑。
 - `src/game/`: 手牌生命周期等较完整的游戏流程状态变换，保持无 DOM、无 Firebase 写入。
 - `src/room/`: 房间身份、权限、同步 payload、Firebase 房间读写和准备页/席位请求数据变换。
 - `src/ui/`: 通用弹窗、按钮工厂、玩家标签、加注面板、中央操作区、席位管理窗口和玩家手册 DOM。
-- `src/table/`: 牌桌布局坐标、本地视角偏好和席位管理 draft 逻辑。
+- `src/table/`: 牌桌布局坐标、本地视角偏好、席位管理 flow、牌桌主界面 controller 和席位管理 draft 逻辑。
 - `src/riffle/`: 页眉 Chip Riffle 浮窗、洗筹动画和采样音效播放器。
 - `src/services/`: 第三方服务初始化和薄封装，目前只有 Firebase。
 - `src/room/access-codes.js`: 旧版管理员/玩家恢复码的本地缓存、salt 和校验工具。
@@ -179,6 +179,8 @@ http://localhost:8000/
 - `src/riffle/riffle.js`: 页眉 Chip Riffle 浮窗、换肤按钮、真实顺序洗筹动画和交互状态。
 - `src/riffle/riffle-sound.js`: Chip Riffle 浮窗的采样音效播放器。
 - `src/ui/table-center-ui.js`: 牌桌中央状态区、等待提示、赢家选择和结算预览的 DOM 渲染。
+- `src/table/table-screen-controller.js`: 牌桌主界面的玩家标签、中央操作区、加注/摊牌/结算弹窗入口和屏幕刷新协调。
+- `src/table/table-manager-flow.js`: 席位与身份管理窗口的打开/关闭、草稿编辑、请求列表和保存提交流程。
 - `src/table/table-manager-controller.js`: 席位管理 draft 的座次、筹码、状态、摘要和归一化逻辑。
 - `src/ui/table-manager-ui.js`: 席位与身份管理窗口的 DOM 渲染。
 - `src/table/table-layout.js`: 牌桌玩家标签的可调座位坐标和本地旋转计算。

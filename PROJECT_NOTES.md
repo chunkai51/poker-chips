@@ -436,6 +436,19 @@ Owns DOM builders for table-center UI:
 
 `src/main.js` still decides which state is active, which actions are allowed, and what callbacks run. Keep this module UI-focused and callback-driven.
 
+### `src/table/table-screen-controller.js`
+
+Owns the poker-table screen composition:
+
+- Player-seat rendering around the table
+- Table-center status and operation slot
+- Raise dialog entry and callback wiring
+- Showdown winner-selection dialog entry
+- Settlement-preview dialog entry
+- Lightweight panel show/hide wrappers used by hand and settlement flows
+
+It receives current state through `getState()` and grouped dependencies for modes, permissions, labels, betting helpers, approval helpers, and actions. Keep this module focused on rendering and UI event wiring. It should not mutate authoritative game state directly, write Firebase, or decide remote conflict behavior.
+
 ### `src/table/table-manager-controller.js`
 
 Owns draft-state logic for the table management workflow:
@@ -448,6 +461,18 @@ Owns draft-state logic for the table management workflow:
 
 It does not save to Firebase and does not render DOM. Persistence, permissions, and conflict guards remain in `src/main.js` for now.
 
+### `src/table/table-manager-flow.js`
+
+Owns the seat/identity management window workflow:
+
+- Opens and closes the management modal
+- Owns the transient table draft while the modal is open
+- Renders identity summary, seat requests, and draft rows through `src/ui/table-manager-ui.js`
+- Applies local draft edits before passing normalized players back to `src/main.js`
+- Delegates authoritative save, room sync, admin toggles, and seat-claim actions through explicit callbacks
+
+This module intentionally sits between `src/table/table-manager-controller.js` and `src/ui/table-manager-ui.js`. It may own UI-local draft state, but it should not become the global app state store and should not call Firebase directly.
+
 ### `src/ui/table-manager-ui.js`
 
 Owns DOM builders for the seat and identity management panel:
@@ -457,11 +482,11 @@ Owns DOM builders for the seat and identity management panel:
 - Seat-request list
 - Player rows with seat order, chip editing, seat status, and identity controls
 
-`src/main.js` prepares the context, permission booleans, formatter functions, and mutation callbacks. This module should stay UI-focused and avoid direct Firebase writes or room-state ownership.
+`src/table/table-manager-flow.js` prepares the context, permission booleans, formatter functions, and mutation callbacks. This module should stay UI-focused and avoid direct Firebase writes or room-state ownership.
 
 ### `src/main.js`
 
-Still orchestrates most of the app:
+Still orchestrates the app shell and authoritative browser state:
 
 - Module-level game state
 - Player setup
@@ -471,9 +496,9 @@ Still orchestrates most of the app:
 - Showdown settlement
 - Next-hand reset
 - Firebase sync and conflict guards
-- DOM rendering
+- Composition of flow/controllers and their callbacks
 
-It now delegates room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, hand lifecycle transitions to `src/game/hand-controller.js`, settlement flow transitions to `src/game/settlement-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, hand lifecycle transitions to `src/game/hand-controller.js`, settlement flow transitions to `src/game/settlement-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-screen composition to `src/table/table-screen-controller.js`, table-manager workflow to `src/table/table-manager-flow.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/ui/guide.js`
 
