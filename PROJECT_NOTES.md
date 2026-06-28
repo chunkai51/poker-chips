@@ -25,12 +25,14 @@ index.html
        -> imports player seat DOM builders from src/ui/player-seat-ui.js
        -> imports raise action panel DOM builders from src/ui/raise-ui.js
        -> imports room database adapter helpers from src/room/room-sync.js
+       -> composes setup/lobby flow from src/room/setup-lobby-flow.js
+       -> composes room session flow from src/room/room-session-flow.js
+       -> composes guarded game-sync flow from src/room/game-sync-flow.js
        -> imports room claim/request helpers from src/room/room-claims-controller.js
        -> imports room entry/link/request helpers from src/room/room-entry.js
        -> imports room lobby state helpers from src/room/room-lobby-controller.js
        -> imports room permission helpers from src/room/room-permissions.js
        -> imports room/game-state normalizers from src/room/room-state.js
-       -> imports game-state sync snapshot helpers from src/room/game-state-snapshot.js
        -> imports hand-flow state transition helpers from src/core/hand-flow-controller.js
        -> imports hand lifecycle state transitions from src/game/hand-controller.js
        -> imports settlement state transitions from src/game/settlement-controller.js
@@ -167,7 +169,7 @@ Thin Realtime Database adapter for room-level network access:
 - Room-level transactions
 - Member presence and join-request partial updates
 
-Keep Firebase `ref/get/update/onValue/runTransaction` usage here instead of spreading low-level database calls across UI and game-flow code. Business transaction bodies still live in `src/main.js` for now; a later split can move command-specific mutations behind a cleaner room command layer.
+Keep Firebase `ref/get/update/onValue/runTransaction` usage here instead of spreading low-level database calls across UI and game-flow code. Higher-level room/session orchestration now belongs in `src/room/room-session-flow.js`, while guarded in-hand state writes belong in `src/room/game-sync-flow.js`.
 
 ### `src/room/room-entry.js`
 
@@ -192,6 +194,42 @@ Owns DOM-free lobby-state helpers:
 - Room transaction payload construction for lobby sync
 
 This module should receive dependencies explicitly through parameters, such as `createMembersMap`, `touchMemberWithProfile`, `canClientManageRoom`, `mergePlayerIdentityFields`, and normalizers. It should not read module-level app state, render DOM, start listeners, or call Firebase directly.
+
+### `src/room/setup-lobby-flow.js`
+
+Owns setup-page player editing and pregame lobby sync:
+
+- Setup player row rendering
+- Add/delete player interactions before game start
+- Setup input enable/disable state based on host/cohost permissions
+- Debounced lobby writes while still in `handStatus === "setup"`
+- Player-id and setup-player creation for setup/table-manager callers
+
+This is a workflow module. It receives `getState`, mutation callbacks, permission helpers, identity callbacks, and remote transaction helpers from `src/main.js`. It may render setup DOM and call the room transaction adapter passed to it, but it should not own the global app state or in-hand betting logic.
+
+### `src/room/room-session-flow.js`
+
+Owns the room lifecycle around the poker hand:
+
+- Local/room mode switching
+- Room creation without overwriting existing rooms
+- Room joining and invite-link auto-join
+- Invite-link copying
+- Firebase room listener lifecycle
+- Remote room reads and member presence writes
+
+This module calls the thin Firebase adapter in `src/room/room-sync.js` and asks `src/main.js` to apply incoming room data through a callback. It should not decide betting, settlement, or hand-reset rules.
+
+### `src/room/game-sync-flow.js`
+
+Owns guarded in-hand remote writes:
+
+- Local game-state snapshot creation before writing
+- Merged vs guarded room transaction selection
+- Conflict handling for hand id, hand status, state version, and custom remote guards
+- Remote-hand-still-valid checks used before settlement/reset flows
+
+This module composes `src/room/game-state-snapshot.js` and receives explicit state/dependency callbacks from `src/main.js`. It should stay focused on remote write semantics and not render UI beyond delegated status/refresh callbacks.
 
 ### `src/room/room-claims-controller.js`
 
@@ -489,16 +527,14 @@ Owns DOM builders for the seat and identity management panel:
 Still orchestrates the app shell and authoritative browser state:
 
 - Module-level game state
-- Player setup
 - Betting actions
 - Round advancement
 - Side-pot construction
 - Showdown settlement
 - Next-hand reset
-- Firebase sync and conflict guards
 - Composition of flow/controllers and their callbacks
 
-It now delegates room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, hand lifecycle transitions to `src/game/hand-controller.js`, settlement flow transitions to `src/game/settlement-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-screen composition to `src/table/table-screen-controller.js`, table-manager workflow to `src/table/table-manager-flow.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates setup/lobby editing to `src/room/setup-lobby-flow.js`, room lifecycle/listening to `src/room/room-session-flow.js`, guarded in-hand sync to `src/room/game-sync-flow.js`, room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, hand lifecycle transitions to `src/game/hand-controller.js`, settlement flow transitions to `src/game/settlement-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-screen composition to `src/table/table-screen-controller.js`, table-manager workflow to `src/table/table-manager-flow.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/ui/guide.js`
 
@@ -735,6 +771,9 @@ Implemented:
 - Collapsible player manual on setup and game screens with usage guide, Texas Hold'em rules, and hand rankings
 - Setup mode switch for single-device local mode vs multiplayer room mode
 - Room creation/join controls in the setup panel with display name, invite link copying, and URL room auto-join
+- Setup/lobby flow split into `src/room/setup-lobby-flow.js`
+- Room lifecycle/listener flow split into `src/room/room-session-flow.js`
+- Guarded in-hand sync flow split into `src/room/game-sync-flow.js`
 - Anonymous Auth integration with local `clientId` fallback
 - Multiplayer player binding through `ownerClientId` plus host/cohost-approved join/reclaim requests
 - Cohost grant/revoke through administrator-player ids
