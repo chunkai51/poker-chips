@@ -48,9 +48,6 @@ import {
   normalizeSelectedWinnersByPot,
   normalizeSettlementPreview
 } from "./room/room-state.js";
-import {
-  prepareNextHandResetState
-} from "./game/hand-controller.js";
 import { createHandPlayFlow } from "./game/hand-play-flow.js";
 import {
   normalizeInviteToken,
@@ -70,6 +67,7 @@ import {
   shouldUseRequestNameForSeat as shouldUseRequestNameForPlayerSeat
 } from "./core/player-model.js";
 import { createSettlementFlow } from "./game/settlement-flow.js";
+import { createNextHandFlow } from "./game/next-hand-flow.js";
 import {
   canClientControlPlayerInRoom as canClientControlPlayerInRoomData,
   canClientManageRoomData as canClientManageRoomPayload,
@@ -217,6 +215,7 @@ let roomSessionFlow;
 let gameSyncFlow;
 let handPlayFlow;
 let settlementFlow;
+let nextHandFlow;
 
 const seatIdentityFlow = createSeatIdentityFlow({
   getState: () => ({
@@ -632,6 +631,86 @@ settlementFlow = createSettlementFlow({
   actions: {
     getPlayerById,
     inferHandStatus
+  }
+});
+
+nextHandFlow = createNextHandFlow({
+  getState: () => ({
+    players,
+    room,
+    clientId,
+    handId,
+    handStatus,
+    stateVersion,
+    gameOver,
+    nextHandApprovals,
+    bigBlind,
+    mutationInProgress
+  }),
+  mutations: {
+    applyState: patch => {
+      if ("players" in patch) {
+        players = patch.players;
+        room.players = players;
+      }
+      if ("currentRound" in patch) currentRound = patch.currentRound;
+      if ("currentBet" in patch) currentBet = patch.currentBet;
+      if ("lastRaiseSize" in patch) lastRaiseSize = patch.lastRaiseSize;
+      if ("pot" in patch) pot = patch.pot;
+      if ("currentPlayerIndex" in patch) currentPlayerIndex = patch.currentPlayerIndex;
+      if ("pendingPots" in patch) pendingPots = patch.pendingPots;
+      if ("selectedWinnersByPot" in patch) selectedWinnersByPot = patch.selectedWinnersByPot;
+      if ("pendingDealPrompt" in patch) pendingDealPrompt = patch.pendingDealPrompt;
+      if ("settlementPreview" in patch) settlementPreview = patch.settlementPreview;
+      if ("nextHandApprovals" in patch) nextHandApprovals = patch.nextHandApprovals;
+      if ("awaitingShowdown" in patch) awaitingShowdown = patch.awaitingShowdown;
+      if ("gameOver" in patch) gameOver = patch.gameOver;
+      if ("handId" in patch) handId = patch.handId;
+      if ("handStatus" in patch) handStatus = patch.handStatus;
+    },
+    setMutationInProgress,
+    setBatchingStateUpdate: inProgress => {
+      batchingStateUpdate = Boolean(inProgress);
+    },
+    setSyncReady: ready => {
+      syncReady = Boolean(ready);
+    },
+    setRoomGameInProgress: inProgress => {
+      room.gameState.inProgress = Boolean(inProgress);
+    }
+  },
+  permissions: {
+    isLocalMode,
+    isRoomMode,
+    isInteractionLocked
+  },
+  approvals: {
+    getNextHandApproverIds,
+    getApprovalPlayerLabelForClient,
+    getApprovalStatusText
+  },
+  rules: {
+    getEligiblePlayerIndices
+  },
+  remote: {
+    transactRoom,
+    refreshFromRemote: () => roomSessionFlow.refreshFromRemote(),
+    isRemoteHandStill,
+    updateFirebaseState
+  },
+  ui: {
+    showAppAlert,
+    setSyncStatus,
+    renderNextHandButton,
+    clearGameLog,
+    clearHandActions,
+    hideShowdownPanel,
+    hideDealPromptPanel,
+    hideSettlementPreviewPanel
+  },
+  actions: {
+    inferHandStatus,
+    startRound
   }
 });
 
@@ -1875,174 +1954,11 @@ async function commitTableDraft({
 // 下一局
 // ----------------------
 async function approveNextHandStart(expectedHandId = handId) {
-  if (isLocalMode()) {
-    await resetHand(expectedHandId);
-    return;
-  }
-  if (isInteractionLocked()) return;
-  if (!gameOver || handStatus !== "settled") {
-    showAppAlert("当前手牌还没有完成结算，不能确认下一局");
-    return;
-  }
-
-  const requiredApprovers = getNextHandApproverIds();
-  const progress = getApprovalProgress(nextHandApprovals, requiredApprovers);
-  if (!requiredApprovers.includes(clientId)) {
-    showAppAlert("你不是下一局需要确认的玩家。");
-    return;
-  }
-  if (progress.complete) {
-    await resetHand(expectedHandId);
-    return;
-  }
-  if (progress.approved[clientId]) {
-    showAppAlert("你已经确认过，正在等待其他玩家。");
-    return;
-  }
-
-  setMutationInProgress(true);
-  let completeAfterCommit = false;
-  try {
-    const result = await transactRoom(room.roomId, (currentRoom) => {
-      if (!currentRoom || !currentRoom.gameState || !Array.isArray(currentRoom.players)) return undefined;
-      const currentGameState = currentRoom.gameState;
-      const currentStatus = String(currentGameState.handStatus || inferHandStatus(currentGameState));
-      if (currentStatus !== "settled") return undefined;
-
-      const remotePlayers = currentRoom.players.map(normalizeIncomingPlayer);
-      const remoteRequiredApprovers = getNextHandApproverIds(remotePlayers, currentRoom);
-      if (remoteRequiredApprovers.length < 1 || !remoteRequiredApprovers.includes(clientId)) return undefined;
-
-      const approvals = {
-        ...normalizeApprovalMap(currentGameState.nextHandApprovals),
-        [clientId]: true
-      };
-      const remoteProgress = getApprovalProgress(approvals, remoteRequiredApprovers);
-      completeAfterCommit = remoteProgress.complete;
-      const nextStateVersion = toNonNegativeNumber(currentGameState.stateVersion, 0) + 1;
-      const logs = Array.isArray(currentGameState.logs) ? currentGameState.logs.map(String) : [];
-      logs.push(`${getApprovalPlayerLabelForClient(clientId, remotePlayers, currentRoom)} 已确认下一局（${remoteProgress.approvedCount}/${remoteProgress.requiredCount}）`);
-
-      return {
-        ...currentRoom,
-        members: touchMember(currentRoom.members || room.members, clientId),
-        gameState: {
-          ...currentGameState,
-          nextHandApprovals: approvals,
-          logs,
-          stateVersion: nextStateVersion,
-          updatedBy: clientId
-        }
-      };
-    }, { applyLocally: false });
-
-    if (!result.committed) {
-      const refreshed = await roomSessionFlow.refreshFromRemote();
-      if (!refreshed) syncReady = false;
-      showAppAlert("下一局确认没有成功，请等待同步后重试。");
-      return;
-    }
-
-    syncReady = true;
-    setSyncStatus("已同步", "ok");
-    await roomSessionFlow.refreshFromRemote();
-    if (completeAfterCommit) {
-      setMutationInProgress(false);
-      await resetHand(expectedHandId);
-      return;
-    }
-  } catch (_) {
-    showAppAlert("下一局确认同步失败，请稍后再试。");
-  } finally {
-    setMutationInProgress(false);
-  }
+  await nextHandFlow.approveNextHandStart(expectedHandId);
 }
 
 async function resetHand(expectedHandId = handId) {
-  const expectedStateVersion = stateVersion;
-  if (mutationInProgress) return;
-  if (!gameOver || handStatus !== "settled") {
-    showAppAlert("当前手牌还没有完成结算，不能开始下一局");
-    return;
-  }
-  if (getEligiblePlayerIndices().length < 2) {
-    showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局，请先打开牌桌管理补码或回桌。");
-    renderNextHandButton();
-    return;
-  }
-  if (isRoomMode()) {
-    const requiredApprovers = getNextHandApproverIds();
-    const progress = getApprovalProgress(nextHandApprovals, requiredApprovers);
-    if (!progress.complete) {
-      showAppAlert(getApprovalStatusText(nextHandApprovals, requiredApprovers));
-      return;
-    }
-  }
-
-  setMutationInProgress(true);
-  const canReset = await isRemoteHandStill(expectedHandId, ["settled"]);
-  if (!canReset) {
-    setMutationInProgress(false);
-    clearHandActions();
-    showAppAlert("其他设备已经开始了下一局，请等待同步最新状态");
-    return;
-  }
-
-  batchingStateUpdate = true;
-  const resetState = prepareNextHandResetState({
-    players,
-    expectedHandId,
-    bigBlind
-  });
-  if (!resetState.ok) {
-    batchingStateUpdate = false;
-    setMutationInProgress(false);
-    showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
-    renderNextHandButton();
-    return;
-  }
-
-  players = resetState.players;
-  room.players = players;
-  currentRound = resetState.currentRound;
-  currentBet = resetState.currentBet;
-  lastRaiseSize = resetState.lastRaiseSize;
-  pot = resetState.pot;
-  currentPlayerIndex = resetState.currentPlayerIndex;
-  pendingPots = resetState.pendingPots;
-  selectedWinnersByPot = resetState.selectedWinnersByPot;
-  pendingDealPrompt = resetState.pendingDealPrompt;
-  settlementPreview = resetState.settlementPreview;
-  nextHandApprovals = resetState.nextHandApprovals;
-  awaitingShowdown = resetState.awaitingShowdown;
-  gameOver = resetState.gameOver;
-  handId = resetState.handId;
-  handStatus = resetState.handStatus;
-
-  clearGameLog();
-  clearHandActions();
-  hideShowdownPanel();
-  hideDealPromptPanel();
-  hideSettlementPreviewPanel();
-  room.gameState.inProgress = true;
-  startRound();
-  batchingStateUpdate = false;
-  const saved = await updateFirebaseState({
-    expectedHandId,
-    allowedStatuses: ["settled"],
-    expectedStateVersion,
-    remoteGuard: (currentRoom, currentGameState) => {
-      if (!isRoomMode()) return true;
-      const remotePlayers = normalizeIncomingPlayers(currentRoom.players);
-      const remoteRequiredApprovers = getNextHandApproverIds(remotePlayers, currentRoom);
-      const remoteApprovals = normalizeApprovalMap(currentGameState.nextHandApprovals);
-      return getApprovalProgress(remoteApprovals, remoteRequiredApprovers).complete;
-    }
-  });
-  setMutationInProgress(false);
-  if (!saved) {
-    showAppAlert("下一局没有同步成功，已恢复到最新远端状态");
-  }
+  await nextHandFlow.resetHand(expectedHandId);
 }
 
 function renderNextHandButton() {
