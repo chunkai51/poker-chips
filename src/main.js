@@ -17,7 +17,6 @@ import {
   rememberPlayerCode as storePlayerCode
 } from "./room/access-codes.js";
 import {
-  createDealPrompt,
   normalizeIncomingDealPrompt as normalizeDealPrompt
 } from "./core/deal-prompts.js";
 import { createSeatIdentityFlow } from "./room/seat-identity-flow.js";
@@ -50,16 +49,9 @@ import {
   normalizeSettlementPreview
 } from "./room/room-state.js";
 import {
-  applyBettingAction,
-  findNextActionableIndex as findNextActionableIndexData,
-  getAutomaticHandEndState,
-  isBettingRoundComplete as isBettingRoundCompleteData
-} from "./core/hand-flow-controller.js";
-import {
-  getFirstActionIndexForRound as getFirstActionIndexForRoundData,
-  prepareNextHandResetState,
-  prepareRoundStartState
+  prepareNextHandResetState
 } from "./game/hand-controller.js";
+import { createHandPlayFlow } from "./game/hand-play-flow.js";
 import {
   normalizeInviteToken,
   normalizeJoinRequests,
@@ -110,7 +102,6 @@ import {
   touchMember
 } from "./room/identity.js";
 import {
-  canAct,
   canPlayerRaise as canPlayerRaiseWithState,
   getCallAmount as calculateCallAmount,
   getChipStep as calculateChipStep,
@@ -233,6 +224,7 @@ let room = {
 let setupLobbyFlow;
 let roomSessionFlow;
 let gameSyncFlow;
+let handPlayFlow;
 
 const seatIdentityFlow = createSeatIdentityFlow({
   getState: () => ({
@@ -482,6 +474,89 @@ gameSyncFlow = createGameSyncFlow({
     normalizeJoinRequests,
     normalizeMembers,
     touchMemberWithProfile
+  }
+});
+
+handPlayFlow = createHandPlayFlow({
+  getState: () => ({
+    players,
+    currentPlayerIndex,
+    pot,
+    currentBet,
+    lastRaiseSize,
+    currentRound,
+    rounds,
+    bigBlind,
+    smallBlind,
+    handId,
+    handStatus,
+    gameOver,
+    awaitingShowdown,
+    pendingDealPrompt,
+    stateVersion,
+    mutationInProgress,
+    room,
+    clientId
+  }),
+  mutations: {
+    applyState: patch => {
+      if ("players" in patch) {
+        players = patch.players;
+        room.players = players;
+      }
+      if ("currentPlayerIndex" in patch) currentPlayerIndex = patch.currentPlayerIndex;
+      if ("pot" in patch) pot = patch.pot;
+      if ("currentBet" in patch) currentBet = patch.currentBet;
+      if ("lastRaiseSize" in patch) lastRaiseSize = patch.lastRaiseSize;
+      if ("currentRound" in patch) currentRound = patch.currentRound;
+      if ("selectedWinnersByPot" in patch) selectedWinnersByPot = patch.selectedWinnersByPot;
+      if ("pendingDealPrompt" in patch) pendingDealPrompt = patch.pendingDealPrompt;
+      if ("settlementPreview" in patch) settlementPreview = patch.settlementPreview;
+      if ("nextHandApprovals" in patch) nextHandApprovals = patch.nextHandApprovals;
+      if ("pendingPots" in patch) pendingPots = patch.pendingPots;
+      if ("awaitingShowdown" in patch) awaitingShowdown = patch.awaitingShowdown;
+      if ("gameOver" in patch) gameOver = patch.gameOver;
+      if ("handStatus" in patch) handStatus = patch.handStatus;
+    },
+    setMutationInProgress,
+    setBatchingStateUpdate: inProgress => {
+      batchingStateUpdate = Boolean(inProgress);
+    }
+  },
+  labels: {
+    getPlayerIdentityLabel
+  },
+  rules: {
+    getRaiseState
+  },
+  permissions: {
+    canCurrentClientControlPlayer,
+    canClientControlPlayerInRoom,
+    isSharedPromptActionLocked,
+    canCurrentClientConfirmDeal
+  },
+  remote: {
+    getRemoteGameState: () => roomSessionFlow.getRemoteGameState(),
+    updateFirebaseState
+  },
+  ui: {
+    showAppAlert,
+    showAppConfirm,
+    hideShowdownPanel,
+    hideDealPromptPanel,
+    hideSettlementPreviewPanel,
+    renderDealPromptPanel,
+    clearHandActions,
+    showNextHandButton,
+    updateGameInfo,
+    updatePlayerBoxes,
+    updateGameLog
+  },
+  actions: {
+    beginShowdown,
+    awardRemainingPot,
+    getPlayerById,
+    inferHandStatus
   }
 });
 
@@ -1478,300 +1553,31 @@ startGameBtn.addEventListener("click", async () => {
 });
 
 function findNextActionableIndex(startIndex, includeStart = false) {
-  return findNextActionableIndexData(players, startIndex, includeStart);
+  return handPlayFlow.findNextActionableIndex(startIndex, includeStart);
 }
 
 function getFirstActionIndexForRound(round = currentRound) {
-  return getFirstActionIndexForRoundData(players, round);
-}
-
-function applyRoundStartState(roundState) {
-  players = roundState.players;
-  room.players = players;
-  currentBet = roundState.currentBet;
-  lastRaiseSize = roundState.lastRaiseSize;
-  selectedWinnersByPot = roundState.selectedWinnersByPot;
-  pendingDealPrompt = roundState.pendingDealPrompt;
-  settlementPreview = roundState.settlementPreview;
-  nextHandApprovals = roundState.nextHandApprovals;
-  if (roundState.pendingPots !== undefined) pendingPots = roundState.pendingPots;
-  if (roundState.awaitingShowdown !== undefined) awaitingShowdown = roundState.awaitingShowdown;
-  gameOver = roundState.gameOver;
-  handStatus = roundState.handStatus;
-  currentPlayerIndex = roundState.currentPlayerIndex;
-  pot = roundState.pot;
+  return handPlayFlow.getFirstActionIndexForRound(round);
 }
 
 function startRound() {
-  hideShowdownPanel();
-  hideDealPromptPanel();
-  hideSettlementPreviewPanel();
-
-  const roundState = prepareRoundStartState({
-    players,
-    currentRound,
-    pot,
-    bigBlind,
-    smallBlind,
-    handId
-  });
-  applyRoundStartState(roundState);
-
-  if (roundState.outcome === "insufficientPlayers") {
-    updateGameInfo();
-    updatePlayerBoxes();
-    updateGameLog("至少需要 2 名已入座且有筹码的玩家才能开始下一局。");
-    showNextHandButton();
-    updateFirebaseState();
-    return;
-  }
-
-  if (roundState.outcome === "waitingDeal") {
-    const blindPosts = roundState.blindPosts;
-    updateGameInfo();
-    updatePlayerBoxes();
-    updateGameLog(`盲注已自动下入：${getPlayerIdentityLabel(players[blindPosts.smallBlindIndex])} ${blindPosts.smallBlindPosted}，${getPlayerIdentityLabel(players[blindPosts.bigBlindIndex])} ${blindPosts.bigBlindPosted}。请发两张底牌。`);
-    renderDealPromptPanel();
-    clearHandActions();
-    updateFirebaseState();
-    return;
-  }
-
-  updateGameInfo();
-  updatePlayerBoxes();
-  updateGameLog(`进入 ${rounds[currentRound]} 轮，奖池：${pot}`);
-
-  if (handleAutomaticHandEnd()) return;
-
-  if (currentPlayerIndex === -1) {
-    beginShowdown();
-    return;
-  }
-
-  updateGameLog(`轮到 ${getPlayerIdentityLabel(players[currentPlayerIndex])} 行动`);
-  updateFirebaseState();
+  handPlayFlow.startRound();
 }
 
-// ----------------------
-// playerAction：处理各操作（check/call/raise/fold）
-// ----------------------
 async function playerAction(action, index, amount = 0) {
-  const expectedHandId = handId;
-  const expectedStateVersion = stateVersion;
-
-  if (mutationInProgress || gameOver || awaitingShowdown || handStatus !== "playing") {
-    showAppAlert("当前手牌已结束或正在等待结算");
-    return;
-  }
-  if (index !== currentPlayerIndex) {
-    showAppAlert("当前不是你的回合！");
-    return;
-  }
-
-  const player = players[index];
-  if (!canCurrentClientControlPlayer(player)) {
-    showAppAlert("你不能操作这个玩家。");
-    return;
-  }
-  if (!canAct(player)) {
-    showAppAlert("该玩家当前不能行动");
-    return;
-  }
-
-  if (action === "fold") {
-    const confirmed = await showAppConfirm(`${getPlayerIdentityLabel(player)} 确认弃牌？`, {
-      title: "确认 Fold",
-      confirmLabel: "确认弃牌",
-      danger: true
-    });
-    if (!confirmed) return;
-  }
-
-  setMutationInProgress(true);
-  const remoteGameState = await roomSessionFlow.getRemoteGameState();
-  if (!remoteGameState && room.roomId) {
-    setMutationInProgress(false);
-    showAppAlert("还没有完成同步，不能操作");
-    return;
-  }
-  if (remoteGameState) {
-    const remoteHandId = toNonNegativeNumber(remoteGameState.handId, 0);
-    const remoteStatus = String(remoteGameState.handStatus || inferHandStatus(remoteGameState));
-    const remoteStateVersion = toNonNegativeNumber(remoteGameState.stateVersion, 0);
-    const remoteCurrentPlayerIndex = Number.isInteger(remoteGameState.currentPlayerIndex)
-      ? remoteGameState.currentPlayerIndex
-      : -1;
-
-    if (
-      remoteHandId !== expectedHandId ||
-      remoteStatus !== "playing" ||
-      remoteStateVersion !== expectedStateVersion ||
-      remoteCurrentPlayerIndex !== index
-    ) {
-      setMutationInProgress(false);
-      showAppAlert("牌局状态已在其他设备更新，请等待同步后再操作");
-      return;
-    }
-  }
-
-  batchingStateUpdate = true;
-
-  const actionResult = applyBettingAction({
-    players,
-    index,
-    action,
-    amount,
-    currentBet,
-    lastRaiseSize,
-    pot,
-    raiseState: getRaiseState()
-  });
-  if (!actionResult.ok) {
-    showAppAlert(actionResult.message);
-    batchingStateUpdate = false;
-    setMutationInProgress(false);
-    return;
-  }
-  players = actionResult.players;
-  room.players = players;
-  currentBet = actionResult.currentBet;
-  lastRaiseSize = actionResult.lastRaiseSize;
-  pot = actionResult.pot;
-
-  updateGameLog(`${getPlayerIdentityLabel(players[index])} 选择了 ${actionResult.logAction}，奖池：${pot}`);
-  nextPlayer();
-  updateGameInfo();
-  updatePlayerBoxes();
-  batchingStateUpdate = false;
-  const saved = await updateFirebaseState({
-    expectedHandId,
-    allowedStatuses: ["playing"],
-    expectedStateVersion,
-    remoteGuard: (currentRoom) => {
-      const remotePlayers = normalizeIncomingPlayers(currentRoom.players);
-      const remotePlayer = remotePlayers[index];
-      return Boolean(remotePlayer && canClientControlPlayerInRoom(clientId, remotePlayer, currentRoom));
-    }
-  });
-  setMutationInProgress(false);
-  if (!saved) {
-    showAppAlert("操作没有同步成功，已恢复到最新远端状态");
-  }
-}
-
-// ----------------------
-// nextPlayer 与轮次结束逻辑
-// ----------------------
-function handleAutomaticHandEnd() {
-  const endState = getAutomaticHandEndState(players, currentBet);
-  if (endState.type === "awardRemainingPot") {
-    awardRemainingPot(endState.winnerId ? getPlayerById(endState.winnerId) : null);
-    return true;
-  }
-  if (endState.type === "showdown") {
-    beginShowdown();
-    return true;
-  }
-  return false;
-}
-
-function isBettingRoundComplete() {
-  return isBettingRoundCompleteData(players, currentBet);
+  await handPlayFlow.playerAction(action, index, amount);
 }
 
 function nextPlayer() {
-  if (handleAutomaticHandEnd()) return;
-
-  if (isBettingRoundComplete()) {
-    if (currentRound === rounds.length - 1) {
-      beginShowdown();
-    } else {
-      endRound();
-    }
-    return;
-  }
-
-  const nextIndex = findNextActionableIndex(currentPlayerIndex);
-  if (nextIndex === -1) {
-    if (currentRound === rounds.length - 1) {
-      beginShowdown();
-    } else {
-      endRound();
-    }
-    return;
-  }
-
-  currentPlayerIndex = nextIndex;
-  updateGameLog(`轮到 ${getPlayerIdentityLabel(players[currentPlayerIndex])} 行动`);
-  updatePlayerBoxes();
-  updateFirebaseState();
+  handPlayFlow.nextPlayer();
 }
 
 function endRound() {
-  const nextRound = currentRound + 1;
-  pendingDealPrompt = createDealPrompt(nextRound, { handId });
-  handStatus = "waitingDeal";
-  currentPlayerIndex = -1;
-  updateGameLog(`${rounds[currentRound]} 下注结束，${pendingDealPrompt.cardText}后继续。`);
-  updateGameInfo();
-  updatePlayerBoxes();
-  renderDealPromptPanel();
-  clearHandActions();
+  handPlayFlow.endRound();
 }
 
 async function confirmDealPrompt() {
-  const prompt = pendingDealPrompt;
-  const expectedHandId = handId;
-  const expectedStateVersion = stateVersion;
-
-  if (isSharedPromptActionLocked() || handStatus !== "waitingDeal" || !prompt) {
-    showAppAlert("当前没有等待确认的发牌提示");
-    return;
-  }
-  if (!canCurrentClientConfirmDeal()) {
-    showAppAlert("只有本局 Dealer 可以确认发牌；未绑定 Dealer 由房主/协管代管。");
-    return;
-  }
-
-  setMutationInProgress(true);
-  batchingStateUpdate = true;
-  const isOpeningDeal = prompt.nextRound === 0;
-  handStatus = "playing";
-  pendingDealPrompt = null;
-  if (isOpeningDeal) {
-    currentRound = 0;
-    currentPlayerIndex = findNextActionableIndex(getFirstActionIndexForRound(0), true);
-    hideDealPromptPanel();
-    updateGameInfo();
-    updatePlayerBoxes();
-    updateGameLog("底牌已发，进入翻牌前行动。");
-
-    if (!handleAutomaticHandEnd()) {
-      if (currentPlayerIndex === -1) {
-        beginShowdown();
-      } else {
-        updateGameLog(`轮到 ${getPlayerIdentityLabel(players[currentPlayerIndex])} 行动`);
-      }
-    }
-  } else {
-    currentRound = prompt.nextRound;
-    startRound();
-  }
-  batchingStateUpdate = false;
-
-  const saved = await updateFirebaseState({
-    expectedHandId,
-    allowedStatuses: ["waitingDeal"],
-    expectedStateVersion,
-    remoteGuard: (currentRoom) => {
-      const remoteDealer = normalizeIncomingPlayers(currentRoom.players).find(player => player.dealer);
-      return canClientControlPlayerInRoom(clientId, remoteDealer, currentRoom);
-    }
-  });
-  setMutationInProgress(false);
-  if (!saved) {
-    showAppAlert("发牌确认没有同步成功，已恢复到最新远端状态");
-  }
+  await handPlayFlow.confirmDealPrompt();
 }
 
 function awardRemainingPot(winner) {
