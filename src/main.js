@@ -50,10 +50,10 @@ import {
   normalizeSettlementPreview
 } from "./room/room-state.js";
 import { createHandPlayFlow } from "./game/hand-play-flow.js";
+import { createStartGameFlow } from "./game/start-game-flow.js";
 import {
   normalizeInviteToken,
-  normalizeJoinRequests,
-  normalizeRoomId
+  normalizeJoinRequests
 } from "./room/room-entry.js";
 import {
   getPlayerCompactIdentityLabel as formatPlayerCompactIdentityLabel,
@@ -212,6 +212,7 @@ let handPlayFlow;
 let settlementFlow;
 let nextHandFlow;
 let tableSaveFlow;
+let startGameFlow;
 
 const seatIdentityFlow = createSeatIdentityFlow({
   getState: () => ({
@@ -899,6 +900,90 @@ const tableScreen = createTableScreenController({
     confirmShowdown,
     cancelSettlementPreview,
     confirmSettlementPreview
+  }
+});
+
+startGameFlow = createStartGameFlow({
+  elements: {
+    startGameBtn,
+    roomIdInput,
+    bigBlindInput
+  },
+  maxPlayers: MAX_PLAYERS,
+  getState: () => ({
+    players,
+    room,
+    clientId,
+    handId,
+    mutationInProgress
+  }),
+  mutations: {
+    applyRoomPatch: patch => {
+      room = {
+        ...room,
+        ...patch
+      };
+    },
+    applyStartState: patch => {
+      players = patch.players;
+      bigBlind = patch.bigBlind;
+      smallBlind = patch.smallBlind;
+      selectedWinnersByPot = {};
+      pendingDealPrompt = null;
+      settlementPreview = null;
+      nextHandApprovals = {};
+      pendingPots = [];
+      awaitingShowdown = false;
+      handId = patch.handId;
+      handStatus = "playing";
+      gameStarted = true;
+      gameOver = false;
+      currentRound = 0;
+      currentBet = 0;
+      lastRaiseSize = bigBlind;
+      pot = 0;
+      room.players = players;
+      room.gameState.inProgress = true;
+    },
+    setMutationInProgress,
+    setSyncReady: ready => {
+      syncReady = Boolean(ready);
+    }
+  },
+  modes: {
+    isRoomMode
+  },
+  permissions: {
+    canCurrentClientManageRoom
+  },
+  remote: {
+    remoteRoomExists: (...args) => roomSessionFlow.remoteRoomExists(...args),
+    createRoomIfAvailable: (...args) => roomSessionFlow.createRoomIfAvailable(...args),
+    joinRoom: (...args) => roomSessionFlow.joinRoom(...args),
+    refreshFromRemote: (...args) => roomSessionFlow.refreshFromRemote(...args),
+    getRemoteGameState: (...args) => roomSessionFlow.getRemoteGameState(...args),
+    stopListener: (...args) => roomSessionFlow.stopListener(...args)
+  },
+  setup: {
+    normalizePlayers: () => setupLobbyFlow.normalizePlayers(),
+    createPlayerId: () => setupLobbyFlow.createPlayerId()
+  },
+  ui: {
+    showAppAlert,
+    setSyncStatus,
+    clearGameLog,
+    showGameTable: () => {
+      setupContainer.style.display = "none";
+      gameContainer.style.display = "grid";
+    },
+    clearHandActions,
+    hideShowdownPanel,
+    hideDealPromptPanel,
+    hideSettlementPreviewPanel
+  },
+  actions: {
+    inferHandStatus,
+    startRound
   }
 });
 
@@ -1639,126 +1724,10 @@ startAnonymousIdentity();
 roomSessionFlow.bindEntryControls();
 roomSessionFlow.applyRoomLinkFromUrl();
 setupLobbyFlow.init();
+startGameFlow.bindStartButton();
 syncReady = !isRoomMode();
 if (!isRoomMode()) setSyncStatus("本地模式");
 renderIdentityControls();
-
-// ----------------------
-// 开始游戏逻辑
-// ----------------------
-startGameBtn.addEventListener("click", async () => {
-  if (mutationInProgress) return;
-  if (!canCurrentClientManageRoom()) {
-    showAppAlert("只有房主或协管可以开始牌局。");
-    return;
-  }
-  setMutationInProgress(true);
-
-  try {
-    const roomId = normalizeRoomId(roomIdInput.value);
-    if (isRoomMode()) {
-      if (roomId) {
-        const exists = await roomSessionFlow.remoteRoomExists(roomId);
-        if (exists === null) return;
-        if (!exists) {
-          room.roomId = roomId;
-          roomIdInput.value = roomId;
-          const created = await roomSessionFlow.createRoomIfAvailable({ announce: false });
-          if (!created) return;
-        } else {
-          roomSessionFlow.joinRoom(roomId);
-          const refreshed = await roomSessionFlow.refreshFromRemote();
-          if (!refreshed) {
-            showAppAlert("无法读取该房间，请检查网络后刷新重试。");
-            return;
-          }
-        }
-        if (!canCurrentClientManageRoom()) {
-          showAppAlert("只有房主或协管可以开始牌局。");
-          return;
-        }
-        const remoteGameState = await roomSessionFlow.getRemoteGameState();
-        const remoteStatus = remoteGameState
-          ? String(remoteGameState.handStatus || inferHandStatus(remoteGameState))
-          : "setup";
-        if (remoteGameState && remoteStatus !== "setup") {
-          showAppAlert("该房间已有牌局状态，请等待同步完成，不要从本地设置页重新开始");
-          return;
-        }
-      } else {
-        const created = await roomSessionFlow.createRoomIfAvailable({ announce: false });
-        if (!created) return;
-      }
-    } else {
-      roomSessionFlow.stopListener();
-      room.roomId = "";
-      room.mode = ROOM_MODES.local;
-      room.operator = clientId;
-      room.hostClientId = clientId;
-      room.members = createMembersMap(clientId);
-      roomIdInput.value = "";
-      syncReady = true;
-      setSyncStatus("本地模式");
-    }
-
-    setupLobbyFlow.normalizePlayers();
-    if (players.length < 2) {
-      showAppAlert("至少需要两个玩家开始游戏");
-      return;
-    }
-    if (players.length > MAX_PLAYERS) {
-      showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
-      return;
-    }
-
-    bigBlind = toPositiveInteger(bigBlindInput.value, 20);
-    smallBlind = Math.floor(bigBlind / 2);
-    players = players.map((player, index) => ({
-      id: String(player.id || setupLobbyFlow.createPlayerId()),
-      name: String(player.name || "").trim() || `玩家${index + 1}`,
-      seatIndex: index,
-      seatStatus: "seated",
-      chips: toPositiveInteger(player.chips, 1000),
-      folded: false,
-      dealer: index === 0,
-      ownerClientId: normalizePlayerOwnerId(player.ownerClientId),
-      playerKeyHash: String(player.playerKeyHash || ""),
-      bet: 0,
-      totalBet: 0,
-      allIn: false,
-      acted: false,
-      position: ""
-    }));
-
-    selectedWinnersByPot = {};
-    pendingDealPrompt = null;
-    settlementPreview = null;
-    nextHandApprovals = {};
-    pendingPots = [];
-    awaitingShowdown = false;
-    handId += 1;
-    handStatus = "playing";
-    gameStarted = true;
-    gameOver = false;
-    currentRound = 0;
-    currentBet = 0;
-    lastRaiseSize = bigBlind;
-    pot = 0;
-    room.players = players;
-    room.gameState.inProgress = true;
-    clearGameLog();
-
-    setupContainer.style.display = "none";
-    gameContainer.style.display = "grid";
-    clearHandActions();
-    hideShowdownPanel();
-    hideDealPromptPanel();
-    hideSettlementPreviewPanel();
-    startRound();
-  } finally {
-    setMutationInProgress(false);
-  }
-});
 
 function findNextActionableIndex(startIndex, includeStart = false) {
   return handPlayFlow.findNextActionableIndex(startIndex, includeStart);
