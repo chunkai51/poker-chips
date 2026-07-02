@@ -23,6 +23,7 @@ import { createSetupLobbyFlow } from "./room/setup-lobby-flow.js";
 import { createRoomSessionFlow } from "./room/room-session-flow.js";
 import { createGameSyncFlow } from "./room/game-sync-flow.js";
 import { createApprovalLabels } from "./room/approval-labels.js";
+import { createIdentityToolbarFlow } from "./room/identity-toolbar-flow.js";
 import { createTableScreenController } from "./table/table-screen-controller.js";
 import { createTableManagerFlow } from "./table/table-manager-flow.js";
 import { createTableSaveFlow } from "./table/table-save-flow.js";
@@ -31,14 +32,8 @@ import {
   showAppConfirm
 } from "./ui/dialogs.js";
 import {
-  createButton,
   createParagraph
 } from "./ui/ui-dom.js";
-import { normalizeRotationOffset } from "./table/table-layout.js";
-import {
-  loadTableViewRotation as loadStoredTableViewRotation,
-  saveTableViewRotation as saveStoredTableViewRotation
-} from "./table/table-view-preferences.js";
 import {
   transactRoom
 } from "./room/room-sync.js";
@@ -213,6 +208,7 @@ let settlementFlow;
 let nextHandFlow;
 let tableSaveFlow;
 let startGameFlow;
+let identityToolbarFlow;
 
 const seatIdentityFlow = createSeatIdentityFlow({
   getState: () => ({
@@ -987,6 +983,58 @@ startGameFlow = createStartGameFlow({
   }
 });
 
+identityToolbarFlow = createIdentityToolbarFlow({
+  elements: {
+    localModeBtn,
+    roomModeBtn,
+    roomEntry,
+    createRoomBtn,
+    joinRoomBtn,
+    copyInviteBtn,
+    playerAliasInput,
+    deviceIdentityEl,
+    tableViewToolbar
+  },
+  getState: () => ({
+    players,
+    room,
+    clientId,
+    gameStarted,
+    authReady,
+    authUnavailable,
+    syncReady,
+    syncWriteInProgress,
+    tableViewRotationOffset
+  }),
+  mutations: {
+    setTableViewRotationOffset: offset => {
+      tableViewRotationOffset = offset;
+    }
+  },
+  modes: {
+    isLocalMode,
+    isRoomMode
+  },
+  permissions: {
+    canCurrentClientManageRoom
+  },
+  identity: {
+    getCurrentDevicePlayer,
+    getPendingJoinRequestCount,
+    getCurrentDisplayName
+  },
+  labels: {
+    getPlayerIdentityLabel,
+    getClientShortId
+  },
+  actions: {
+    openTableManager
+  },
+  ui: {
+    updatePlayerBoxes
+  }
+});
+
 // ----------------------
 // 通用工具函数
 // ----------------------
@@ -1349,22 +1397,6 @@ function getRaiseValidation(player, rawTarget) {
   return validateRaiseTarget(player, rawTarget, getRaiseState());
 }
 
-function addPendingRequestBadge(button, label, { floating = false } = {}) {
-  const requestCount = getPendingJoinRequestCount();
-  if (requestCount <= 0 || !canCurrentClientManageRoom()) return button;
-
-  const badge = document.createElement("span");
-  badge.className = "identity-request-badge";
-  if (floating) {
-    badge.classList.add("is-floating");
-    button.classList.add("has-request-badge");
-  }
-  badge.textContent = requestCount > 9 ? "9+" : String(requestCount);
-  button.appendChild(badge);
-  button.setAttribute("aria-label", `${label}，${requestCount} 个待处理请求`);
-  return button;
-}
-
 function clearGameLog() {
   gameLog.replaceChildren();
   room.gameState.logs = [];
@@ -1384,128 +1416,16 @@ function setSyncStatus(message, status = "") {
   if (status) syncStatusEl.classList.add(status);
 }
 
-function getTableViewRotationRoomId() {
-  return room.roomId || "local";
-}
-
 function loadTableViewRotation() {
-  tableViewRotationOffset = loadStoredTableViewRotation(getTableViewRotationRoomId());
-}
-
-function saveTableViewRotation() {
-  saveStoredTableViewRotation(tableViewRotationOffset, getTableViewRotationRoomId());
-}
-
-function rotateTableView(delta) {
-  tableViewRotationOffset += delta;
-  saveTableViewRotation();
-  updatePlayerBoxes();
-  renderTableViewToolbar();
-}
-
-function resetTableViewRotation() {
-  tableViewRotationOffset = 0;
-  saveTableViewRotation();
-  updatePlayerBoxes();
-  renderTableViewToolbar();
-}
-
-function getIdentitySummaryText() {
-  const currentPlayer = getCurrentDevicePlayer();
-  const currentIndex = currentPlayer ? players.indexOf(currentPlayer) : -1;
-  if (currentPlayer) {
-    return `当前设备：${getPlayerIdentityLabel(currentPlayer, currentIndex)} · ${isRoomMode() ? `ID ${getClientShortId()}` : "本地控制"}`;
-  }
-  return isRoomMode()
-    ? `当前设备未绑定玩家 · ID ${getClientShortId()}`
-    : "本地模式：这台设备可以管理整桌";
-}
-
-function getIdentityAuthText() {
-  if (isLocalMode()) return "";
-  if (authUnavailable) {
-    return syncReady ? "" : room.roomId ? "身份连接异常" : "";
-  }
-  return authReady ? "匿名身份" : "身份连接中";
+  return identityToolbarFlow.loadTableViewRotation();
 }
 
 function renderIdentityControls() {
-  if (localModeBtn) {
-    localModeBtn.classList.toggle("active", isLocalMode());
-    localModeBtn.disabled = gameStarted && !isLocalMode();
-  }
-  if (roomModeBtn) {
-    roomModeBtn.classList.toggle("active", isRoomMode());
-    roomModeBtn.disabled = gameStarted && !isRoomMode();
-  }
-  if (roomEntry) roomEntry.hidden = !isRoomMode();
-  const roomAuthPending = isRoomMode() && !authReady;
-  if (createRoomBtn) createRoomBtn.disabled = gameStarted || syncWriteInProgress || roomAuthPending;
-  if (joinRoomBtn) joinRoomBtn.disabled = gameStarted || syncWriteInProgress || roomAuthPending;
-  if (copyInviteBtn) copyInviteBtn.disabled = !isRoomMode() || !room.roomId;
-  if (playerAliasInput && document.activeElement !== playerAliasInput) {
-    playerAliasInput.value = getCurrentDisplayName();
-  }
-  if (!deviceIdentityEl) return;
-
-  deviceIdentityEl.replaceChildren();
-  const title = document.createElement("strong");
-  title.textContent = isRoomMode() ? "多人房间" : "单设备本地";
-  const detail = document.createElement("span");
-  const roomText = isRoomMode()
-    ? room.roomId
-      ? `房间 ${room.roomId} · ${Object.keys(room.members || {}).length || 1} 台设备${getPendingJoinRequestCount() ? ` · ${getPendingJoinRequestCount()} 个请求` : ""}`
-      : "先创建或加入房间"
-    : "不写入远程房间";
-  const authText = getIdentityAuthText();
-  detail.textContent = [getIdentitySummaryText(), roomText, authText].filter(Boolean).join(" · ");
-  deviceIdentityEl.append(title, detail);
-  if (isRoomMode() && room.roomId) {
-    const manageButton = createButton("席位与身份", openTableManager, false, "identity-manage-button");
-    addPendingRequestBadge(manageButton, "席位与身份");
-    deviceIdentityEl.appendChild(manageButton);
-  }
+  identityToolbarFlow.renderIdentityControls();
 }
 
 function renderTableViewToolbar() {
-  if (!tableViewToolbar) return;
-  tableViewToolbar.replaceChildren();
-  if (!gameStarted) {
-    tableViewToolbar.hidden = true;
-    return;
-  }
-
-  tableViewToolbar.hidden = false;
-  const summary = document.createElement("div");
-  summary.className = "table-view-summary";
-  const currentPlayer = getCurrentDevicePlayer();
-  const currentIndex = currentPlayer ? players.indexOf(currentPlayer) : -1;
-  const title = document.createElement("strong");
-  title.textContent = currentPlayer
-    ? `我的视角：${getPlayerIdentityLabel(currentPlayer, currentIndex)}`
-    : isRoomMode()
-      ? "旁观视角"
-      : "本地整桌视角";
-  const detail = document.createElement("span");
-  detail.textContent = isRoomMode()
-    ? "视角旋转只保存在这台设备"
-    : "本地模式不绑定玩家身份";
-  summary.append(title, detail);
-  tableViewToolbar.appendChild(summary);
-
-  if (!isRoomMode()) return;
-
-  const controls = document.createElement("div");
-  controls.className = "table-view-controls";
-  const hasClaimedPlayer = Boolean(currentPlayer);
-  const resetDisabled = !hasClaimedPlayer || normalizeRotationOffset(tableViewRotationOffset, players.length) === 0;
-  controls.appendChild(createButton("↺", () => rotateTableView(-1), players.length < 2, "table-view-button"));
-  controls.appendChild(createButton("以我为底", resetTableViewRotation, resetDisabled, "table-view-button"));
-  controls.appendChild(createButton("↻", () => rotateTableView(1), players.length < 2, "table-view-button"));
-  const identityButton = createButton("身份", openTableManager, false, "table-view-button");
-  addPendingRequestBadge(identityButton, "身份", { floating: true });
-  controls.appendChild(identityButton);
-  tableViewToolbar.appendChild(controls);
+  identityToolbarFlow.renderTableViewToolbar();
 }
 
 function isInteractionLocked() {

@@ -29,6 +29,7 @@ index.html
        -> composes room session flow from src/room/room-session-flow.js
        -> composes guarded game-sync flow from src/room/game-sync-flow.js
        -> composes shared approval labels from src/room/approval-labels.js
+       -> composes identity/table-view toolbar flow from src/room/identity-toolbar-flow.js
        -> imports room claim/request helpers from src/room/room-claims-controller.js
        -> imports room entry/link/request helpers from src/room/room-entry.js
        -> imports room lobby state helpers from src/room/room-lobby-controller.js
@@ -314,6 +315,18 @@ Owns shared synchronized-confirmation helpers:
 - Waiting and progress text for synchronized confirmation prompts
 
 This module is DOM-free. It receives current state, identity lookup helpers, and label formatters from `src/main.js`, then feeds settlement, next-hand, and table-screen flows through one shared approval object.
+
+### `src/room/identity-toolbar-flow.js`
+
+Owns the identity and local-view toolbar UI:
+
+- Top bar local/room mode button state
+- Room entry button enablement
+- Device identity summary and pending request badge
+- In-game table-view summary
+- Local-only table rotation controls and persistence
+
+This module renders DOM, but it does not own authoritative room/game state. It receives state, identity helpers, labels, permission checks, and UI callbacks from `src/main.js`, then reports table-view rotation changes back through a mutation callback.
 
 ### `src/ui/player-seat-ui.js`
 
@@ -605,7 +618,7 @@ Still orchestrates the app shell and authoritative browser state:
 - Module-level game state
 - Composition of flow/controllers and their callbacks
 
-It now delegates setup/lobby editing to `src/room/setup-lobby-flow.js`, room lifecycle/listening to `src/room/room-session-flow.js`, guarded in-hand sync to `src/room/game-sync-flow.js`, shared approval labels to `src/room/approval-labels.js`, first-hand startup to `src/game/start-game-flow.js`, in-hand betting and street progression to `src/game/hand-play-flow.js`, settlement workflow to `src/game/settlement-flow.js`, next-hand readiness/reset to `src/game/next-hand-flow.js`, table-management persistence to `src/table/table-save-flow.js`, room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, hand lifecycle transitions to `src/game/hand-controller.js`, settlement flow transitions to `src/game/settlement-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-screen composition to `src/table/table-screen-controller.js`, table-manager workflow to `src/table/table-manager-flow.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
+It now delegates setup/lobby editing to `src/room/setup-lobby-flow.js`, room lifecycle/listening to `src/room/room-session-flow.js`, guarded in-hand sync to `src/room/game-sync-flow.js`, shared approval labels to `src/room/approval-labels.js`, identity/table-view toolbar rendering to `src/room/identity-toolbar-flow.js`, first-hand startup to `src/game/start-game-flow.js`, in-hand betting and street progression to `src/game/hand-play-flow.js`, settlement workflow to `src/game/settlement-flow.js`, next-hand readiness/reset to `src/game/next-hand-flow.js`, table-management persistence to `src/table/table-save-flow.js`, room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, hand lifecycle transitions to `src/game/hand-controller.js`, settlement flow transitions to `src/game/settlement-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-screen composition to `src/table/table-screen-controller.js`, table-manager workflow to `src/table/table-manager-flow.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
 
 ### `src/ui/guide.js`
 
@@ -851,6 +864,7 @@ Implemented:
 - Next-hand readiness/reset flow split into `src/game/next-hand-flow.js`
 - Table-management persistence split into `src/table/table-save-flow.js`
 - Shared synchronized-confirmation labels split into `src/room/approval-labels.js`
+- Identity/table-view toolbar rendering split into `src/room/identity-toolbar-flow.js`
 - Anonymous Auth integration with local `clientId` fallback
 - Multiplayer player binding through `ownerClientId` plus host/cohost-approved join/reclaim requests
 - Cohost grant/revoke through administrator-player ids
