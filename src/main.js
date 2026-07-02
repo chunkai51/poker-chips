@@ -5,7 +5,6 @@ import {
   signInAnonymously
 } from "./services/firebase.js";
 import {
-  getApprovalProgress,
   normalizeApprovalMap
 } from "./core/approvals.js";
 import {
@@ -23,6 +22,7 @@ import { createSeatIdentityFlow } from "./room/seat-identity-flow.js";
 import { createSetupLobbyFlow } from "./room/setup-lobby-flow.js";
 import { createRoomSessionFlow } from "./room/room-session-flow.js";
 import { createGameSyncFlow } from "./room/game-sync-flow.js";
+import { createApprovalLabels } from "./room/approval-labels.js";
 import { createTableScreenController } from "./table/table-screen-controller.js";
 import { createTableManagerFlow } from "./table/table-manager-flow.js";
 import { createTableSaveFlow } from "./table/table-save-flow.js";
@@ -97,8 +97,7 @@ import {
   getMinimumRaiseTarget as calculateMinimumRaiseTarget,
   getPotSizedRaiseTarget as calculatePotSizedRaiseTarget,
   getRaiseUnavailableMessage as getRaiseUnavailableMessageForState,
-  getRaiseValidation as validateRaiseTarget,
-  isEligibleForNextHand
+  getRaiseValidation as validateRaiseTarget
 } from "./core/game-rules.js";
 import { initGuidePanels } from "./ui/guide.js";
 import { initChipRiffle } from "./riffle/riffle.js";
@@ -273,6 +272,22 @@ const seatIdentityFlow = createSeatIdentityFlow({
     renderSetupPlayerInputs: () => setupLobbyFlow?.renderPlayers(),
     updatePlayerBoxes,
     renderTableViewToolbar
+  }
+});
+
+const approvalLabels = createApprovalLabels({
+  getState: () => ({
+    players,
+    room,
+    clientId
+  }),
+  identity: {
+    getPlayerControllerId,
+    getHostClientId
+  },
+  labels: {
+    getPlayerCompactIdentityLabel,
+    getClientShortId
   }
 });
 
@@ -599,11 +614,7 @@ settlementFlow = createSettlementFlow({
     isSharedPromptActionLocked,
     isRoomMode
   },
-  approvals: {
-    getSettlementApproverIds,
-    getApprovalPlayerLabelForClient,
-    getApprovalStatusText
-  },
+  approvals: approvalLabels,
   remote: {
     isRemoteHandStill,
     updateFirebaseState,
@@ -681,11 +692,7 @@ nextHandFlow = createNextHandFlow({
     isRoomMode,
     isInteractionLocked
   },
-  approvals: {
-    getNextHandApproverIds,
-    getApprovalPlayerLabelForClient,
-    getApprovalStatusText
-  },
+  approvals: approvalLabels,
   rules: {
     getEligiblePlayerIndices
   },
@@ -879,12 +886,7 @@ const tableScreen = createTableScreenController({
     getChipStep,
     getEligiblePlayerIndices
   },
-  approvals: {
-    getSettlementApproverIds,
-    getNextHandApproverIds,
-    getApprovalStatusText,
-    getApprovalWaitingText
-  },
+  approvals: approvalLabels,
   actions: {
     playerAction,
     confirmDealPrompt,
@@ -1950,59 +1952,6 @@ function updateGameInfo() {
 
 function renderCurrentActionPanel() {
   tableScreen.renderCurrentActionPanel();
-}
-
-function getApprovalPlayerLabelForClient(approverId, list = players, roomData = room) {
-  const controlledPlayers = list
-    .map((player, index) => ({ player, index }))
-    .filter(({ player }) => getPlayerControllerId(player, roomData) === approverId);
-  if (controlledPlayers.length > 0) {
-    return controlledPlayers
-      .map(({ player, index }) => getPlayerCompactIdentityLabel(player, index, list))
-      .join("、");
-  }
-  if (approverId === getHostClientId(roomData)) return "房主/协管";
-  if (approverId === clientId) return "我";
-  return `设备 ${getClientShortId(approverId)}`;
-}
-
-function getUniqueApproverIdsForPlayers(list, roomData = room) {
-  return [...new Set(list.map(player => getPlayerControllerId(player, roomData)).filter(Boolean))];
-}
-
-function getSettlementApprovalPlayers(list = players) {
-  return list.filter(player => {
-    return player.seatStatus === "seated" || player.totalBet > 0 || player.folded || player.allIn;
-  });
-}
-
-function getSettlementApproverIds(list = players, roomData = room) {
-  return getUniqueApproverIdsForPlayers(getSettlementApprovalPlayers(list), roomData);
-}
-
-function getNextHandApproverIds(list = players, roomData = room) {
-  return getUniqueApproverIdsForPlayers(list.filter(isEligibleForNextHand), roomData);
-}
-
-function getApprovalStatusText(approvals, requiredIds, list = players) {
-  const progress = getApprovalProgress(approvals, requiredIds);
-  if (requiredIds.length === 0) return "无需确认";
-  const pending = requiredIds
-    .filter(approverId => !progress.approved[approverId])
-    .map(approverId => getApprovalPlayerLabelForClient(approverId, list));
-  return pending.length > 0
-    ? `已确认 ${progress.approvedCount}/${progress.requiredCount} · 等待 ${pending.join("、")}`
-    : `已确认 ${progress.approvedCount}/${progress.requiredCount}`;
-}
-
-function getApprovalWaitingText(approvals, requiredIds, actionLabel, list = players) {
-  const progress = getApprovalProgress(approvals, requiredIds);
-  const pending = requiredIds
-    .filter(approverId => !progress.approved[approverId])
-    .map(approverId => getApprovalPlayerLabelForClient(approverId, list));
-  return pending.length > 0
-    ? `等待 ${pending.join("、")} ${actionLabel}`
-    : `等待同步${actionLabel}`;
 }
 
 function updatePlayerBoxes() {
