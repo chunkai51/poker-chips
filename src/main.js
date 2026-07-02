@@ -5,9 +5,6 @@ import {
   signInAnonymously
 } from "./services/firebase.js";
 import {
-  normalizeApprovalMap
-} from "./core/approvals.js";
-import {
   getPlayerCodeSalt as getPlayerAccessCodeSalt,
   getRememberedAdminCode as getStoredAdminCode,
   getRememberedPlayerCode as getStoredPlayerCode,
@@ -15,13 +12,11 @@ import {
   isPlayerCodeValid as isPlayerAccessCodeValid,
   rememberPlayerCode as storePlayerCode
 } from "./room/access-codes.js";
-import {
-  normalizeIncomingDealPrompt as normalizeDealPrompt
-} from "./core/deal-prompts.js";
 import { createSeatIdentityFlow } from "./room/seat-identity-flow.js";
 import { createSetupLobbyFlow } from "./room/setup-lobby-flow.js";
 import { createRoomSessionFlow } from "./room/room-session-flow.js";
 import { createGameSyncFlow } from "./room/game-sync-flow.js";
+import { createRoomDataFlow } from "./room/room-data-flow.js";
 import { createApprovalLabels } from "./room/approval-labels.js";
 import { createIdentityToolbarFlow } from "./room/identity-toolbar-flow.js";
 import { createTableScreenController } from "./table/table-screen-controller.js";
@@ -38,16 +33,11 @@ import {
   transactRoom
 } from "./room/room-sync.js";
 import {
-  normalizeIncomingPlayer,
-  normalizeIncomingPlayers,
-  normalizeIncomingPots,
-  normalizeSelectedWinnersByPot,
-  normalizeSettlementPreview
+  normalizeIncomingPlayers
 } from "./room/room-state.js";
 import { createHandPlayFlow } from "./game/hand-play-flow.js";
 import { createStartGameFlow } from "./game/start-game-flow.js";
 import {
-  normalizeInviteToken,
   normalizeJoinRequests
 } from "./room/room-entry.js";
 import {
@@ -209,6 +199,7 @@ let nextHandFlow;
 let tableSaveFlow;
 let startGameFlow;
 let identityToolbarFlow;
+let roomDataFlow;
 
 const seatIdentityFlow = createSeatIdentityFlow({
   getState: () => ({
@@ -1035,14 +1026,78 @@ identityToolbarFlow = createIdentityToolbarFlow({
   }
 });
 
+roomDataFlow = createRoomDataFlow({
+  getState: () => ({
+    players,
+    room,
+    clientId,
+    handId,
+    stateVersion,
+    bigBlind,
+    rounds,
+    gameStarted
+  }),
+  mutations: {
+    applyRoomDataState: patch => {
+      currentRound = patch.currentRound;
+      pot = patch.pot;
+      currentBet = patch.currentBet;
+      lastRaiseSize = patch.lastRaiseSize;
+      currentPlayerIndex = patch.currentPlayerIndex;
+      gameOver = patch.gameOver;
+      awaitingShowdown = patch.awaitingShowdown;
+      pendingPots = patch.pendingPots;
+      selectedWinnersByPot = patch.selectedWinnersByPot;
+      pendingDealPrompt = patch.pendingDealPrompt;
+      settlementPreview = patch.settlementPreview;
+      nextHandApprovals = patch.nextHandApprovals;
+      handId = patch.handId;
+      handStatus = patch.handStatus;
+      stateVersion = patch.stateVersion;
+      players = patch.players;
+      room = patch.room;
+    },
+    setGameStarted: started => {
+      gameStarted = Boolean(started);
+    }
+  },
+  helpers: {
+    touchMemberWithProfile
+  },
+  ui: {
+    syncIdentityFromPlayers: nextPlayers => tableManagerFlow.syncIdentityFromPlayers(nextPlayers),
+    renderIdentityControls,
+    renderGameLog,
+    updateGameInfo,
+    updatePlayerBoxes,
+    renderTableViewToolbar,
+    renderDealPromptPanel,
+    renderSettlementPreviewPanel,
+    hideShowdownPanel,
+    clearHandActions,
+    renderShowdownPanel,
+    renderNextHandButton,
+    renderCurrentActionPanel,
+    showGameTable: () => {
+      setupContainer.style.display = "none";
+      gameContainer.style.display = "grid";
+    },
+    showSetup: () => {
+      setupContainer.style.display = "block";
+      gameContainer.style.display = "none";
+    }
+  },
+  setup: {
+    renderPlayers: () => setupLobbyFlow.renderPlayers()
+  },
+  actions: {
+    inferHandStatus
+  }
+});
+
 // ----------------------
 // 通用工具函数
 // ----------------------
-function toNonNegativeNumber(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 0 ? number : fallback;
-}
-
 function toPositiveInteger(value, fallback = 0) {
   const number = parseInt(value, 10);
   return Number.isFinite(number) && number > 0 ? number : fallback;
@@ -1512,77 +1567,7 @@ function mergePlayerIdentityFields(nextPlayers, sourcePlayers = players, { prese
 }
 
 function applyRoomData(data) {
-  const gameState = data.gameState;
-  currentRound = toNonNegativeNumber(gameState.currentRound, 0);
-  pot = toNonNegativeNumber(gameState.pot, 0);
-  currentBet = toNonNegativeNumber(gameState.currentBet, 0);
-  lastRaiseSize = toPositiveInteger(gameState.lastRaiseSize, bigBlind);
-  currentPlayerIndex = Number.isInteger(gameState.currentPlayerIndex)
-    ? gameState.currentPlayerIndex
-    : -1;
-  gameOver = Boolean(gameState.gameOver);
-  awaitingShowdown = Boolean(gameState.awaitingShowdown);
-  pendingPots = normalizeIncomingPots(gameState.pendingPots);
-  selectedWinnersByPot = normalizeSelectedWinnersByPot(gameState.selectedWinnersByPot);
-  pendingDealPrompt = normalizeDealPrompt(gameState.pendingDealPrompt, { handId, roundCount: rounds.length });
-  settlementPreview = normalizeSettlementPreview(gameState.settlementPreview, { handId });
-  nextHandApprovals = normalizeApprovalMap(gameState.nextHandApprovals);
-  handId = toNonNegativeNumber(gameState.handId, handId);
-  handStatus = String(gameState.handStatus || inferHandStatus(gameState));
-  stateVersion = toNonNegativeNumber(gameState.stateVersion, stateVersion);
-  room.mode = normalizeRoomMode(data.mode, room.roomId);
-  room.operator = String(data.operator || room.operator || clientId);
-  room.hostClientId = getRoomHostId(data, room.operator || clientId);
-  room.inviteToken = normalizeInviteToken(data.inviteToken || room.inviteToken || "");
-  room.adminKeyHash = String(data.adminKeyHash || room.adminKeyHash || "");
-  room.adminPlayerIds = normalizeAdminPlayerIds(data.adminPlayerIds);
-  room.joinRequests = normalizeJoinRequests(data.joinRequests);
-  room.members = touchMemberWithProfile(data.members, clientId);
-  room.gameState.logs = Array.isArray(gameState.logs) ? gameState.logs.map(String) : [];
-  room.gameState.inProgress = Boolean(gameState.inProgress);
-  players = Array.isArray(data.players)
-    ? data.players.map(normalizeIncomingPlayer)
-    : players;
-  room.players = players;
-  tableManagerFlow.syncIdentityFromPlayers(players);
-
-  renderIdentityControls();
-  renderGameLog(room.gameState.logs);
-  updateGameInfo();
-  updatePlayerBoxes();
-  renderTableViewToolbar();
-  renderDealPromptPanel();
-  renderSettlementPreviewPanel();
-
-  if (handStatus === "waitingDeal") {
-    hideShowdownPanel();
-    clearHandActions();
-  } else if (handStatus === "settlementPreview") {
-    hideShowdownPanel();
-    clearHandActions();
-  } else if (awaitingShowdown) {
-    renderShowdownPanel();
-  } else {
-    hideShowdownPanel();
-  }
-
-  if (gameOver && !awaitingShowdown) {
-    renderNextHandButton();
-  } else if (!gameOver && handStatus === "playing") {
-    renderCurrentActionPanel();
-  } else {
-    clearHandActions();
-  }
-
-  if (gameState.inProgress === true) {
-    setupContainer.style.display = "none";
-    gameContainer.style.display = "grid";
-    gameStarted = true;
-  } else if (!gameStarted) {
-    setupContainer.style.display = "block";
-    gameContainer.style.display = "none";
-    setupLobbyFlow.renderPlayers();
-  }
+  roomDataFlow.applyRoomData(data);
 }
 
 if (playerAliasInput) {
