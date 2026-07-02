@@ -1,10 +1,5 @@
 // src/main.js
 import {
-  auth,
-  onAuthStateChanged,
-  signInAnonymously
-} from "./services/firebase.js";
-import {
   getPlayerCodeSalt as getPlayerAccessCodeSalt,
   getRememberedAdminCode as getStoredAdminCode,
   getRememberedPlayerCode as getStoredPlayerCode,
@@ -17,6 +12,7 @@ import { createSetupLobbyFlow } from "./room/setup-lobby-flow.js";
 import { createRoomSessionFlow } from "./room/room-session-flow.js";
 import { createGameSyncFlow } from "./room/game-sync-flow.js";
 import { createRoomDataFlow } from "./room/room-data-flow.js";
+import { createClientAuthFlow } from "./room/client-auth-flow.js";
 import { createApprovalLabels } from "./room/approval-labels.js";
 import { createIdentityToolbarFlow } from "./room/identity-toolbar-flow.js";
 import { createTableScreenController } from "./table/table-screen-controller.js";
@@ -200,6 +196,7 @@ let tableSaveFlow;
 let startGameFlow;
 let identityToolbarFlow;
 let roomDataFlow;
+let clientAuthFlow;
 
 const seatIdentityFlow = createSeatIdentityFlow({
   getState: () => ({
@@ -1095,6 +1092,42 @@ roomDataFlow = createRoomDataFlow({
   }
 });
 
+clientAuthFlow = createClientAuthFlow({
+  getState: () => ({
+    players,
+    room,
+    clientId
+  }),
+  mutations: {
+    applyAuthenticatedClientState: patch => {
+      clientId = patch.clientId;
+      players = patch.players;
+      room = patch.room;
+    },
+    setAuthState: patch => {
+      if ("authReady" in patch) authReady = Boolean(patch.authReady);
+      if ("authUnavailable" in patch) authUnavailable = Boolean(patch.authUnavailable);
+    }
+  },
+  modes: {
+    isLocalMode,
+    isRoomMode
+  },
+  identity: {
+    touchMemberWithProfile
+  },
+  remote: {
+    stopListener: () => roomSessionFlow.stopListener(),
+    listenFirebaseUpdates: () => roomSessionFlow.listenFirebaseUpdates(),
+    updateMemberPresence: () => roomSessionFlow.updateMemberPresence()
+  },
+  ui: {
+    refreshInteractiveControls,
+    renderIdentityControls,
+    setSyncStatus
+  }
+});
+
 // ----------------------
 // 通用工具函数
 // ----------------------
@@ -1214,69 +1247,8 @@ function needsRemoteSync() {
   return isRoomMode() && Boolean(room.roomId);
 }
 
-function rekeyRoomMember(previousClientId, nextClientId) {
-  if (!previousClientId || !nextClientId || previousClientId === nextClientId) return;
-  const members = normalizeMembers(room.members);
-  const previousMember = members[previousClientId] || {};
-  delete members[previousClientId];
-  members[nextClientId] = {
-    ...previousMember,
-    clientId: nextClientId,
-    lastSeenAt: Date.now()
-  };
-  room.members = members;
-  players.forEach(player => {
-    if (normalizePlayerOwnerId(player.ownerClientId) === previousClientId) {
-      player.ownerClientId = nextClientId;
-    }
-  });
-  if (room.operator === previousClientId) room.operator = nextClientId;
-  if (room.hostClientId === previousClientId) room.hostClientId = nextClientId;
-}
-
-function applyAuthenticatedClientId(nextClientId) {
-  const normalizedClientId = normalizePlayerOwnerId(nextClientId);
-  if (!normalizedClientId || normalizedClientId === clientId) return;
-  const previousClientId = clientId;
-  clientId = normalizedClientId;
-  rekeyRoomMember(previousClientId, clientId);
-  room.members = touchMemberWithProfile(room.members, clientId);
-  if (isLocalMode()) {
-    room.operator = clientId;
-    room.hostClientId = clientId;
-  }
-  refreshInteractiveControls();
-  if (isRoomMode() && room.roomId) {
-    roomSessionFlow.updateMemberPresence();
-  }
-}
-
 function startAnonymousIdentity() {
-  if (!auth) {
-    authReady = true;
-    authUnavailable = true;
-    return;
-  }
-  onAuthStateChanged(auth, (user) => {
-    authReady = true;
-    if (user?.uid) {
-      authUnavailable = false;
-      applyAuthenticatedClientId(user.uid);
-      if (isRoomMode() && room.roomId) {
-        roomSessionFlow.stopListener();
-        roomSessionFlow.listenFirebaseUpdates();
-        roomSessionFlow.updateMemberPresence();
-      }
-      setSyncStatus(isRoomMode() && room.roomId ? "已连接身份" : "身份已就绪", "ok");
-    }
-    renderIdentityControls();
-  });
-  signInAnonymously(auth).catch(() => {
-    authReady = true;
-    authUnavailable = true;
-    setSyncStatus(isRoomMode() && room.roomId ? "身份连接异常，房间同步以实际状态为准" : isRoomMode() ? "多人房间未连接" : "本地模式");
-    renderIdentityControls();
-  });
+  clientAuthFlow.startAnonymousIdentity();
 }
 
 function getHostClientId(roomData = room) {
