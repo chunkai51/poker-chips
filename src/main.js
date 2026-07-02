@@ -25,6 +25,7 @@ import { createRoomSessionFlow } from "./room/room-session-flow.js";
 import { createGameSyncFlow } from "./room/game-sync-flow.js";
 import { createTableScreenController } from "./table/table-screen-controller.js";
 import { createTableManagerFlow } from "./table/table-manager-flow.js";
+import { createTableSaveFlow } from "./table/table-save-flow.js";
 import {
   showAppAlert,
   showAppConfirm
@@ -55,9 +56,6 @@ import {
   normalizeRoomId
 } from "./room/room-entry.js";
 import {
-  buildTogglePlayerAdminRoomUpdate,
-} from "./room/room-claims-controller.js";
-import {
   getPlayerCompactIdentityLabel as formatPlayerCompactIdentityLabel,
   getPlayerIdentityLabel as formatPlayerIdentityLabel,
   getPlayerName as getPlayerDisplayName,
@@ -87,8 +85,7 @@ import {
   normalizeAdminPlayerIds,
   normalizeMembers,
   normalizePlayerOwnerId,
-  normalizeRoomMode,
-  touchMember
+  normalizeRoomMode
 } from "./room/identity.js";
 import {
   canPlayerRaise as canPlayerRaiseWithState,
@@ -101,7 +98,6 @@ import {
   getPotSizedRaiseTarget as calculatePotSizedRaiseTarget,
   getRaiseUnavailableMessage as getRaiseUnavailableMessageForState,
   getRaiseValidation as validateRaiseTarget,
-  getSeatStatusLabel,
   isEligibleForNextHand
 } from "./core/game-rules.js";
 import { initGuidePanels } from "./ui/guide.js";
@@ -216,6 +212,7 @@ let gameSyncFlow;
 let handPlayFlow;
 let settlementFlow;
 let nextHandFlow;
+let tableSaveFlow;
 
 const seatIdentityFlow = createSeatIdentityFlow({
   getState: () => ({
@@ -714,6 +711,61 @@ nextHandFlow = createNextHandFlow({
   }
 });
 
+tableSaveFlow = createTableSaveFlow({
+  maxPlayers: MAX_PLAYERS,
+  getState: () => ({
+    players,
+    room,
+    clientId,
+    handStatus,
+    handId,
+    stateVersion
+  }),
+  mutations: {
+    setPlayers: nextPlayers => {
+      players = nextPlayers;
+      room.players = players;
+    },
+    setRoom: nextRoom => {
+      room = nextRoom;
+    },
+    setNextHandApprovals: approvals => {
+      nextHandApprovals = approvals;
+    },
+    setMutationInProgress,
+    setBatchingStateUpdate: inProgress => {
+      batchingStateUpdate = Boolean(inProgress);
+    }
+  },
+  permissions: {
+    canCurrentClientManageRoom,
+    canClientManageRoomData
+  },
+  rules: {
+    getEligiblePlayerIndices
+  },
+  remote: {
+    transactRoom,
+    refreshFromRemote: () => roomSessionFlow.refreshFromRemote(),
+    updateFirebaseState
+  },
+  setup: {
+    renderPlayers: () => setupLobbyFlow.renderPlayers(),
+    updateActionState: () => setupLobbyFlow.updateActionState(),
+    sync: (...args) => setupLobbyFlow.sync(...args)
+  },
+  ui: {
+    showAppAlert,
+    closeTableManager: () => tableManagerFlow.close(),
+    renderTableManagerIfOpen: () => tableManagerFlow.renderIfOpen(),
+    updatePlayerBoxes,
+    updateGameLog
+  },
+  helpers: {
+    mergePlayerIdentityFields
+  }
+});
+
 const tableManagerFlow = createTableManagerFlow({
   elements: {
     backdrop: tableManagerBackdrop,
@@ -728,7 +780,7 @@ const tableManagerFlow = createTableManagerFlow({
     stateVersion
   }),
   getInitialChips: () => toPositiveInteger(initialChipsInput.value, 1000),
-  canEditTableNow,
+  canEditTableNow: () => tableSaveFlow.canEditTableNow(),
   isSharedPromptActionLocked,
   isLocalMode,
   isRoomMode,
@@ -1818,8 +1870,7 @@ document.addEventListener("click", (event) => {
 });
 
 function canEditTableNow() {
-  if (!canCurrentClientManageRoom()) return false;
-  return handStatus === "setup" || handStatus === "settled";
+  return tableSaveFlow.canEditTableNow();
 }
 
 function openTableManager() {
@@ -1831,37 +1882,11 @@ function closeTableManager() {
 }
 
 function removeAdminPlayerId(playerId) {
-  room.adminPlayerIds = normalizeAdminPlayerIds(room.adminPlayerIds)
-    .filter(id => id !== playerId);
+  tableSaveFlow.removeAdminPlayerId(playerId);
 }
 
 async function togglePlayerAdmin(playerId, shouldGrant) {
-  if (!canCurrentClientManageRoom() || !room.roomId) return;
-  setMutationInProgress(true);
-  try {
-    const result = await transactRoom(room.roomId, (currentRoom) => {
-      return buildTogglePlayerAdminRoomUpdate({
-        currentRoom,
-        room,
-        clientId,
-        playerId,
-        shouldGrant,
-        canClientManageRoom: canClientManageRoomData,
-        touchMember
-      });
-    }, { applyLocally: false });
-    if (!result.committed) {
-      showAppAlert("协管权限更新没有成功，请等待同步后重试。");
-      await roomSessionFlow.refreshFromRemote();
-      return;
-    }
-    await roomSessionFlow.refreshFromRemote();
-  } catch (_) {
-    showAppAlert("协管权限更新失败，请稍后再试。");
-  } finally {
-    setMutationInProgress(false);
-    tableManagerFlow.renderIfOpen();
-  }
+  await tableSaveFlow.togglePlayerAdmin(playerId, shouldGrant);
 }
 
 async function commitTableDraft({
@@ -1871,83 +1896,13 @@ async function commitTableDraft({
   baseStateVersion,
   summaryText
 } = {}) {
-  if (!canEditTableNow()) {
-    showAppAlert("只有房主或协管可以保存牌桌管理设置。");
-    return { ok: false };
-  }
-
-  let nextPlayers = mergePlayerIdentityFields(draftPlayers, players);
-  if (nextPlayers.length > MAX_PLAYERS) {
-    showAppAlert(`最多支持 ${MAX_PLAYERS} 名玩家`);
-    return { ok: false };
-  }
-
-  if (startNextHand && getEligiblePlayerIndices(nextPlayers).length < 2) {
-    showAppAlert("至少需要 2 名已入座且有筹码的玩家才能开始下一局");
-    return { ok: false };
-  }
-
-  if (handStatus === "setup") {
-    players = nextPlayers.map((player, index) => ({
-      ...player,
-      folded: false,
-      dealer: index === 0,
-      bet: 0,
-      totalBet: 0,
-      allIn: false,
-      acted: false,
-      position: ""
-    }));
-    room.players = players;
-    room.adminPlayerIds = normalizeAdminPlayerIds(room.adminPlayerIds)
-      .filter(playerId => players.some(player => player.id === playerId));
-    setupLobbyFlow.renderPlayers();
-    setupLobbyFlow.updateActionState();
-    updatePlayerBoxes();
-    await setupLobbyFlow.sync();
-    return { ok: true };
-  }
-
-  const expectedHandId = baseHandId;
-  const expectedStateVersion = baseStateVersion;
-  if (expectedHandId !== handId || expectedStateVersion !== stateVersion) {
-    showAppAlert("牌桌已被其他设备更新，请关闭后重新打开牌桌管理。");
-    closeTableManager();
-    return { ok: false };
-  }
-
-  setMutationInProgress(true);
-  batchingStateUpdate = true;
-
-  players = nextPlayers;
-  room.players = players;
-  room.adminPlayerIds = normalizeAdminPlayerIds(room.adminPlayerIds)
-    .filter(playerId => players.some(player => player.id === playerId));
-  nextHandApprovals = {};
-  players.forEach(player => {
-    player.position = getSeatStatusLabel(player.seatStatus);
+  return tableSaveFlow.commitTableDraft({
+    nextPlayers: draftPlayers,
+    startNextHand,
+    baseHandId,
+    baseStateVersion,
+    summaryText
   });
-  updatePlayerBoxes();
-  updateGameLog(`牌桌已更新：${summaryText}`);
-
-  batchingStateUpdate = false;
-  const saved = await updateFirebaseState({
-    expectedHandId,
-    allowedStatuses: ["settled"],
-    expectedStateVersion,
-    remoteGuard: (currentRoom) => canClientManageRoomData(clientId, currentRoom)
-  });
-  setMutationInProgress(false);
-
-  if (!saved) {
-    showAppAlert("牌桌管理没有保存成功，已恢复到最新远端状态");
-    return { ok: false };
-  }
-
-  return {
-    ok: true,
-    startNextHandExpectedHandId: startNextHand ? expectedHandId : null
-  };
 }
 
 // ----------------------
