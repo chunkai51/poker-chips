@@ -20,40 +20,14 @@ The app is intentionally lightweight:
 index.html
   -> loads styles.css
   -> loads src/main.js as a module
-       -> imports Firebase Auth/Database helpers from src/services/firebase.js
-       -> imports legacy access-code helpers from src/room/access-codes.js
-       -> imports player seat DOM builders from src/ui/player-seat-ui.js
-       -> imports raise action panel DOM builders from src/ui/raise-ui.js
-       -> imports room database adapter helpers from src/room/room-sync.js
-       -> composes setup/lobby flow from src/room/setup-lobby-flow.js
-       -> composes room session flow from src/room/room-session-flow.js
-       -> composes incoming room-data application from src/room/room-data-flow.js
-       -> composes anonymous client auth from src/room/client-auth-flow.js
-       -> composes guarded game-sync flow from src/room/game-sync-flow.js
-       -> composes shared approval labels from src/room/approval-labels.js
-       -> composes identity/table-view toolbar flow from src/room/identity-toolbar-flow.js
-       -> imports room claim/request helpers from src/room/room-claims-controller.js
-       -> imports room entry/link/request helpers from src/room/room-entry.js
-       -> imports room lobby state helpers from src/room/room-lobby-controller.js
-       -> imports room permission helpers from src/room/room-permissions.js
-       -> imports room/game-state normalizers from src/room/room-state.js
-       -> composes start-game flow from src/game/start-game-flow.js
-       -> imports hand-flow state transition helpers from src/core/hand-flow-controller.js
-       -> imports hand lifecycle state transitions from src/game/hand-controller.js
-       -> imports settlement state transitions from src/game/settlement-controller.js
-       -> imports settlement calculation helpers from src/core/settlement-engine.js
-       -> imports client/room identity helpers from src/room/identity.js
-       -> imports player model helpers from src/core/player-model.js
-       -> imports pure table and betting rules from src/core/game-rules.js
-       -> imports visual table coordinates from src/table/table-layout.js
-       -> imports local table-view preferences from src/table/table-view-preferences.js
-       -> imports table center DOM builders from src/ui/table-center-ui.js
-       -> imports table manager draft helpers from src/table/table-manager-controller.js
-       -> imports table manager DOM builders from src/ui/table-manager-ui.js
-       -> imports shared dialog and DOM factories from src/ui/dialogs.js and src/ui/ui-dom.js
-       -> imports collapsible player manual rendering from src/ui/guide.js
-       -> imports chip riffle popover behavior from src/riffle/riffle.js
-            -> imports sampled chip audio from src/riffle/riffle-sound.js
+       -> creates the state store, DOM registry, policy facade, and UI coordinator from src/app/
+       -> creates src/app/room-runtime.js
+            -> composes identity, lobby, room session, incoming data, auth, sync, and identity toolbar flows
+       -> creates src/app/game-runtime.js
+            -> composes first-hand, betting/street, settlement, and next-hand flows
+       -> creates src/app/table-runtime.js
+            -> composes table screen, table manager, and table persistence flows
+       -> initializes the guide, chip riffle, runtime event bindings, and debug hooks
 
 poker-game.js
   -> compatibility entrypoint that imports src/main.js
@@ -63,6 +37,7 @@ poker-game.js
 
 The `src/` tree is organized by responsibility, not by extraction history:
 
+- `src/app/`: browser application state and domain composition. It connects existing workflows but does not reimplement their business logic.
 - `src/core/`: pure poker/game calculations and data helpers. These modules should be the easiest to unit test and reuse from a future backend command validator.
 - `src/game/`: DOM-free game workflow state transitions. These modules may compose `src/core/` helpers, but should not render UI or write Firebase.
 - `src/room/`: room identity, permissions, room payload normalization, lobby/claim data transforms, and the Realtime Database room adapter.
@@ -70,7 +45,7 @@ The `src/` tree is organized by responsibility, not by extraction history:
 - `src/table/`: visual table layout preferences and table-management draft logic.
 - `src/riffle/`: optional chip-riffle interaction and sound. It must stay isolated from the hand flow.
 - `src/services/`: third-party service initialization or very thin service wrappers.
-- `src/main.js`: current composition root and legacy orchestrator. It still owns module-level app state, event wiring, and many workflows until those workflows are moved as complete responsibilities.
+- `src/main.js`: minimal browser bootstrap. It creates the app services/runtimes, initializes static UI, and exposes two intentional console debugging hooks.
 
 ## Refactor Rules
 
@@ -99,7 +74,7 @@ Owns the static DOM shell:
 - Log panel container
 - Player manual mount points after setup actions and after the log panel
 
-Important: many elements are selected by `id` in `src/main.js`. Preserve these IDs unless you update all JS references:
+Important: many elements are selected by `id` in `src/app/app-elements.js`. Preserve these IDs unless you update all JS references:
 
 - `setup`
 - `game`
@@ -210,7 +185,7 @@ Owns setup-page player editing and pregame lobby sync:
 - Debounced lobby writes while still in `handStatus === "setup"`
 - Player-id and setup-player creation for setup/table-manager callers
 
-This is a workflow module. It receives `getState`, mutation callbacks, permission helpers, identity callbacks, and remote transaction helpers from `src/main.js`. It may render setup DOM and call the room transaction adapter passed to it, but it should not own the global app state or in-hand betting logic.
+This is a workflow module. It receives `getState`, mutation callbacks, permission helpers, identity callbacks, and remote transaction helpers from `src/app/room-runtime.js`. It may render setup DOM and call the room transaction adapter passed to it, but it should not own the global app state or in-hand betting logic.
 
 ### `src/room/room-session-flow.js`
 
@@ -223,7 +198,7 @@ Owns the room lifecycle around the poker hand:
 - Firebase room listener lifecycle
 - Remote room reads and member presence writes
 
-This module calls the thin Firebase adapter in `src/room/room-sync.js` and asks `src/main.js` to apply incoming room data through a callback. It should not decide betting, settlement, or hand-reset rules.
+This module calls the thin Firebase adapter in `src/room/room-sync.js` and asks the room runtime to apply incoming room data through a callback. It should not decide betting, settlement, or hand-reset rules.
 
 ### `src/room/room-data-flow.js`
 
@@ -235,7 +210,7 @@ Owns incoming room snapshot application:
 - Refreshes identity, log, table, prompt, settlement, and action UI after remote updates
 - Switches between setup and game containers when remote `inProgress` changes
 
-This module composes room/game-state normalizers and receives explicit mutation/UI callbacks from `src/main.js`. Keep outbound writes in `src/room/game-sync-flow.js`; this module is for applying inbound snapshots.
+This module composes room/game-state normalizers and receives explicit mutation/UI callbacks from `src/app/room-runtime.js`. Keep outbound writes in `src/room/game-sync-flow.js`; this module is for applying inbound snapshots.
 
 ### `src/room/client-auth-flow.js`
 
@@ -247,7 +222,7 @@ Owns Firebase Anonymous Auth client identity handoff:
 - Rekeys room members and owned seats from the old client id to the new uid
 - Restarts room listening and member presence after identity changes
 
-This module imports the Firebase Auth service boundary directly from `src/services/firebase.js`, but receives state/mutation, room-mode, identity, remote, and UI callbacks from `src/main.js`.
+This module imports the Firebase Auth service boundary directly from `src/services/firebase.js`, but receives state/mutation, room-mode, identity, remote, and UI callbacks from `src/app/room-runtime.js`.
 
 ### `src/room/game-sync-flow.js`
 
@@ -258,7 +233,7 @@ Owns guarded in-hand remote writes:
 - Conflict handling for hand id, hand status, state version, and custom remote guards
 - Remote-hand-still-valid checks used before settlement/reset flows
 
-This module composes `src/room/game-state-snapshot.js` and receives explicit state/dependency callbacks from `src/main.js`. It should stay focused on remote write semantics and not render UI beyond delegated status/refresh callbacks.
+This module composes `src/room/game-state-snapshot.js` and receives explicit state/dependency callbacks from `src/app/room-runtime.js`. It should stay focused on remote write semantics and not render UI beyond delegated status/refresh callbacks.
 
 ### `src/room/room-claims-controller.js`
 
@@ -329,7 +304,7 @@ Owns DOM-free room permission helpers:
 - Player-control checks
 - Current-device player lookup helpers
 
-`src/main.js` keeps thin wrappers because it still owns `clientId`, current `room`, remembered admin-code checks, and local fallback state.
+`src/app/app-policy.js` binds these pure helpers to the current `clientId`, room, players, and remembered admin-code checks.
 
 ### `src/room/approval-labels.js`
 
@@ -340,7 +315,7 @@ Owns shared synchronized-confirmation helpers:
 - Human-readable labels for approving players/devices
 - Waiting and progress text for synchronized confirmation prompts
 
-This module is DOM-free. It receives current state, identity lookup helpers, and label formatters from `src/main.js`, then feeds settlement, next-hand, and table-screen flows through one shared approval object.
+This module is DOM-free. It receives current state, identity lookup helpers, and label formatters from `src/app/room-runtime.js`, then feeds settlement, next-hand, and table-screen flows through one shared approval object.
 
 ### `src/room/identity-toolbar-flow.js`
 
@@ -352,7 +327,7 @@ Owns the identity and local-view toolbar UI:
 - In-game table-view summary
 - Local-only table rotation controls and persistence
 
-This module renders DOM, but it does not own authoritative room/game state. It receives state, identity helpers, labels, permission checks, and UI callbacks from `src/main.js`, then reports table-view rotation changes back through a mutation callback.
+This module renders DOM, but it does not own authoritative room/game state. It receives state, identity helpers, labels, permission checks, and UI callbacks from `src/app/room-runtime.js`, then reports table-view rotation changes back through a mutation callback.
 
 ### `src/ui/player-seat-ui.js`
 
@@ -365,7 +340,7 @@ Owns DOM builders for player seats around the visual poker table:
 - Seat detail popover
 - Optional claim/reclaim button inside the popover
 
-`src/main.js` still computes labels, permissions, active seat state, and claim callbacks. Keep this module focused on rendering the seat UI from prepared values.
+`src/app/app-policy.js` computes labels and permissions, while `src/app/table-runtime.js` supplies active state and claim callbacks. Keep this module focused on rendering the seat UI from prepared values.
 
 ### `src/core/player-model.js`
 
@@ -390,7 +365,7 @@ Owns the Raise action panel DOM:
 - Live validation preview
 - Confirm button text/disabled state
 
-`src/main.js` still computes legal raise targets and supplies the validation callback. Keep betting rules in `src/core/game-rules.js` / `src/main.js`, not in this UI module.
+`src/app/app-policy.js` binds legal raise targets and validation to current state. Keep pure betting rules in `src/core/game-rules.js`, not in this UI module.
 
 ### `src/core/approvals.js`
 
@@ -398,7 +373,7 @@ Owns DOM-free approval progress helpers used by room-mode settlement confirmatio
 
 - Normalizes approval maps keyed by client id.
 - Computes approved/required counts and completion state.
-- Keep label rendering in `src/main.js`; this module should stay pure enough to reuse from a future backend command validator.
+- Keep state-bound label rendering in `src/app/app-policy.js`; this module should stay pure enough to reuse from a future backend command validator.
 
 ### `src/core/deal-prompts.js`
 
@@ -414,7 +389,7 @@ The module intentionally does not decide who may confirm a prompt; that remains 
 
 Owns the compatibility identity layer for the multiplayer-by-player roadmap:
 
-- Persistent local `clientId` fallback in `localStorage`; `src/main.js` replaces it with Firebase Anonymous Auth `uid` when available
+- Persistent local `clientId` fallback in `localStorage`; `src/room/client-auth-flow.js` replaces it with Firebase Anonymous Auth `uid` when available
 - Room modes: `local` and `room`
 - Room host id normalization for legacy rooms and creator fallback
 - Room member map normalization, claimed-player ids, display names, admin-session flags, and last-seen updates
@@ -461,7 +436,7 @@ Owns DOM-free hand lifecycle state transitions:
 - Later-street bet/acted reset and first actionable player lookup
 - Next-hand base-state reset after settlement
 
-This module composes `src/core/game-rules.js`, `src/core/deal-prompts.js`, and `src/core/hand-flow-controller.js`. It returns next state objects for `src/main.js` to apply. It should not show dialogs, write logs, render DOM, call Firebase, or decide remote conflict messages.
+This module composes `src/core/game-rules.js`, `src/core/deal-prompts.js`, and `src/core/hand-flow-controller.js`. It returns next state objects for the game runtime to apply through the app store. It should not show dialogs, write logs, render DOM, call Firebase, or decide remote conflict messages.
 
 ### `src/game/hand-play-flow.js`
 
@@ -474,7 +449,7 @@ Owns the in-hand betting and street progression workflow:
 - Next-actionable-player selection and betting-round completion
 - Street-end deal prompts and automatic hand-end routing to settlement callbacks
 
-This workflow module composes pure helpers from `src/core/hand-flow-controller.js` and `src/game/hand-controller.js`. It receives state, mutations, UI callbacks, permission callbacks, and remote-sync callbacks from `src/main.js`; it should not become a global state store or own showdown/settlement payout logic.
+This workflow module composes pure helpers from `src/core/hand-flow-controller.js` and `src/game/hand-controller.js`. It receives state, mutations, UI callbacks, permission callbacks, and remote-sync callbacks from `src/app/game-runtime.js`; it should not become a global state store or own showdown/settlement payout logic.
 
 ### `src/game/start-game-flow.js`
 
@@ -486,7 +461,7 @@ Owns the setup-page action that starts the first hand:
 - Normalizes setup players into first-hand player state
 - Initializes blinds, hand id, hand status, pots, and first-hand UI state through callbacks
 
-This module coordinates setup and room-session dependencies, but it does not own the global app state directly. It receives explicit state/mutation, setup, remote, UI, and action callbacks from `src/main.js`.
+This module coordinates setup and room-session dependencies, but it does not own the global app state directly. It receives explicit state/mutation, setup, remote, UI, and action callbacks from `src/app/game-runtime.js`.
 
 ### `src/game/settlement-controller.js`
 
@@ -500,7 +475,7 @@ Owns DOM-free settlement flow state transitions:
 - Immediate remaining-pot award when only one player remains
 - Zero-chip seated player transition to `busted`
 
-This module composes `src/core/settlement-engine.js` and returns next state objects for `src/main.js` to apply. It should not show dialogs, render winner-selection DOM, write logs, call Firebase, or decide remote approval/conflict messages.
+This module composes `src/core/settlement-engine.js` and returns next state objects for the game runtime to apply through the app store. It should not show dialogs, render winner-selection DOM, write logs, call Firebase, or decide remote approval/conflict messages.
 
 ### `src/game/settlement-flow.js`
 
@@ -513,7 +488,7 @@ Owns the user-visible settlement workflow:
 - Room-mode all-required-player settlement confirmation
 - Final payout application and busted-player log messages
 
-This workflow composes `src/game/settlement-controller.js` and approval helpers, while receiving state, mutation, UI, approval, and remote-sync callbacks from `src/main.js`. Keep payout math in `src/core/settlement-engine.js`; keep this module focused on settlement workflow orchestration.
+This workflow composes `src/game/settlement-controller.js` and approval helpers, while receiving state, mutation, UI, approval, and remote-sync callbacks from `src/app/game-runtime.js`. Keep payout math in `src/core/settlement-engine.js`; keep this module focused on settlement workflow orchestration.
 
 ### `src/game/next-hand-flow.js`
 
@@ -525,7 +500,7 @@ Owns post-settlement next-hand readiness:
 - Clearing logs/actions/prompts and starting the next opening round
 - Remote guard checks that prevent stale devices from starting a hand twice
 
-This workflow receives state, mutation, UI, approval, and remote-sync callbacks from `src/main.js`. Keep dealer/blind reset mechanics in `src/game/hand-controller.js`; keep this module focused on the post-settlement confirmation and reset workflow.
+This workflow receives state, mutation, UI, approval, and remote-sync callbacks from `src/app/game-runtime.js`. Keep dealer/blind reset mechanics in `src/game/hand-controller.js`; keep this module focused on the post-settlement confirmation and reset workflow.
 
 ### `src/ui/ui-dom.js`
 
@@ -543,7 +518,7 @@ Owns shared modal shells:
 - App-level alert/confirm dialog replacements for browser `alert()` / `confirm()`
 - Table action dialog shell used by raise, showdown, settlement, and similar focused actions
 
-Business flows still live in `src/main.js`; this module only creates the reusable dialog frame and delegates content construction through callbacks.
+Business flows live in their domain workflow modules; this module only creates the reusable dialog frame and delegates content construction through callbacks.
 
 ### `src/table/table-layout.js`
 
@@ -574,7 +549,7 @@ Owns DOM builders for table-center UI:
 - Showdown winner-selection dialog body
 - Settlement-preview dialog body
 
-`src/main.js` still decides which state is active, which actions are allowed, and what callbacks run. Keep this module UI-focused and callback-driven.
+`src/app/app-policy.js` and `src/app/table-runtime.js` decide which state is active, which actions are allowed, and what callbacks run. Keep this module UI-focused and callback-driven.
 
 ### `src/table/table-screen-controller.js`
 
@@ -608,7 +583,7 @@ Owns the seat/identity management window workflow:
 - Opens and closes the management modal
 - Owns the transient table draft while the modal is open
 - Renders identity summary, seat requests, and draft rows through `src/ui/table-manager-ui.js`
-- Applies local draft edits before passing normalized players back to `src/main.js`
+- Applies local draft edits before passing normalized players back through `src/app/table-runtime.js`
 - Delegates authoritative save, room sync, admin toggles, and seat-claim actions through explicit callbacks
 
 This module intentionally sits between `src/table/table-manager-controller.js` and `src/ui/table-manager-ui.js`. It may own UI-local draft state, but it should not become the global app state store and should not call Firebase directly.
@@ -624,7 +599,7 @@ Owns authoritative table-management persistence:
 - Grants/revokes cohost status through guarded room transactions
 - Prunes admin-player ids for deleted players
 
-This module receives state, mutation, setup-lobby, UI, and remote-sync callbacks from `src/main.js`. Keep draft editing in `src/table/table-manager-controller.js` / `src/table/table-manager-flow.js`; keep this module focused on persistence and conflict handling.
+This module receives state, mutation, setup-lobby, UI, and remote-sync callbacks from `src/app/table-runtime.js`. Keep draft editing in `src/table/table-manager-controller.js` / `src/table/table-manager-flow.js`; keep this module focused on persistence and conflict handling.
 
 ### `src/ui/table-manager-ui.js`
 
@@ -639,12 +614,19 @@ Owns DOM builders for the seat and identity management panel:
 
 ### `src/main.js`
 
-Still orchestrates the app shell and authoritative browser state:
+This is a small bootstrap entrypoint. Keep it limited to creating the state/elements/policy/UI services, constructing the three domain runtimes, initializing optional static features, and exposing intentional debug hooks. Do not move business logic back here.
 
-- Module-level game state
-- Composition of flow/controllers and their callbacks
+### `src/app/`
 
-It now delegates setup/lobby editing to `src/room/setup-lobby-flow.js`, room lifecycle/listening to `src/room/room-session-flow.js`, incoming room-data application to `src/room/room-data-flow.js`, anonymous client auth to `src/room/client-auth-flow.js`, guarded in-hand sync to `src/room/game-sync-flow.js`, shared approval labels to `src/room/approval-labels.js`, identity/table-view toolbar rendering to `src/room/identity-toolbar-flow.js`, first-hand startup to `src/game/start-game-flow.js`, in-hand betting and street progression to `src/game/hand-play-flow.js`, settlement workflow to `src/game/settlement-flow.js`, next-hand readiness/reset to `src/game/next-hand-flow.js`, table-management persistence to `src/table/table-save-flow.js`, room database access to `src/room/room-sync.js`, room-entry helpers to `src/room/room-entry.js`, room lobby data helpers to `src/room/room-lobby-controller.js`, room claim/request helpers to `src/room/room-claims-controller.js`, legacy access-code helpers to `src/room/access-codes.js`, room payload normalization to `src/room/room-state.js`, sync snapshot helpers to `src/room/game-state-snapshot.js`, room permission checks to `src/room/room-permissions.js`, identity normalization to `src/room/identity.js`, player object helpers to `src/core/player-model.js`, approval progress to `src/core/approvals.js`, dealer prompt metadata to `src/core/deal-prompts.js`, betting action transitions to `src/core/hand-flow-controller.js`, hand lifecycle transitions to `src/game/hand-controller.js`, settlement flow transitions to `src/game/settlement-controller.js`, settlement calculations to `src/core/settlement-engine.js`, player-seat DOM rendering to `src/ui/player-seat-ui.js`, raise panel DOM rendering to `src/ui/raise-ui.js`, visual seat coordinates to `src/table/table-layout.js`, local table-view preferences to `src/table/table-view-preferences.js`, table-center DOM rendering to `src/ui/table-center-ui.js`, table-screen composition to `src/table/table-screen-controller.js`, table-manager workflow to `src/table/table-manager-flow.js`, table-manager draft logic to `src/table/table-manager-controller.js`, table-manager DOM rendering to `src/ui/table-manager-ui.js`, shared dialog shells to `src/ui/dialogs.js`, small DOM factories to `src/ui/ui-dom.js`, and core table/betting calculations to `src/core/game-rules.js`. There is still no separate state store, reducer, or test harness.
+- `app-state.js`: owns the authoritative browser state, room defaults, shared constants, and consistent `players` / `room.players` updates.
+- `app-elements.js`: owns DOM lookup for the static shell.
+- `app-policy.js`: binds room permissions, identity labels, access-code compatibility, betting rules, and action locks to current state. Pure rules remain in `src/core/` and `src/room/`.
+- `app-ui.js`: owns logs, sync status, setup/game visibility, mutation refreshes, and stable UI ports used before/after controller construction.
+- `room-runtime.js`: composes room/identity/lobby/auth/sync workflows.
+- `game-runtime.js`: composes hand startup, betting streets, settlement, and next-hand workflows.
+- `table-runtime.js`: composes table rendering, table management, and table persistence.
+
+Runtime modules receive explicit grouped dependencies (`store`, `elements`, `policy`, `ui`, and required domain runtimes). They may adapt state/callback shapes, but must not duplicate logic already owned by a workflow module.
 
 ### `src/ui/guide.js`
 
@@ -683,7 +665,7 @@ Chip side decoration is CSS-only. The default/dual-color skins use repeated SVG 
 
 ## State Model
 
-Primary module-level variables in `src/main.js`:
+Primary fields in the authoritative object returned by `src/app/app-state.js`:
 
 - `players`: array of player objects
 - `currentPlayerIndex`: index of the active player, or `-1`
@@ -706,6 +688,8 @@ Primary module-level variables in `src/main.js`:
 - `handStatus`: one of `setup`, `playing`, `waitingDeal`, `showdown`, `settlementPreview`, `settled`
 - `stateVersion`: optimistic concurrency guard for remote writes
 - `mutationInProgress`, `syncReady`, `syncWriteInProgress`, `batchingStateUpdate`
+
+Use `store.patch()` for multi-field workflow transitions and `store.setPlayers()` when replacing players. Both keep `state.players` and `state.room.players` aligned.
 
 Room data is mirrored into:
 
@@ -893,6 +877,9 @@ Implemented:
 - Table-management persistence split into `src/table/table-save-flow.js`
 - Shared synchronized-confirmation labels split into `src/room/approval-labels.js`
 - Identity/table-view toolbar rendering split into `src/room/identity-toolbar-flow.js`
+- Setup lobby sync regression coverage in `tests/setup-lobby-flow.test.js`; setup controls must unlock after a remote write finishes
+- Application state consistency coverage in `tests/app-state.test.js`
+- Final application composition split: `src/main.js` reduced from about 1,810 lines to a 35-line bootstrap, with state/policy/UI and room/game/table runtimes under `src/app/`
 - Anonymous Auth integration with local `clientId` fallback
 - Multiplayer player binding through `ownerClientId` plus host/cohost-approved join/reclaim requests
 - Cohost grant/revoke through administrator-player ids
@@ -943,7 +930,7 @@ Not implemented:
 
 - Hand history persistence beyond current room state
 - Card dealing or hand-rank evaluation
-- Automated tests
+- Broad automated test coverage beyond the current app-state and setup-lobby regression tests
 - Build pipeline
 - Lint/format tooling
 - Complete Cloud Functions command coverage for all betting, settlement, and next-hand mutations
@@ -969,7 +956,8 @@ http://localhost:8000/
 Syntax checks:
 
 ```bash
-for f in $(find src functions -name "*.js" | sort); do node --check "$f" || exit 1; done
+node --test tests/*.test.js
+for f in $(find src functions tests -name "*.js" | sort); do node --check "$f" || exit 1; done
 git diff --check
 ```
 
@@ -1020,7 +1008,7 @@ Browser validation checklist:
 
 ## Safe Change Guidelines
 
-- Preserve DOM IDs used by `src/main.js`.
+- Preserve DOM IDs used by `src/app/app-elements.js`.
 - Keep game-rule changes small, prefer pure helpers in `src/core/game-rules.js`, and manually test several betting flows.
 - If changing player object shape, update:
   - local creation
@@ -1036,8 +1024,8 @@ Browser validation checklist:
 
 ## Suggested Next Steps
 
-1. Move `playerAction`, deal confirmation, settlement preview confirmation, table saves, and next-hand approval to command writes processed by Cloud Functions.
+1. Move `playerAction`, deal confirmation, settlement preview confirmation, table saves, and next-hand approval to command writes processed by Cloud Functions or the chosen replacement backend.
 2. Tighten `database.rules.json` after command coverage so clients cannot directly write `players` or `gameState`.
 3. Enable Firebase Anonymous Auth, App Check, API key restrictions, and budget alerts in the Firebase console.
-4. Add unit tests for `src/core/game-rules.js`, `src/room/identity.js`, and the Cloud Functions command validator.
+4. Add unit tests for `src/core/game-rules.js`, `src/room/identity.js`, and the backend command validator.
 5. Consider room lifecycle controls: leave room, reset room, archive hand log.

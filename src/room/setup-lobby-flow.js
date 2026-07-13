@@ -154,7 +154,7 @@ export function createSetupLobbyFlow({
       return false;
     } finally {
       mutations.setSyncWriteInProgress?.(false);
-      ui.renderIdentityControls?.();
+      updateActionState();
     }
   }
 

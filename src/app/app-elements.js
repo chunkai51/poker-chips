@@ -1,0 +1,31 @@
+export function getAppElements(root = document) {
+  return {
+    setupContainer: root.getElementById("setup"),
+    gameContainer: root.getElementById("game"),
+    playerNameInputsContainer: root.getElementById("player-names"),
+    startGameBtn: root.getElementById("start-game"),
+    addPlayerBtn: root.getElementById("add-player"),
+    initialChipsInput: root.getElementById("initial-chips"),
+    bigBlindInput: root.getElementById("big-blind"),
+    roomIdInput: root.getElementById("room-id"),
+    playerAliasInput: root.getElementById("player-alias"),
+    copyInviteBtn: root.getElementById("copy-invite"),
+    localModeBtn: root.getElementById("local-mode"),
+    roomModeBtn: root.getElementById("room-mode"),
+    createRoomBtn: root.getElementById("create-room"),
+    joinRoomBtn: root.getElementById("join-room"),
+    roomEntry: root.getElementById("room-entry"),
+    deviceIdentityEl: root.getElementById("device-identity"),
+    gameLog: root.getElementById("game-log"),
+    handActions: root.getElementById("hand-actions"),
+    tableViewToolbar: root.getElementById("table-view-toolbar"),
+    logSummary: root.getElementById("log-summary"),
+    showdownPanel: root.getElementById("showdown-panel"),
+    dealPromptPanel: root.getElementById("deal-prompt-panel"),
+    settlementPreviewPanel: root.getElementById("settlement-preview-panel"),
+    tableManagerBackdrop: root.getElementById("table-manager-backdrop"),
+    tableManagerPanel: root.getElementById("table-manager-panel"),
+    syncStatusEl: root.getElementById("sync-status"),
+    riffleTrigger: root.querySelector(".brand-mark-button")
+  };
+}

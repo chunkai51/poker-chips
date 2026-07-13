@@ -94,6 +94,14 @@ http://localhost:8000/
 │   ├── favicon.png
 │   └── poker-chip-icon.png
 ├── src/
+│   ├── app/
+│   │   ├── app-elements.js
+│   │   ├── app-policy.js
+│   │   ├── app-state.js
+│   │   ├── app-ui.js
+│   │   ├── game-runtime.js
+│   │   ├── room-runtime.js
+│   │   └── table-runtime.js
 │   ├── core/
 │   │   ├── approvals.js
 │   │   ├── deal-prompts.js
@@ -103,6 +111,10 @@ http://localhost:8000/
 │   │   └── settlement-engine.js
 │   ├── game/
 │   │   ├── hand-controller.js
+│   │   ├── hand-play-flow.js
+│   │   ├── next-hand-flow.js
+│   │   ├── settlement-flow.js
+│   │   ├── start-game-flow.js
 │   │   └── settlement-controller.js
 │   ├── main.js
 │   ├── riffle/
@@ -110,19 +122,30 @@ http://localhost:8000/
 │   │   └── riffle-sound.js
 │   ├── room/
 │   │   ├── access-codes.js
+│   │   ├── approval-labels.js
+│   │   ├── client-auth-flow.js
+│   │   ├── game-sync-flow.js
 │   │   ├── game-state-snapshot.js
 │   │   ├── identity.js
+│   │   ├── identity-toolbar-flow.js
 │   │   ├── room-claims-controller.js
+│   │   ├── room-data-flow.js
 │   │   ├── room-entry.js
 │   │   ├── room-lobby-controller.js
 │   │   ├── room-permissions.js
+│   │   ├── room-session-flow.js
 │   │   ├── room-state.js
-│   │   └── room-sync.js
+│   │   ├── room-sync.js
+│   │   ├── seat-identity-flow.js
+│   │   └── setup-lobby-flow.js
 │   ├── services/
 │   │   └── firebase.js
 │   ├── table/
 │   │   ├── table-layout.js
 │   │   ├── table-manager-controller.js
+│   │   ├── table-manager-flow.js
+│   │   ├── table-save-flow.js
+│   │   ├── table-screen-controller.js
 │   │   └── table-view-preferences.js
 │   └── ui/
 │       ├── dialogs.js
@@ -141,12 +164,16 @@ http://localhost:8000/
 ├── poker-game.js
 ├── PROJECT_NOTES.md
 ├── styles.css
+├── tests/
+│   ├── app-state.test.js
+│   └── setup-lobby-flow.test.js
 └── README.md
 ```
 
 - `index.html`: 页面结构和主要 DOM 容器。
 - `styles.css`: 全站视觉主题、响应式布局、游戏控件样式和 Chip Riffle 外观皮肤。
-- `src/main.js`: 牌局状态编排、下注流程、摊牌结算、Firebase 同步、模块组合和事件接线。
+- `src/main.js`: 35 行浏览器启动入口，只创建应用服务与三个领域 runtime，并初始化静态功能。
+- `src/app/`: 唯一浏览器状态、DOM 注册表、状态绑定策略、全局 UI 协调，以及房间/游戏/牌桌三个领域的模块装配。
 - `src/core/`: 牌桌规则、手牌流程、玩家模型、审批进度、发牌提示和结算计算等可测试纯逻辑。
 - `src/game/`: 手牌生命周期等较完整的游戏流程状态变换，保持无 DOM、无 Firebase 写入。
 - `src/room/`: 房间身份、权限、同步 payload、Firebase 房间读写和准备页/席位请求数据变换。
@@ -208,7 +235,8 @@ Chip Riffle 音效使用真实筹码采样，不再使用程序化合成作为�
 常用检查：
 
 ```bash
-for f in $(find src functions -name "*.js" | sort); do node --check "$f" || exit 1; done
+node --test tests/*.test.js
+for f in $(find src functions tests -name "*.js" | sort); do node --check "$f" || exit 1; done
 git diff --check
 ```
 
@@ -235,8 +263,8 @@ python3 -m http.server 8000
 ## Known Limitations
 
 - All In、边池和复杂多人结算逻辑已有实现，但仍需要更多真实牌局场景验证。
-- 当前没有自动化测试套件。
-- 核心规则、手牌流程纯逻辑、手牌生命周期数据变换、结算流程数据变换、身份工具、恢复码工具、玩家模型、房间入口工具、房间大厅数据工具、身份绑定/请求工具、权限判断、同步快照、边池结算计算、玩家座位 UI、加注面板 UI、牌桌坐标、牌桌视角偏好、牌桌中央 UI、牌桌管理逻辑/UI、通用弹窗工具、房间状态归一化和 Firebase 房间访问外壳已从 `src/main.js` 中拆出；具体业务事务编排和大部分状态仍集中在 `src/main.js`。
+- 自动化测试目前只覆盖应用状态一致性和准备页同步后按钮解锁，核心规则及多人并发仍需补充。
+- 前端已按状态/策略/UI 与房间、游戏、牌桌领域完成模块化；跨设备完整流程目前仍主要依赖人工测试。
 - 权限层正在从前端体验级限制迁移到 Auth/Rules/Functions 模型；当前仍有部分牌局写入由前端直接完成。
 - 房间同步依赖 Firebase CDN 和 Realtime Database；离线或网络受限时可能无法正常同步。
 - 本工具只负责筹码和下注流程，不判断牌型大小。
@@ -247,7 +275,7 @@ python3 -m http.server 8000
 
 - 为下注和边池逻辑补充单元测试
 - 为 `src/core/game-rules.js` 和 `src/room/identity.js` 补充单元测试
-- 继续拆分 Firebase 写入编排和 DOM 渲染，降低 `src/main.js` 复杂度
+- 为三个 runtime 增加不依赖真实 Firebase 的集成测试
 - 改进 Firebase 安全规则和房间生命周期
 - 完成 Cloud Functions 命令处理，把下注、发牌确认、结算和下一局写入迁出前端
 - 增加导出牌局日志或恢复历史牌局能力
